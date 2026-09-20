@@ -2,11 +2,16 @@
 
 A private, multi-user note-taking app built with Bun, React, TypeScript, Tailwind CSS, Tiptap, and SQLite. Notes are stored as portable Markdown files with immutable version history.
 
+<p align="center">
+  <img src="docs/images/dashboard-dark.png" alt="MyNotes dark dashboard with folder navigation, note list, and Markdown editor" width="1200" />
+</p>
+
 ## Product shape
 
 - Dark, responsive workspace inspired by macOS Notes: folders, note list, editor.
 - Every user receives a protected Default folder; notes created outside a selected folder go there automatically.
 - Private notes by default; share with selected users or every registered user.
+- Optional or required Google Authenticator-compatible TOTP two-factor authentication.
 - Draft-first editing, autosave, explicit version publishing, history, and restore.
 - Markdown on disk; SQLite for identity, sessions, metadata, folders, sharing, and version indexes.
 - Local Docker deployment on port `2026`.
@@ -19,6 +24,22 @@ A private, multi-user note-taking app built with Bun, React, TypeScript, Tailwin
 4. Open `http://localhost:2026`.
 
 The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. “Everyone here” sharing includes all current and future registered users on that allowlist.
+
+### Two-factor authentication
+
+Generate a server-side encryption key and keep it only in `.env`:
+
+```sh
+openssl rand -base64 32
+```
+
+Set the output as `TOTP_ENCRYPTION_KEY`. Set `TOTP_POLICY=optional` to let each user choose, or `TOTP_POLICY=required` to force enrollment before notes can be accessed. Click the account name in the left navigation, open **Security**, scan the locally generated QR code with Google Authenticator, and verify one six-digit code. TOTP secrets are encrypted in SQLite with AES-256-GCM; changing or losing the encryption key makes existing authenticator enrollments unusable.
+
+If a user loses their authenticator, the local machine administrator can reset that factor. This revokes every session and forces fresh enrollment on the next password sign-in:
+
+```sh
+docker compose exec app bun server/reset-totp.ts user@example.com
+```
 
 ## Development
 
@@ -73,3 +94,5 @@ MYNOTES_DATA_DIR=/home/soni/Desktop/MacSSD/mynotes-restored docker compose up -d
 ```
 
 The archive contains the data directory contents at its root, so no path rearrangement is required.
+
+The backup intentionally does not include `.env`. Store `.env` securely alongside your backup process—especially `TOTP_ENCRYPTION_KEY`, which is required to use restored TOTP enrollments.

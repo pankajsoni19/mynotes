@@ -10,13 +10,17 @@ process.env.APP_ORIGIN = origin;
 process.env.PORT = "22026";
 process.env.NODE_ENV = "test";
 process.env.ALLOW_REGISTRATION = "true";
+process.env.TOTP_POLICY = "optional";
+process.env.TOTP_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 const allowedTestEmails = Array.from({ length: 10 }, (_, index) => `allowed-${index + 1}@example.test`);
 process.env.ALLOWED_EMAILS = allowedTestEmails.join(",");
 
 const serverOptions = (await import("../server/index")).default;
+const { db } = await import("../server/db");
+const { totpCodeAt, totpCounter } = await import("../server/totp");
 const server = Bun.serve(serverOptions);
 
-type Session = { cookie: string; csrf: string; userId: string };
+type Session = { cookie: string; csrf: string; userId: string; email: string; password: string };
 let registrationIndex = 0;
 
 async function request(path: string, options: RequestInit = {}, session?: Session) {
@@ -33,15 +37,16 @@ async function request(path: string, options: RequestInit = {}, session?: Sessio
 async function register(label: string): Promise<Session> {
   const allowedEmail = allowedTestEmails[registrationIndex++];
   if (!allowedEmail) throw new Error("Test email allowlist exhausted");
+  const password = "correct horse battery staple";
   const response = await request("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ email: allowedEmail, displayName: label, password: "correct horse battery staple" })
+    body: JSON.stringify({ email: allowedEmail, displayName: label, password })
   });
   expect(response.status).toBe(201);
   const body = await response.json() as { csrfToken: string; user: { id: string } };
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
   expect(cookie).toBeTruthy();
-  return { cookie: cookie!, csrf: body.csrfToken, userId: body.user.id };
+  return { cookie: cookie!, csrf: body.csrfToken, userId: body.user.id, email: allowedEmail, password };
 }
 
 afterAll(() => {
@@ -67,6 +72,45 @@ describe("authorization and version workflow", () => {
     });
     expect(login.status).toBe(401);
   });
+
+  test("encrypts TOTP secrets, requires a code at login, and rejects replay", async () => {
+    const owner = await register("TOTP owner");
+    expect(totpCodeAt("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 1)).toBe("287082");
+    const setupResponse = await request("/auth/totp/setup", { method: "POST", body: JSON.stringify({ password: owner.password }) }, owner);
+    expect(setupResponse.status).toBe(200);
+    const setup = await setupResponse.json() as { secret: string; uri: string };
+    expect(setup.uri).toContain("otpauth://totp/");
+    expect(setup.uri).toContain("issuer=MyNotes");
+
+    const stored = db.query("SELECT totp_secret FROM users WHERE id = ?").get(owner.userId) as { totp_secret: string };
+    expect(stored.totp_secret.startsWith("v1:")).toBe(true);
+    expect(stored.totp_secret).not.toContain(setup.secret);
+
+    const previousCode = totpCodeAt(setup.secret, totpCounter() - 1);
+    const enable = await request("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: previousCode }) }, owner);
+    expect(enable.status).toBe(200);
+    expect(((await enable.json()) as { enabled: boolean }).enabled).toBe(true);
+
+    await request("/auth/logout", { method: "POST", body: "{}" }, owner);
+    const passwordOnly = await request("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: owner.email, password: owner.password })
+    });
+    expect(passwordOnly.status).toBe(428);
+    expect(((await passwordOnly.json()) as { requiresTotp: boolean }).requiresTotp).toBe(true);
+
+    const currentCode = totpCodeAt(setup.secret, totpCounter());
+    const login = await request("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: owner.email, password: owner.password, totpCode: currentCode })
+    });
+    expect(login.status).toBe(200);
+    const replay = await request("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: owner.email, password: owner.password, totpCode: currentCode })
+    });
+    expect(replay.status).toBe(401);
+  }, 20_000);
 
   test("keeps notes private, rejects CSRF, then shares and versions safely", async () => {
     const owner = await register("Owner");

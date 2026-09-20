@@ -19,8 +19,12 @@ import {
   parseJson,
   registerSchema,
   sharingSchema,
+  totpCodeSchema,
+  totpDisableSchema,
+  totpSetupSchema,
   uuid
 } from "./validation";
+import { createTotpSecret, decryptTotpSecret, encryptTotpSecret, totpUri, verifyTotp } from "./totp";
 
 const app = new Hono<AppEnv>();
 
@@ -30,6 +34,29 @@ function hasDraftDelta(note: NoteRow, draftChecksum: string) {
     .get(note.id, note.current_version) as { checksum: string } | null;
   if (!published) throw new Error("Published version metadata is missing");
   return draftChecksum !== published.checksum;
+}
+
+function totpState(user: Pick<UserRow, "totp_enabled_at">) {
+  const enabled = user.totp_enabled_at !== null;
+  return { enabled, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" && !enabled };
+}
+
+function consumeTotp(user: Pick<UserRow, "id" | "totp_secret" | "totp_last_counter">, code: string) {
+  if (!user.totp_secret || !config.totpEncryptionKey) return null;
+  let secret: string;
+  try {
+    secret = decryptTotpSecret(user.totp_secret, config.totpEncryptionKey, user.id);
+  } catch {
+    audit(user.id, null, "auth.totp_secret_unreadable");
+    return null;
+  }
+  const counter = verifyTotp(secret, code, user.totp_last_counter);
+  if (counter === null) return null;
+  const result = db.query(`
+    UPDATE users SET totp_last_counter = ?
+    WHERE id = ? AND totp_secret = ? AND (totp_last_counter IS NULL OR totp_last_counter < ?)
+  `).run(counter, user.id, user.totp_secret, counter);
+  return result.changes === 1 ? counter : null;
 }
 
 app.use("*", secureHeaders({
@@ -117,7 +144,11 @@ app.post("/api/auth/register", async (c) => {
   }
   const csrfToken = await createSession(c, id);
   audit(id, null, "auth.register");
-  return c.json({ user: { id, email: body.email, displayName: body.displayName }, csrfToken }, 201);
+  return c.json({
+    user: { id, email: body.email, displayName: body.displayName },
+    csrfToken,
+    totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
+  }, 201);
 });
 
 app.post("/api/auth/login", async (c) => {
@@ -131,15 +162,30 @@ app.post("/api/auth/login", async (c) => {
     audit(user?.id ?? null, null, "auth.login_failed");
     return c.json({ error: "Invalid email or password" }, 401);
   }
+  if (user.totp_enabled_at) {
+    if (!body.totpCode) return c.json({ error: "Enter your authentication code", requiresTotp: true }, 428);
+    if (consumeTotp(user, body.totpCode) === null) {
+      audit(user.id, null, "auth.totp_failed");
+      return c.json({ error: "Invalid or already-used authentication code", requiresTotp: true }, 401);
+    }
+  }
   const csrfToken = await createSession(c, user.id);
   audit(user.id, null, "auth.login");
-  return c.json({ user: { id: user.id, email: user.email, displayName: user.display_name }, csrfToken });
+  return c.json({
+    user: { id: user.id, email: user.email, displayName: user.display_name },
+    csrfToken,
+    totp: totpState(user)
+  });
 });
 
 app.use("/api/auth/me", requireAuth);
 app.get("/api/auth/me", (c) => {
   const user = c.get("user");
-  return c.json({ user: { id: user.id, email: user.email, displayName: user.display_name }, csrfToken: c.get("csrfToken") });
+  return c.json({
+    user: { id: user.id, email: user.email, displayName: user.display_name },
+    csrfToken: c.get("csrfToken"),
+    totp: totpState(user)
+  });
 });
 
 app.use("/api/*", async (c, next) => {
@@ -148,9 +194,89 @@ app.use("/api/*", async (c, next) => {
 });
 app.use("/api/*", requireMutationSafety);
 
+const totpSetupPaths = new Set([
+  "/api/auth/logout",
+  "/api/auth/totp/status",
+  "/api/auth/totp/setup",
+  "/api/auth/totp/enable"
+]);
+app.use("/api/*", async (c, next) => {
+  if (["/api/health", "/api/auth/login", "/api/auth/register"].includes(c.req.path)) return next();
+  if (config.totpPolicy === "required" && !c.get("user").totp_enabled_at && !totpSetupPaths.has(c.req.path)) {
+    return c.json({ error: "Two-factor authentication setup is required", code: "TOTP_SETUP_REQUIRED" }, 403);
+  }
+  await next();
+});
+
 app.post("/api/auth/logout", (c) => {
   logoutCurrentSession(c);
   return c.json({ ok: true });
+});
+
+app.get("/api/auth/totp/status", (c) => {
+  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(c.get("user").id) as UserRow | null;
+  if (!user) return c.json({ error: "Authentication required" }, 401);
+  return c.json(totpState(user));
+});
+
+app.post("/api/auth/totp/setup", async (c) => {
+  const body = await parseJson(c.req.raw, totpSetupSchema);
+  const current = c.get("user");
+  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(current.id) as UserRow | null;
+  if (!user) return c.json({ error: "Authentication required" }, 401);
+  if (user.totp_enabled_at) return c.json({ error: "Two-factor authentication is already enabled" }, 409);
+  if (!config.totpEncryptionKey) return c.json({ error: "Two-factor authentication is not configured on this service" }, 503);
+  if (rateLimited(`totp-setup:${user.id}`, 5)) return c.json({ error: "Too many setup attempts. Try again soon." }, 429);
+  if (!await Bun.password.verify(body.password, user.password_hash)) {
+    audit(user.id, null, "auth.totp_setup_password_failed");
+    return c.json({ error: "Invalid password" }, 400);
+  }
+  const secret = createTotpSecret();
+  const encryptedSecret = encryptTotpSecret(secret, config.totpEncryptionKey, user.id);
+  db.query("UPDATE users SET totp_secret = ?, totp_last_counter = NULL WHERE id = ? AND totp_enabled_at IS NULL").run(encryptedSecret, user.id);
+  audit(user.id, null, "auth.totp_setup_started");
+  return c.json({ secret, uri: totpUri(secret, user.email) });
+});
+
+app.post("/api/auth/totp/enable", async (c) => {
+  const body = await parseJson(c.req.raw, totpCodeSchema);
+  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(c.get("user").id) as UserRow | null;
+  if (!user) return c.json({ error: "Authentication required" }, 401);
+  if (user.totp_enabled_at) return c.json({ error: "Two-factor authentication is already enabled" }, 409);
+  const acceptedCounter = consumeTotp(user, body.code);
+  if (acceptedCounter === null) {
+    audit(user.id, null, "auth.totp_enable_failed");
+    return c.json({ error: "Invalid or expired authentication code" }, 400);
+  }
+  const timestamp = now();
+  const enabled = db.transaction(() => {
+    const result = db.query("UPDATE users SET totp_enabled_at = ? WHERE id = ? AND totp_enabled_at IS NULL AND totp_secret = ? AND totp_last_counter = ?")
+      .run(timestamp, user.id, user.totp_secret, acceptedCounter);
+    if (result.changes !== 1) return false;
+    db.query("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(user.id, c.get("sessionId"));
+    return true;
+  })();
+  if (!enabled) return c.json({ error: "Authenticator setup changed. Start setup again." }, 409);
+  audit(user.id, null, "auth.totp_enabled");
+  return c.json({ enabled: true, required: config.totpPolicy === "required", setupRequired: false });
+});
+
+app.delete("/api/auth/totp", async (c) => {
+  if (config.totpPolicy === "required") return c.json({ error: "Two-factor authentication is required for this service" }, 409);
+  const body = await parseJson(c.req.raw, totpDisableSchema);
+  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(c.get("user").id) as UserRow | null;
+  if (!user?.totp_enabled_at) return c.json({ error: "Two-factor authentication is not enabled" }, 409);
+  if (!await Bun.password.verify(body.password, user.password_hash)) return c.json({ error: "Invalid password or authentication code" }, 400);
+  const acceptedCounter = consumeTotp(user, body.code);
+  if (acceptedCounter === null) return c.json({ error: "Invalid or already-used authentication code" }, 400);
+  db.transaction(() => {
+    const result = db.query("UPDATE users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_counter = NULL WHERE id = ? AND totp_secret = ? AND totp_last_counter = ?")
+      .run(user.id, user.totp_secret, acceptedCounter);
+    if (result.changes !== 1) throw new Error("Concurrent authenticator update detected");
+    db.query("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(user.id, c.get("sessionId"));
+  })();
+  audit(user.id, null, "auth.totp_disabled");
+  return c.json({ enabled: false, required: false, setupRequired: false });
 });
 
 app.get("/api/users", (c) => {

@@ -52,10 +52,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .folder-pane, .note-pane, .editor-pane { min-width: 0; min-height: 0; }
 .folder-pane { display: flex; flex-direction: column; background: #0c0c0e; border-right: 1px solid var(--border); }
 .sidebar-header { height: 78px; padding: 16px 14px 12px 18px; display: flex; align-items: center; justify-content: space-between; }
-.workspace-title { display: flex; align-items: center; gap: 11px; overflow: hidden; }
-.workspace-title > span:last-child { display: grid; min-width: 0; }
-.workspace-title strong { font-size: .95rem; }
-.workspace-title small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.workspace-account { min-width: 0; display: flex; align-items: center; gap: 11px; overflow: hidden; border: 0; border-radius: 10px; padding: 5px 7px 5px 0; background: transparent; text-align: left; cursor: pointer; }
+.workspace-account:hover { background: #171719; }
+.workspace-account > span:last-child { display: grid; min-width: 0; }
+.workspace-account strong { font-size: .95rem; }
+.workspace-account small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .brand-dot { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--yellow); color: #2d230c; }
 .brand-dot svg { width: 17px; }
 .icon-button { width: 36px; height: 36px; flex: none; border: 0; border-radius: 9px; display: grid; place-items: center; background: transparent; color: #aaaab0; cursor: pointer; }
@@ -174,6 +175,52 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .side-panel > header { min-height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 18px 18px 15px 22px; border-bottom: 1px solid var(--border); }
 .side-panel h2 { margin: 4px 0 0; font-size: 1.25rem; letter-spacing: -.025em; }
 .panel-scrim { position: fixed; z-index: 30; inset: 0; border: 0; background: rgb(0 0 0 / 35%); }
+.settings-dialog { position: fixed; z-index: 41; inset: clamp(24px, 7vh, 78px) clamp(24px, 8vw, 140px); width: min(1040px, calc(100vw - 48px)); max-height: 780px; margin: auto; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #36363b; border-radius: 18px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
+.settings-header { min-height: 82px; display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.settings-header h2 { margin: 4px 0 0; font-size: 1.35rem; }
+.settings-body { min-height: 0; flex: 1; display: grid; grid-template-columns: 230px minmax(0, 1fr); }
+.settings-nav { padding: 18px 12px; border-right: 1px solid var(--border); background: #101012; }
+.settings-nav button { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 9px; padding: 0 12px; background: transparent; color: #a7a7ad; text-align: left; cursor: pointer; }
+.settings-nav button.active { background: #29251b; color: #f6ce73; }
+.settings-nav svg { width: 18px; }
+.settings-content { min-width: 0; overflow-y: auto; padding: 32px clamp(24px, 4vw, 48px) 44px; }
+.settings-section-heading { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 24px; }
+.settings-section-heading h3 { margin: 2px 0 7px; font-size: 1.3rem; }
+.settings-section-heading p { max-width: 590px; margin: 0; color: #8b8b92; font-size: .88rem; line-height: 1.55; }
+.settings-icon { width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 12px; background: #29251b; color: var(--yellow); }
+.settings-icon svg { width: 21px; }
+.settings-warning { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; padding: 11px 13px; border: 1px solid #624c21; border-radius: 10px; background: #282116; color: #f3ce79; font-size: .84rem; }
+.settings-warning svg { width: 17px; }
+.security-card { padding: 22px; border: 1px solid #303035; border-radius: 14px; background: #0f0f11; }
+.security-card > strong { display: block; color: #ececef; }
+.security-card > p { color: #85858c; font-size: .84rem; line-height: 1.55; }
+.setup-intro label { max-width: 360px; display: grid; gap: 7px; margin-top: 16px; color: #c9c9cd; font-size: .78rem; }
+.setup-intro input { min-height: 42px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; }
+.setup-intro .primary-button { margin-top: 12px; padding: 10px 14px; }
+.security-status { display: flex; align-items: center; gap: 12px; }
+.security-status > span { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #173323; color: #86d4a0; }
+.security-status svg { width: 19px; }
+.security-status div { display: grid; gap: 4px; }
+.security-status small, .policy-copy { color: #85858c; font-size: .82rem; }
+.enrollment-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: center; }
+.qr-frame { width: 200px; height: 200px; display: grid; place-items: center; overflow: hidden; border: 8px solid white; border-radius: 12px; background: white; }
+.qr-frame img { width: 100%; height: 100%; }
+.step-label { color: var(--yellow); font-size: .68rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.enrollment-grid h4, .disable-totp-form h4 { margin: 8px 0 7px; }
+.enrollment-grid p, .disable-totp-form p { margin: 0 0 13px; color: #85858c; font-size: .82rem; line-height: 1.5; }
+.secret-copy { width: 100%; display: grid; gap: 7px; border: 1px solid #343439; border-radius: 9px; padding: 10px 11px; background: #18181b; color: #d8d8dc; text-align: left; cursor: pointer; }
+.secret-copy code { overflow-wrap: anywhere; color: #f3cd77; font: .78rem/1.5 "SFMono-Regular", Consolas, monospace; }
+.secret-copy span { display: flex; align-items: center; gap: 5px; color: #898990; font-size: .7rem; }
+.secret-copy svg { width: 13px; }
+.verify-totp-form { display: grid; grid-template-columns: minmax(150px, 1fr) auto; align-items: end; gap: 12px; margin-top: 24px; padding-top: 20px; border-top: 1px solid #29292d; }
+.verify-totp-form .step-label { grid-column: 1 / -1; }
+.verify-totp-form label { display: grid; gap: 7px; color: #c9c9cd; font-size: .78rem; }
+.verify-totp-form input, .disable-totp-form input { min-height: 42px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; }
+.verify-totp-form input { font: 1rem "SFMono-Regular", Consolas, monospace; letter-spacing: .15em; }
+.verify-totp-form .primary-button { min-height: 42px; padding: 0 14px; }
+.disable-totp-form { margin-top: 22px; padding-top: 18px; border-top: 1px solid #29292d; }
+.disable-totp-form > div { display: grid; grid-template-columns: minmax(150px, 1fr) 140px auto; gap: 9px; }
+.disable-totp-form .secondary-button { min-height: 42px; padding: 0 13px; }
 .version-list { max-height: 210px; overflow-y: auto; padding: 10px; border-bottom: 1px solid var(--border); }
 .version-list button { width: 100%; display: grid; gap: 4px; padding: 11px 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; }
 .version-list button:hover, .version-list button.selected { background: #29251d; }
@@ -251,6 +298,14 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .mobile-tabbar button.active { color: var(--yellow); }
   .mobile-tabbar svg { width: 19px; height: 19px; }
   .side-panel { position: fixed; bottom: calc(61px + env(safe-area-inset-bottom)); width: 100%; border-left: 0; }
+  .settings-dialog { inset: 0 0 calc(61px + env(safe-area-inset-bottom)); width: 100%; max-height: none; border: 0; border-radius: 0; }
+  .settings-body { display: block; overflow-y: auto; }
+  .settings-nav { display: flex; overflow-x: auto; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .settings-nav button { width: auto; min-width: 130px; }
+  .settings-content { overflow: visible; padding: 22px 18px 36px; }
+  .enrollment-grid { grid-template-columns: 1fr; }
+  .qr-frame { margin: auto; }
+  .verify-totp-form, .disable-totp-form > div { grid-template-columns: 1fr; }
   .toast { bottom: calc(74px + env(safe-area-inset-bottom)); max-width: calc(100vw - 28px); white-space: nowrap; }
   .slash-menu { max-height: 40vh; }
 }

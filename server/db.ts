@@ -106,6 +106,16 @@ const noteColumns = db.query("PRAGMA table_info(notes)").all() as Array<{ name: 
 if (!noteColumns.some((column) => column.name === "sharing_override")) {
   db.exec("ALTER TABLE notes ADD COLUMN sharing_override INTEGER NOT NULL DEFAULT 0");
 }
+const userColumns = db.query("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+if (!userColumns.some((column) => column.name === "totp_secret")) {
+  db.exec("ALTER TABLE users ADD COLUMN totp_secret TEXT");
+}
+if (!userColumns.some((column) => column.name === "totp_enabled_at")) {
+  db.exec("ALTER TABLE users ADD COLUMN totp_enabled_at TEXT");
+}
+if (!userColumns.some((column) => column.name === "totp_last_counter")) {
+  db.exec("ALTER TABLE users ADD COLUMN totp_last_counter INTEGER");
+}
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_owner_default ON folders(owner_id) WHERE is_default = 1");
 db.exec("CREATE INDEX IF NOT EXISTS idx_folder_shares_user_folder ON folder_shares(user_id, folder_id)");
 
@@ -122,6 +132,9 @@ export type UserRow = {
   password_hash: string;
   created_at: string;
   disabled_at: string | null;
+  totp_secret: string | null;
+  totp_enabled_at: string | null;
+  totp_last_counter: number | null;
 };
 
 export type NoteRow = {

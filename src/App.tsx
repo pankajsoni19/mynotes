@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  Check,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -15,16 +16,20 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Search,
+  ShieldCheck,
   Share2,
+  Smartphone,
   Sparkles,
   Users,
   X
 } from "lucide-react";
+import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
 import { NoteEditor } from "./editor/NoteEditor";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 
-type SessionResponse = { user: User; csrfToken: string };
+type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
 type MobilePanel = "folders" | "notes" | "editor";
 
 function relativeTime(value: string) {
@@ -42,6 +47,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   const [registering, setRegistering] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [needsTotp, setNeedsTotp] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -51,7 +57,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
     try {
       const payload = registering
         ? { email: form.get("email"), password: form.get("password"), displayName: form.get("displayName") }
-        : { email: form.get("email"), password: form.get("password") };
+        : { email: form.get("email"), password: form.get("password"), ...(needsTotp ? { totpCode: form.get("totpCode") } : {}) };
       const session = await api<SessionResponse>(registering ? "/auth/register" : "/auth/login", {
         method: "POST",
         body: JSON.stringify(payload)
@@ -59,6 +65,9 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
       setCsrfToken(session.csrfToken);
       onAuthenticated(session);
     } catch (reason) {
+      if (!registering && reason instanceof ApiError && (reason.payload as { requiresTotp?: boolean } | undefined)?.requiresTotp) {
+        setNeedsTotp(true);
+      }
       setError(reason instanceof Error ? reason.message : "Could not sign in");
     } finally {
       setBusy(false);
@@ -78,15 +87,128 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
           {registering && <label>Name<input name="displayName" autoComplete="name" required maxLength={80} /></label>}
           <label>Email<input name="email" type="email" autoComplete="email" required /></label>
           <label>Password<input name="password" type="password" autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? 12 : 1} /></label>
+          {!registering && needsTotp && <label>Authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus /></label>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
-        <button className="text-button" onClick={() => { setRegistering(!registering); setError(""); }}>
+        <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setError(""); }}>
           {registering ? "Already have an account? Sign in" : "Setting up MyNotes? Create the first account"}
         </button>
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>
       </section>
     </main>
+  );
+}
+
+function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
+  const [state, setState] = useState<TotpState>(session.totp);
+  const [secret, setSecret] = useState("");
+  const [qrCode, setQrCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
+  }, []);
+
+  useEffect(() => {
+    if (state.setupRequired) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose, state.setupRequired]);
+
+  async function beginSetup(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const setup = await api<{ secret: string; uri: string }>("/auth/totp/setup", { method: "POST", body: JSON.stringify({ password: form.get("password") }) });
+      setSecret(setup.secret);
+      setQrCode(await QRCode.toDataURL(setup.uri, { width: 220, margin: 2, color: { dark: "#151515", light: "#ffffff" } }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not start two-factor setup");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function enable(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const next = await api<TotpState>("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: form.get("code") }) });
+      setSecret("");
+      setQrCode("");
+      setState(next);
+      onSecurityChanged(next);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not enable two-factor authentication");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!window.confirm("Disable two-factor authentication for this account?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
+      setState(next);
+      onSecurityChanged(next);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not disable two-factor authentication");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copySecret() {
+    await navigator.clipboard.writeText(secret);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  return (
+    <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header className="settings-header">
+        <div><span className="eyebrow">Account</span><h2 id="settings-title">Settings</h2></div>
+        {!state.setupRequired && <button className="icon-button" onClick={onClose} aria-label="Close settings"><X /></button>}
+      </header>
+      <div className="settings-body">
+        <nav className="settings-nav" aria-label="Settings sections"><button className="active" aria-current="page"><ShieldCheck />Security</button></nav>
+        <section className="settings-content" aria-labelledby="security-heading">
+          <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
+          {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
+          {error && <p className="form-error" role="alert">{error}</p>}
+          {state.enabled ? <div className="security-card enabled-card">
+            <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account requires your password and an authentication code at sign in.</small></div></div>
+            {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable}>
+              <h4>Disable authenticator</h4><p>Confirm your password and a current code.</p>
+              <div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
+            </form>}
+          </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
+            <strong>Authenticator not configured</strong>
+            <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>
+            <label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label>
+            <button className="primary-button" disabled={busy}>{busy ? "Preparing…" : "Set up authenticator"}</button>
+          </form> : <div className="security-card enrollment-card">
+            <div className="enrollment-grid">
+              <div className="qr-frame"><img src={qrCode} alt="QR code for MyNotes two-factor authentication" /></div>
+              <div><span className="step-label">1 · Scan the code</span><h4>Add MyNotes to Google Authenticator</h4><p>If you cannot scan it, enter this setup key manually.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy"}</span></button></div>
+            </div>
+            <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
+          </div>}
+        </section>
+      </div>
+    </section>
   );
 }
 
@@ -271,6 +393,7 @@ export function App() {
   const [panel, setPanel] = useState<"history" | "share" | null>(null);
   const [mobileActions, setMobileActions] = useState(false);
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
@@ -311,7 +434,11 @@ export function App() {
       .finally(() => setChecking(false));
   }, []);
 
-  useEffect(() => { if (session) loadNavigation(); }, [session, loadNavigation]);
+  useEffect(() => {
+    if (!session) return;
+    if (session.totp.setupRequired) setSettingsOpen(true);
+    else loadNavigation();
+  }, [session, loadNavigation]);
   useEffect(() => { if (selectedNoteId) loadNote(selectedNoteId); else setNote(null); }, [selectedNoteId, loadNote]);
 
   const saveDraft = useCallback(async () => {
@@ -482,7 +609,7 @@ export function App() {
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane">
         <header className="sidebar-header">
-          <div className="workspace-title"><span className="brand-dot"><Sparkles /></span><span><strong>MyNotes</strong><small>{session.user.displayName}</small></span></div>
+          <button className="workspace-account" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(true); }} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open account settings for ${session.user.displayName}`}><span className="brand-dot"><Sparkles /></span><span><strong>MyNotes</strong><small>{session.user.displayName}</small></span></button>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse sidebar"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
@@ -574,7 +701,13 @@ export function App() {
       {panel === "history" && note && <HistoryPanel note={note} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
       {panel === "share" && note && <SharePanel note={note} onClose={() => setPanel(null)} onChanged={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Sharing updated"); }} />}
       {sharingFolder && <FolderSharePanel folder={sharingFolder} onClose={() => setSharingFolder(null)} onChanged={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder sharing updated"); }} />}
-      {(panel || sharingFolder) && <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); }} aria-label="Close panel" />}
+      {settingsOpen && <SettingsDialog session={session} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+        setSession((current) => current ? { ...current, totp } : current);
+        if (!totp.setupRequired) setSettingsOpen(false);
+      }} />}
+      {(panel || sharingFolder || settingsOpen) && (settingsOpen && session.totp.setupRequired
+        ? <div className="panel-scrim" aria-hidden="true" />
+        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(false); }} aria-label="Close panel" />)}
       {toast && <div className="toast" role="status">{toast}</div>}
       <nav className="mobile-tabbar">
         <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => setMobilePanel("folders")}><Menu />Folders</button>

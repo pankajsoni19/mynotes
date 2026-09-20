@@ -11,7 +11,11 @@ export const registerSchema = z.object({
   password
 }).strict();
 
-export const loginSchema = z.object({ email, password: z.string().min(1).max(256) }).strict();
+export const totpCode = z.string().trim().regex(/^\d{6}$/, "Enter the six-digit authentication code");
+export const loginSchema = z.object({ email, password: z.string().min(1).max(256), totpCode: totpCode.optional() }).strict();
+export const totpCodeSchema = z.object({ code: totpCode }).strict();
+export const totpSetupSchema = z.object({ password: z.string().min(1).max(256) }).strict();
+export const totpDisableSchema = z.object({ code: totpCode, password: z.string().min(1).max(256) }).strict();
 export const folderSchema = z.object({ name: z.string().trim().min(1).max(120), parentId: uuid.nullish() }).strict();
 export const noteCreateSchema = z.object({ folderId: uuid.nullish() }).strict();
 export const noteMetaSchema = z.object({ folderId: uuid.nullish() }).strict();

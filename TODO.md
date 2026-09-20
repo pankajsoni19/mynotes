@@ -22,6 +22,8 @@
 ## Frontend
 
 - [x] Minimal login / registration landing page
+- [x] Wide account settings dialog with responsive security navigation
+- [x] Google Authenticator-compatible encrypted TOTP enrollment and login challenge
 - [x] Responsive three-pane macOS Notes-inspired dashboard
 - [x] Collapsible folder navigation and note list
 - [x] Outline-like Tiptap editor with bubble toolbar and `/` commands
