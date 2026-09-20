@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#09090b" />
+  <meta name="description" content="MyNotes documentation: features, Docker self-hosting, configuration, security, backups, and upgrades." />
+  <link rel="canonical" href="https://pankajsoni19.github.io/mynotes/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="MyNotes Documentation" />
+  <meta property="og:description" content="Features, configuration, security, backups, and a complete Docker self-hosting guide." />
+  <meta property="og:url" content="https://pankajsoni19.github.io/mynotes/" />
+  <meta property="og:image" content="https://pankajsoni19.github.io/mynotes/social-preview.png" />
+  <meta property="og:image:width" content="1280" /><meta property="og:image:height" content="640" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="MyNotes Documentation" />
+  <meta name="twitter:description" content="A complete guide to features, configuration, security, and self-hosting." />
+  <meta name="twitter:image" content="https://pankajsoni19.github.io/mynotes/social-preview.png" />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>MyNotes Documentation</title>
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href="#overview"><span>✦</span><strong>MyNotes</strong><em>Docs</em></a>
+    <nav class="top-actions"><span class="version">v0.1.2</span><a href="https://github.com/pankajsoni19/mynotes">GitHub ↗</a><button class="menu-button" aria-label="Open menu" aria-expanded="false">☰</button></nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <label class="search"><span>⌕</span><input id="docs-search" type="search" placeholder="Search docs…" /></label>
+      <p class="search-status" aria-live="polite"></p>
+      <nav>
+        <div><strong>Introduction</strong><a href="#overview">Overview</a><a href="#features">Features</a></div>
+        <div><strong>Self-hosting</strong><a href="#quickstart">Quick start</a><a href="#configuration">Environment variables</a><a href="#network">Network & HTTPS</a><a href="#updates">Updating</a></div>
+        <div><strong>Operations</strong><a href="#accounts">Accounts & sharing</a><a href="#two-factor">Two-factor authentication</a><a href="#storage">Storage & migrations</a><a href="#backups">Backup & restore</a><a href="#security">Security model</a><a href="#troubleshooting">Troubleshooting</a></div>
+      </nav>
+      <div class="sidebar-card"><b>Local-first</b><p>Your notes remain Markdown files on storage you control.</p></div>
+    </aside>
+    <main class="content">
+      <section id="overview" class="hero searchable" data-search="overview private self hosted local notes markdown">
+        <div><span class="kicker">Private notes. Local first.</span><h1>Own your notes.<br /><em>Keep the history.</em></h1><p>MyNotes is a secure, multi-user Markdown workspace with fluid editing, immutable versions, private sharing, and a small Docker footprint.</p><div class="hero-actions"><a class="primary" href="#quickstart">Start self-hosting</a><a class="secondary" href="https://github.com/pankajsoni19/mynotes">View source</a></div></div>
+        <figure><img src="./dashboard-dark.png" alt="MyNotes dark dashboard with folders, notes, and editor" /></figure>
+      </section>
+
+      <section id="features" class="doc-section searchable" data-search="features editor versions sharing mobile folders markdown">
+        <span class="eyebrow">Product</span><h2>Built for notes that matter</h2><p class="lead">A focused writing experience with the controls needed for passwords, configuration, and private knowledge.</p>
+        <div class="cards"><article><i>⌘</i><h3>Outline-like editor</h3><p>Slash commands, Markdown output, formatting, checklists, links, quotes, and code blocks.</p></article><article><i>↺</i><h3>Version history</h3><p>Draft changes, publish immutable versions, inspect diffs, and restore safely.</p></article><article><i>◫</i><h3>Private sharing</h3><p>Share notes or folders with selected accounts or every signed-in user.</p></article><article><i>▣</i><h3>Responsive</h3><p>A three-pane desktop workspace with focused mobile views.</p></article><article><i>◇</i><h3>Portable storage</h3><p>Readable Markdown content with SQLite for metadata and access rules.</p></article><article><i>⌁</i><h3>Local security</h3><p>Argon2id, encrypted TOTP, CSRF protection, and hardened containers.</p></article></div>
+      </section>
+
+      <section id="quickstart" class="doc-section searchable" data-search="quick start install docker compose clone deploy self host">
+        <span class="eyebrow">Self-hosting</span><h2>Quick start with Docker</h2><p class="lead">You need Git, Docker Engine, and Docker Compose. Bun stays inside the image.</p>
+        <div class="steps"><article><b>1</b><div><h3>Clone and configure</h3><pre><code>git clone https://github.com/pankajsoni19/mynotes.git
+cd mynotes
+cp .env.example .env
+mkdir -p /srv/mynotes</code></pre><p>Set <code>MYNOTES_DATA_DIR=/srv/mynotes</code>. The directory must be writable by UID 1000.</p></div></article><article><b>2</b><div><h3>Secure trusted accounts</h3><pre><code>ALLOWED_EMAILS=you@example.com,partner@example.com
+TOTP_POLICY=required
+TOTP_ENCRYPTION_KEY=&lt;openssl rand -base64 32&gt;</code></pre><aside class="callout warning"><strong>Keep the encryption key.</strong> It is not included in data backups.</aside></div></article><article><b>3</b><div><h3>Build and start</h3><pre><code>APP_VERSION=0.1.2 GIT_SHA=$(git rev-parse --short HEAD) \
+  docker compose up -d --build</code></pre><p>Open <code>http://localhost:2026</code>. The first account can be created while the database is empty.</p></div></article><article><b>4</b><div><h3>Verify</h3><pre><code>curl http://localhost:2026/api/health
+docker compose ps</code></pre></div></article></div>
+      </section>
+
+      <section id="configuration" class="doc-section searchable" data-search="environment variables config env settings">
+        <span class="eyebrow">Configuration</span><h2>Environment variables</h2><p class="lead">Compose reads <code>.env</code> from the repository root. Never commit that file.</p>
+        <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead><tbody>
+          <tr><td><code>MYNOTES_DATA_DIR</code></td><td>example desktop path</td><td>Durable host directory mounted at <code>/data</code>.</td></tr>
+          <tr><td><code>APP_ORIGIN</code></td><td><code>http://localhost:2026</code></td><td>Exact browser origin accepted for login, CSRF, and mutations.</td></tr>
+          <tr><td><code>ALLOWED_EMAILS</code></td><td>empty</td><td>Comma-separated registration and sign-in allowlist. Empty permits any email.</td></tr>
+          <tr><td><code>ALLOW_REGISTRATION</code></td><td><code>false</code></td><td>Allows additional accounts. The first account is still allowed on an empty database.</td></tr>
+          <tr><td><code>TOTP_POLICY</code></td><td><code>optional</code></td><td><code>optional</code> or <code>required</code>.</td></tr>
+          <tr><td><code>TOTP_ENCRYPTION_KEY</code></td><td>empty</td><td>Base64 32-byte AES key. Required for mandatory TOTP.</td></tr>
+          <tr><td><code>SESSION_DAYS</code></td><td><code>14</code></td><td>Session lifetime in days, minimum one.</td></tr>
+          <tr><td><code>MAX_MARKDOWN_BYTES</code></td><td><code>2000000</code></td><td>Maximum note payload size, minimum 1024 bytes.</td></tr>
+          <tr><td><code>PORT</code></td><td><code>2026</code></td><td>Internal application port; Compose publishes port 2026 on loopback.</td></tr>
+          <tr><td><code>DATA_DIR</code></td><td><code>/data</code></td><td>Container data root. Usually leave unchanged.</td></tr>
+          <tr><td><code>APP_VERSION</code></td><td>release</td><td>Build metadata shown in Settings → About.</td></tr>
+          <tr><td><code>GIT_SHA</code></td><td><code>development</code></td><td>Commit metadata shown in Settings → About.</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section id="accounts" class="doc-section searchable" data-search="accounts users sharing permissions folders allowlist registration"><span class="eyebrow">Access</span><h2>Accounts and sharing</h2><div class="split"><article><h3>Adding users</h3><p>Add trusted addresses to <code>ALLOWED_EMAILS</code>, temporarily set <code>ALLOW_REGISTRATION=true</code>, restart, and let each person register. Disable registration afterward.</p></article><article><h3>Permission precedence</h3><p>Notes are private by default. Folder access applies to inherited notes, but explicit note access always wins. Nothing becomes public.</p></article></div></section>
+
+      <section id="two-factor" class="doc-section searchable" data-search="TOTP 2FA Google Authenticator recovery codes reset"><span class="eyebrow">Authentication</span><h2>Two-factor authentication</h2><p>The grouped setup key is entered once in an authenticator app. Sign-in uses the current six-digit code or one complete recovery code.</p><aside class="callout"><strong>Recovery codes are encrypted.</strong> Viewing or replacing them requires a password and fresh TOTP code. Each works once.</aside><h3>Administrator reset</h3><pre><code>docker compose exec app bun server/reset-totp.ts user@example.com</code></pre><p>This revokes the user’s sessions and requires fresh enrollment.</p></section>
+
+      <section id="storage" class="doc-section searchable" data-search="storage markdown sqlite migrations data layout"><span class="eyebrow">Data</span><h2>Storage and migrations</h2><div class="split"><article><h3>On-disk layout</h3><pre><code>/data/
+├── mynotes.sqlite
+└── notes/&lt;note-id&gt;/
+    ├── current.md
+    ├── draft.md
+    └── versions/000001.md</code></pre></article><article><h3>Automatic upgrades</h3><p>Numbered migrations run transactionally before traffic is accepted and are recorded in <code>schema_migrations</code>.</p><p>Released migrations are append-only.</p></article></div></section>
+
+      <section id="backups" class="doc-section searchable" data-search="backup restore gzip weekly retention disaster recovery"><span class="eyebrow">Operations</span><h2>Backup and restore</h2><p>The backup script briefly stops the app for a consistent SQLite and Markdown snapshot, verifies gzip, and keeps five weekly archives.</p><pre><code>./scripts/backup.sh
+./scripts/backup.sh --force</code></pre><h3>Restore into an empty directory</h3><pre><code>mkdir -p /srv/mynotes-restored
+tar -xzf /srv/mynotes/backup/mynotes-*.tar.gz -C /srv/mynotes-restored
+MYNOTES_DATA_DIR=/srv/mynotes-restored docker compose up -d --build</code></pre><aside class="callout warning"><strong>Store <code>.env</code> separately.</strong> Backups intentionally exclude it and its TOTP key.</aside></section>
+
+      <section id="network" class="doc-section searchable" data-search="network HTTPS TLS reverse proxy Caddy Nginx origin"><span class="eyebrow">Networking</span><h2>Network and HTTPS</h2><p>Compose binds to <code>127.0.0.1:2026</code>. Keep the loopback binding and place a TLS reverse proxy in front.</p><ul class="checks"><li>Use HTTPS for non-local access.</li><li>Set <code>APP_ORIGIN</code> to the exact external origin.</li><li>Forward Host and protocol headers.</li><li>Never serve the data directory as static content.</li></ul></section>
+
+      <section id="security" class="doc-section searchable" data-search="security CSRF CSP Argon encryption container hardening"><span class="eyebrow">Security</span><h2>Security model</h2><div class="cards compact"><article><h3>Application</h3><p>Argon2id passwords, opaque HttpOnly sessions, SameSite cookies, CSRF tokens, CSP, and authenticated file reads.</p></article><article><h3>Data</h3><p>AES-256-GCM TOTP data, restrictive permissions, symlink refusal, atomic writes, and mutation locks.</p></article><article><h3>Container</h3><p>Non-root UID, read-only root, dropped capabilities, no-new-privileges, and a small tmpfs.</p></article></div><aside class="callout"><strong>Supported shape:</strong> a single Docker Compose host using local SQLite/WAL storage. Rate limiting is in memory and does not coordinate across replicas.</aside></section>
+
+      <section id="updates" class="doc-section searchable" data-search="update upgrade release pull migration deploy"><span class="eyebrow">Lifecycle</span><h2>Updating</h2><pre><code>./scripts/backup.sh --force
+git pull --ff-only
+APP_VERSION=&lt;release&gt; GIT_SHA=$(git rev-parse --short HEAD) \
+  docker compose up -d --build
+docker compose ps</code></pre><p>Pending migrations run automatically at startup. Review release notes first.</p></section>
+
+      <section id="troubleshooting" class="doc-section searchable" data-search="troubleshooting logs permissions login TOTP origin health"><span class="eyebrow">Help</span><h2>Troubleshooting</h2><div class="faq"><details><summary>Container cannot write data</summary><p>Ensure the host path exists and is writable by UID/GID 1000.</p></details><details><summary>Login fails behind a proxy</summary><p>Make <code>APP_ORIGIN</code> exactly match the browser scheme, host, and port.</p></details><details><summary>TOTP code is rejected</summary><p>Synchronize phone and server clocks. Codes are one-time; use a fresh code or recovery code.</p></details><details><summary>Inspect service health</summary><pre><code>docker compose logs --tail=200 app
+docker compose ps
+curl http://localhost:2026/api/health</code></pre></details></div></section>
+
+      <footer><span>Built by <a href="https://github.com/pankajsoni19">Pankaj Soni</a></span><span>MyNotes v0.1.2</span></footer>
+    </main>
+  </div>
+  <button class="scrim" aria-label="Close menu"></button>
+  <script src="./app.js" defer></script>
+</body>
+</html>

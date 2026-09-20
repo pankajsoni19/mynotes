@@ -2,6 +2,8 @@
 
 A private, multi-user note-taking app built with Bun, React, TypeScript, Tailwind CSS, Tiptap, and SQLite. Notes are stored as portable Markdown files with immutable version history.
 
+Documentation: [pankajsoni19.github.io/mynotes](https://pankajsoni19.github.io/mynotes/)
+
 <p align="center">
   <img src="docs/images/dashboard-dark.png" alt="MyNotes dark dashboard with folder navigation, note list, and Markdown editor" width="1200" />
 </p>

@@ -53,6 +53,7 @@
 - [x] Deploy locally with Docker Compose
 - [x] Weekly full-data gzip backup with five-snapshot retention and direct restore layout
 - [x] Numbered transactional SQLite migrations that run automatically at server boot
+- [x] Public GitHub Pages documentation with search, responsive navigation, and complete self-hosting reference
 
 ## Quality gates
 

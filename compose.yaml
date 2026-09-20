@@ -20,6 +20,7 @@ services:
       TOTP_POLICY: ${TOTP_POLICY:-optional}
       TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
       SESSION_DAYS: ${SESSION_DAYS:-14}
+      MAX_MARKDOWN_BYTES: ${MAX_MARKDOWN_BYTES:-2000000}
     volumes:
       - ${MYNOTES_DATA_DIR:-/home/soni/Desktop/MacSSD/mynotes}:/data
     read_only: true
