@@ -20,7 +20,7 @@ A private, multi-user note-taking app built with Bun, React, TypeScript, Tailwin
 
 1. Copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/home/soni/Desktop/MacSSD/mynotes` exists and is writable by Docker.
-3. Run `APP_VERSION=0.1.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
+3. Run `APP_VERSION=0.1.2 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
 4. Open `http://localhost:2026`.
 
 The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. “Everyone here” sharing includes all current and future registered users on that allowlist.

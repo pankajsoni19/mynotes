@@ -42,6 +42,7 @@
 - [x] Version history, content view, diff, and restore
 - [x] User picker and private/selected/all-users sharing controls
 - [x] Loading, empty, error, and conflict states
+- [x] Open Graph/Twitter landing metadata and reusable 1280×640 social preview image
 
 ## Container and operations
 
