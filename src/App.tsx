@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  ArrowUpDown,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -9,6 +10,7 @@ import {
   Folder as FolderIcon,
   FolderPlus,
   History,
+  Info,
   Lock,
   LogOut,
   Menu,
@@ -16,10 +18,12 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Search,
+  Settings,
   ShieldCheck,
   Share2,
   Smartphone,
   Sparkles,
+  Trash2,
   Users,
   X
 } from "lucide-react";
@@ -31,6 +35,16 @@ import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
 type MobilePanel = "folders" | "notes" | "editor";
+type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
+
+const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
+  { value: "updated-desc", label: "Recently edited" },
+  { value: "updated-asc", label: "Oldest edited" },
+  { value: "created-desc", label: "Recently added" },
+  { value: "created-asc", label: "Oldest added" },
+  { value: "title-asc", label: "Title A–Z" },
+  { value: "title-desc", label: "Title Z–A" }
+];
 
 function relativeTime(value: string) {
   const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
@@ -48,6 +62,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -57,7 +72,11 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
     try {
       const payload = registering
         ? { email: form.get("email"), password: form.get("password"), displayName: form.get("displayName") }
-        : { email: form.get("email"), password: form.get("password"), ...(needsTotp ? { totpCode: form.get("totpCode") } : {}) };
+        : {
+          email: form.get("email"),
+          password: form.get("password"),
+          ...(needsTotp ? useRecoveryCode ? { recoveryCode: form.get("recoveryCode") } : { totpCode: form.get("totpCode") } : {})
+        };
       const session = await api<SessionResponse>(registering ? "/auth/register" : "/auth/login", {
         method: "POST",
         body: JSON.stringify(payload)
@@ -87,11 +106,14 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
           {registering && <label>Name<input name="displayName" autoComplete="name" required maxLength={80} /></label>}
           <label>Email<input name="email" type="email" autoComplete="email" required /></label>
           <label>Password<input name="password" type="password" autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? 12 : 1} /></label>
-          {!registering && needsTotp && <label>Authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus /></label>}
+          {!registering && needsTotp && (useRecoveryCode
+            ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" minLength={10} maxLength={32} required autoFocus /><small>Enter one complete backup recovery code. Each code works once.</small></label>
+            : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small></label>)}
+          {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
-        <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setError(""); }}>
+        <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setError(""); }}>
           {registering ? "Already have an account? Sign in" : "Setting up MyNotes? Create the first account"}
         </button>
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>
@@ -101,15 +123,19 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
 }
 
 function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
+  const [section, setSection] = useState<"security" | "about">("security");
+  const [appInfo, setAppInfo] = useState({ version: "0.1.1", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
+    api<{ version: string; gitSha: string }>("/about").then(setAppInfo).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -141,9 +167,10 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const next = await api<TotpState>("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: form.get("code") }) });
+      const next = await api<TotpState & { recoveryCodes: string[] }>("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: form.get("code") }) });
       setSecret("");
       setQrCode("");
+      setRecoveryCodes(next.recoveryCodes);
       setState(next);
       onSecurityChanged(next);
     } catch (reason) {
@@ -176,6 +203,43 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
     window.setTimeout(() => setCopied(false), 1800);
   }
 
+  async function revealRecoveryCodes(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
+      setRecoveryCodes(result.recoveryCodes);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not reveal recovery codes");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function regenerateRecoveryCodes(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (recoveryCodes.length && !window.confirm("Generate new recovery codes? Every previous recovery code will stop working.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
+      setRecoveryCodes(result.recoveryCodes);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not generate recovery codes");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyRecoveryCodes() {
+    await navigator.clipboard.writeText(recoveryCodes.join("\n"));
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
   return (
     <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header className="settings-header">
@@ -183,13 +247,15 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
         {!state.setupRequired && <button className="icon-button" onClick={onClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className="active" aria-current="page"><ShieldCheck />Security</button></nav>
-        <section className="settings-content" aria-labelledby="security-heading">
+        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => setSection("security")}><ShieldCheck />Security</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => setSection("about")}><Info />About</button></nav>
+        {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
           {error && <p className="form-error" role="alert">{error}</p>}
           {state.enabled ? <div className="security-card enabled-card">
             <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account requires your password and an authentication code at sign in.</small></div></div>
+            {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes.</p><div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>View codes</button></div></form>}
+            <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with your password and a fresh six-digit Authenticator code.</p><div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
             {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable}>
               <h4>Disable authenticator</h4><p>Confirm your password and a current code.</p>
               <div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
@@ -202,11 +268,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
           </form> : <div className="security-card enrollment-card">
             <div className="enrollment-grid">
               <div className="qr-frame"><img src={qrCode} alt="QR code for MyNotes two-factor authentication" /></div>
-              <div><span className="step-label">1 · Scan the code</span><h4>Add MyNotes to Google Authenticator</h4><p>If you cannot scan it, enter this setup key manually.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy"}</span></button></div>
+              <div><span className="step-label">1 · Scan the code</span><h4>Add MyNotes to Google Authenticator</h4><p>If you cannot scan it, enter the entire setup key manually in Google Authenticator. The groups of four are only for readability; copying removes all spaces. This key is not entered when signing in.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy setup key without spaces"}</span></button></div>
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section>
+        </section> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About MyNotes</h3><p>A private, self-hosted place for notes, configuration, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>MyNotes</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );
@@ -394,10 +460,15 @@ export function App() {
   const [mobileActions, setMobileActions] = useState(false);
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
+  const [sortOpen, setSortOpen] = useState(false);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
   const [toast, setToast] = useState("");
+  const [selectionOwner, setSelectionOwner] = useState<string | null>(null);
+  const sessionUserRef = useRef<string | null>(null);
+  const noteLoadGenerationRef = useRef(0);
   const revisionRef = useRef<number | null>(null);
   const loadedRef = useRef("");
   const savingPromiseRef = useRef<Promise<boolean> | null>(null);
@@ -409,17 +480,22 @@ export function App() {
     window.setTimeout(() => setToast(""), 2600);
   }, []);
 
-  const loadNavigation = useCallback(async () => {
+  const loadNavigation = useCallback(async (expectedUserId = sessionUserRef.current) => {
     const [{ folders: folderRows }, { notes: noteRows }] = await Promise.all([
       api<{ folders: Folder[] }>("/folders"),
       api<{ notes: NoteSummary[] }>("/notes")
     ]);
+    if (!expectedUserId || sessionUserRef.current !== expectedUserId) return { folders: [] as Folder[], notes: [] as NoteSummary[], stale: true };
     setFolders(folderRows);
     setNotes(noteRows);
+    return { folders: folderRows, notes: noteRows, stale: false };
   }, []);
 
   const loadNote = useCallback(async (id: string) => {
+    const expectedUserId = sessionUserRef.current;
+    const generation = ++noteLoadGenerationRef.current;
     const { note: detail } = await api<{ note: NoteDetail }>(`/notes/${id}`);
+    if (!expectedUserId || sessionUserRef.current !== expectedUserId || generation !== noteLoadGenerationRef.current) return;
     setNote(detail);
     setMarkdown(detail.markdown);
     revisionRef.current = detail.draft_revision;
@@ -429,7 +505,7 @@ export function App() {
 
   useEffect(() => {
     api<SessionResponse>("/auth/me")
-      .then((result) => { setCsrfToken(result.csrfToken); setSession(result); })
+      .then((result) => { sessionUserRef.current = result.user.id; setCsrfToken(result.csrfToken); setSession(result); })
       .catch(() => undefined)
       .finally(() => setChecking(false));
   }, []);
@@ -437,9 +513,43 @@ export function App() {
   useEffect(() => {
     if (!session) return;
     if (session.totp.setupRequired) setSettingsOpen(true);
-    else loadNavigation();
-  }, [session, loadNavigation]);
-  useEffect(() => { if (selectedNoteId) loadNote(selectedNoteId); else setNote(null); }, [selectedNoteId, loadNote]);
+    else {
+      loadNavigation(session.user.id).then(({ folders: folderRows, notes: noteRows, stale }) => {
+        if (stale || sessionUserRef.current !== session.user.id) return;
+        let remembered: { folder?: string; noteId?: string } = {};
+        try { remembered = JSON.parse(localStorage.getItem(`mynotes:last:${session.user.id}`) ?? "{}"); } catch { /* use defaults */ }
+        const folder = remembered.folder;
+        const restoredFolder = folder && (folder === "all" || folder === "shared" || folderRows.some((item) => item.id === folder)) ? folder : "all";
+        setSelectedFolder(restoredFolder);
+        const restoredNote = remembered.noteId ? noteRows.find((item) => item.id === remembered.noteId) : undefined;
+        const noteInSection = restoredNote && (restoredFolder === "all" || (restoredFolder === "shared" ? restoredNote.is_owner === 0 : restoredNote.folder_id === restoredFolder));
+        setSelectedNoteId(noteInSection ? restoredNote.id : null);
+        setSelectionOwner(session.user.id);
+      }).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not open your notes"));
+    }
+  }, [flash, session, loadNavigation]);
+  useEffect(() => {
+    if (!session || selectionOwner !== session.user.id) return;
+    localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
+  }, [selectedFolder, selectedNoteId, selectionOwner, session]);
+  useEffect(() => {
+    if (selectedNoteId) loadNote(selectedNoteId);
+    else {
+      noteLoadGenerationRef.current += 1;
+      setNote(null);
+    }
+  }, [selectedNoteId, loadNote]);
+  useEffect(() => {
+    if (!sortOpen) return;
+    const closeSort = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+      if (event instanceof MouseEvent && event.target instanceof Element && event.target.closest(".sort-control")) return;
+      setSortOpen(false);
+    };
+    window.addEventListener("click", closeSort);
+    window.addEventListener("keydown", closeSort);
+    return () => { window.removeEventListener("click", closeSort); window.removeEventListener("keydown", closeSort); };
+  }, [sortOpen]);
 
   const saveDraft = useCallback(async () => {
     if (savingPromiseRef.current) await savingPromiseRef.current;
@@ -490,9 +600,15 @@ export function App() {
   }, [markdown, note?.id, note?.isOwner, saveDraft]);
 
   const visibleNotes = useMemo(() => notes.filter((item) => {
-    const inSection = selectedFolder === "all" ? item.is_owner === 1 : selectedFolder === "shared" ? item.is_owner === 0 : item.folder_id === selectedFolder;
+    const inSection = selectedFolder === "all" ? true : selectedFolder === "shared" ? item.is_owner === 0 : item.folder_id === selectedFolder;
     return inSection && item.title.toLowerCase().includes(query.toLowerCase());
-  }), [notes, query, selectedFolder]);
+  }).sort((left, right) => {
+    if (noteSort === "title-asc") return left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+    if (noteSort === "title-desc") return right.title.localeCompare(left.title, undefined, { sensitivity: "base" });
+    const field = noteSort.startsWith("created") ? "created_at" : "updated_at";
+    const delta = new Date(left[field]).getTime() - new Date(right[field]).getTime();
+    return noteSort.endsWith("desc") ? -delta : delta;
+  }), [noteSort, notes, query, selectedFolder]);
 
   const hasPublishableDelta = Boolean(note?.isOwner && (note.hasDelta || markdown !== loadedRef.current));
 
@@ -542,10 +658,29 @@ export function App() {
   async function moveNote(noteId: string, folder: Folder) {
     await api(`/notes/${noteId}`, { method: "PATCH", body: JSON.stringify({ folderId: folder.id }) });
     setNote((current) => current?.id === noteId ? { ...current, folder_id: folder.id } : current);
+    if (selectedNoteId === noteId) setSelectedFolder(folder.id);
     setDraggingNoteId(null);
     setDropFolderId(null);
     await loadNavigation();
     flash(`Moved to ${folder.name}`);
+  }
+
+  async function deleteNote(noteId: string, title: string) {
+    if (!window.confirm(`Delete “${title}”? This removes the note and its version history.`)) return;
+    if (noteId === selectedNoteId) {
+      cancelPendingAutosave();
+      if (savingPromiseRef.current) await savingPromiseRef.current;
+    }
+    await api(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
+    if (noteId === selectedNoteId) {
+      setSelectedNoteId(null);
+      setNote(null);
+      setMarkdown("");
+      revisionRef.current = null;
+      loadedRef.current = "";
+    }
+    await loadNavigation();
+    flash("Note deleted");
   }
 
   async function publish(reloadCurrent = true) {
@@ -578,6 +713,30 @@ export function App() {
     }
   }
 
+  async function selectFolder(nextFolder: string | "all" | "shared") {
+    if (nextFolder === selectedFolder) {
+      setMobilePanel("notes");
+      return;
+    }
+    if (switchingRef.current) return;
+    switchingRef.current = true;
+    try {
+      const removedEmptyNote = await removeEmptyNewNote();
+      if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+      setSelectedFolder(nextFolder);
+      setSelectedNoteId(null);
+      setNote(null);
+      setMarkdown("");
+      revisionRef.current = null;
+      loadedRef.current = "";
+      setMobilePanel("notes");
+    } catch (reason) {
+      flash(reason instanceof Error ? reason.message : "Could not switch folders");
+    } finally {
+      switchingRef.current = false;
+    }
+  }
+
   async function discard() {
     if (!note || !window.confirm("Discard this draft and return to the published version?")) return;
     const removesNote = note.current_version === 0;
@@ -598,28 +757,55 @@ export function App() {
 
   async function logout() {
     await api("/auth/logout", { method: "POST", body: "{}" });
+    sessionUserRef.current = null;
+    noteLoadGenerationRef.current += 1;
     setCsrfToken("");
+    cancelPendingAutosave();
+    setSelectedFolder("all");
+    setSelectedNoteId(null);
+    setNote(null);
+    setMarkdown("");
+    setFolders([]);
+    setNotes([]);
+    setSelectionOwner(null);
+    revisionRef.current = null;
+    loadedRef.current = "";
     setSession(null);
   }
 
   if (checking) return <main className="loading-page"><div className="brand-mark"><Sparkles /></div><span>Opening MyNotes…</span></main>;
-  if (!session) return <AuthScreen onAuthenticated={(result) => { setSession(result); setChecking(false); }} />;
+  if (!session) return <AuthScreen onAuthenticated={(result) => {
+    sessionUserRef.current = result.user.id;
+    noteLoadGenerationRef.current += 1;
+    cancelPendingAutosave();
+    setSelectedFolder("all");
+    setSelectedNoteId(null);
+    setNote(null);
+    setMarkdown("");
+    setFolders([]);
+    setNotes([]);
+    setSelectionOwner(null);
+    revisionRef.current = null;
+    loadedRef.current = "";
+    setSession(result);
+    setChecking(false);
+  }} />;
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane">
         <header className="sidebar-header">
-          <button className="workspace-account" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(true); }} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open account settings for ${session.user.displayName}`}><span className="brand-dot"><Sparkles /></span><span><strong>MyNotes</strong><small>{session.user.displayName}</small></span></button>
+          <button className="workspace-account" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(true); }} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}><span className="brand-dot"><Sparkles /></span><span><strong>MyNotes</strong><small><Settings />Settings · {session.user.displayName}</small></span><Settings className="workspace-settings-icon" aria-hidden="true" /></button>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse sidebar"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
-          <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { setSelectedFolder("all"); setMobilePanel("notes"); }}><Archive /><span>All notes</span><b>{notes.filter((item) => item.is_owner === 1).length}</b></button>
-          <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { setSelectedFolder("shared"); setMobilePanel("notes"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
+          <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
+          <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
           <div className="nav-label"><span>Folders</span><button onClick={createFolder} aria-label="New folder"><FolderPlus /></button></div>
           {folders.map((folder) => <div className="folder-entry" key={folder.id}>
             <button
               className={`folder-link${selectedFolder === folder.id ? " active" : ""}${dropFolderId === folder.id ? " drop-target" : ""}`}
-              onClick={() => { setSelectedFolder(folder.id); setMobilePanel("notes"); }}
+              onClick={() => { void selectFolder(folder.id); }}
               onDragEnter={(event) => { if (draggingNoteId && folder.is_owner === 1) { event.preventDefault(); setDropFolderId(folder.id); } }}
               onDragOver={(event) => { if (draggingNoteId && folder.is_owner === 1) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }}
               onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === folder.id ? null : current); }}
@@ -645,13 +831,21 @@ export function App() {
         <header className="note-pane-header">
           <div className="mobile-header"><button className="icon-button" onClick={() => setMobilePanel("folders")}><ChevronLeft /></button><strong>Notes</strong></div>
           <div className="note-heading"><span className="eyebrow">{selectedFolder === "shared" ? "Shared" : "Library"}</span><h1>{selectedFolder === "all" ? "All notes" : selectedFolder === "shared" ? "Shared with me" : folders.find((folder) => folder.id === selectedFolder)?.name}</h1></div>
-          <button className="icon-button new-note-button" onClick={createNote} aria-label="New note"><FilePlus2 /></button>
+          <div className="note-header-actions">
+            <div className="sort-control">
+              <button className="icon-button" onClick={() => setSortOpen((open) => !open)} aria-label="Sort notes" aria-expanded={sortOpen}><ArrowUpDown /></button>
+              {sortOpen && <div className="sort-menu" role="menu" aria-label="Sort notes">
+                {noteSortOptions.map((option) => <button key={option.value} className={noteSort === option.value ? "active" : ""} onClick={() => { setNoteSort(option.value); setSortOpen(false); }} role="menuitem"><span>{option.label}</span>{noteSort === option.value && <Check />}</button>)}
+              </div>}
+            </div>
+            <button className="icon-button new-note-button" onClick={createNote} aria-label="New note"><FilePlus2 /></button>
+          </div>
           <label className="search-box"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search notes" aria-label="Search notes" /></label>
         </header>
         <div className="note-list">
-          {visibleNotes.map((item) => <button
+          {visibleNotes.map((item) => <article
             key={item.id}
-            className={`${selectedNoteId === item.id ? "selected" : ""}${draggingNoteId === item.id ? " dragging" : ""}`}
+            className={`note-card${selectedNoteId === item.id ? " selected" : ""}${draggingNoteId === item.id ? " dragging" : ""}`}
             draggable={item.is_owner === 1}
             onDragStart={(event) => {
               if (item.is_owner !== 1) return;
@@ -661,12 +855,14 @@ export function App() {
               event.dataTransfer.setData("text/plain", item.id);
             }}
             onDragEnd={() => { setDraggingNoteId(null); setDropFolderId(null); }}
-            onClick={() => { void selectNote(item.id); }}
           >
-            <span className="note-title">{item.title}</span>
-            <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? <em>Draft</em> : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
-            {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
-          </button>)}
+            <button className="note-card-select" onClick={() => { void selectNote(item.id); }}>
+              <span className="note-title">{item.title}</span>
+              <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? <em>Draft</em> : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
+              {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
+            </button>
+            {item.is_owner === 1 && <button className="note-delete-button" onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
+          </article>)}
           {!visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? "Try another search." : selectedFolder === "shared" ? "Notes shared with you will appear here." : "Create a note and start writing."}</p>{!query && selectedFolder !== "shared" && <button onClick={createNote}>New note</button>}</div>}
         </div>
       </section>

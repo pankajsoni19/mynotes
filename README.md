@@ -20,7 +20,7 @@ A private, multi-user note-taking app built with Bun, React, TypeScript, Tailwin
 
 1. Copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/home/soni/Desktop/MacSSD/mynotes` exists and is writable by Docker.
-3. Run `docker compose up --build`.
+3. Run `APP_VERSION=0.1.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
 4. Open `http://localhost:2026`.
 
 The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. “Everyone here” sharing includes all current and future registered users on that allowlist.
@@ -33,7 +33,7 @@ Generate a server-side encryption key and keep it only in `.env`:
 openssl rand -base64 32
 ```
 
-Set the output as `TOTP_ENCRYPTION_KEY`. Set `TOTP_POLICY=optional` to let each user choose, or `TOTP_POLICY=required` to force enrollment before notes can be accessed. Click the account name in the left navigation, open **Security**, scan the locally generated QR code with Google Authenticator, and verify one six-digit code. TOTP secrets are encrypted in SQLite with AES-256-GCM; changing or losing the encryption key makes existing authenticator enrollments unusable.
+Set the output as `TOTP_ENCRYPTION_KEY`. Set `TOTP_POLICY=optional` to let each user choose, or `TOTP_POLICY=required` to force enrollment before notes can be accessed. Click the clearly labelled Settings control in the left navigation, open **Security**, scan the locally generated QR code with Google Authenticator, and verify one six-digit code. The grouped setup key is entered only while adding MyNotes to an authenticator; copying it removes visual spaces. Sign-in uses the current six-digit authenticator number or one complete, one-time recovery code. TOTP secrets and the recoverable backup-code list are encrypted in SQLite with AES-256-GCM; changing or losing the encryption key makes existing authenticator enrollments unusable.
 
 If a user loses their authenticator, the local machine administrator can reset that factor. This revokes every session and forces fresh enrollment on the next password sign-in:
 
@@ -65,6 +65,10 @@ The container reads and writes `/data`, mapped by Compose to:
 ```
 
 Markdown files are never exposed as static files; authenticated API handlers enforce note access before reading them.
+
+## Database migrations
+
+Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. Existing databases are upgraded automatically on container boot; new schema changes must be added as a new migration rather than editing an already released migration.
 
 The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files use `0600`. The service refuses symlinked note directories/files.
 

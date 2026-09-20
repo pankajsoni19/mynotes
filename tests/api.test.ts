@@ -58,6 +58,8 @@ describe("authorization and version workflow", () => {
   test("enforces restrictive data and database permissions", () => {
     expect(statSync(dataDir).mode & 0o777).toBe(0o700);
     expect(statSync(join(dataDir, "mynotes.sqlite")).mode & 0o777).toBe(0o600);
+    const migrations = db.query("SELECT id, name FROM schema_migrations ORDER BY id").all() as Array<{ id: number; name: string }>;
+    expect(migrations.map((migration) => migration.id)).toEqual([1, 2, 3, 4]);
   });
 
   test("rejects registration and login outside the email allowlist", async () => {
@@ -73,7 +75,7 @@ describe("authorization and version workflow", () => {
     expect(login.status).toBe(401);
   });
 
-  test("encrypts TOTP secrets, requires a code at login, and rejects replay", async () => {
+  test("encrypts TOTP and recovery codes, supports one-time recovery, and rejects replay", async () => {
     const owner = await register("TOTP owner");
     expect(totpCodeAt("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 1)).toBe("287082");
     const setupResponse = await request("/auth/totp/setup", { method: "POST", body: JSON.stringify({ password: owner.password }) }, owner);
@@ -89,7 +91,19 @@ describe("authorization and version workflow", () => {
     const previousCode = totpCodeAt(setup.secret, totpCounter() - 1);
     const enable = await request("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: previousCode }) }, owner);
     expect(enable.status).toBe(200);
-    expect(((await enable.json()) as { enabled: boolean }).enabled).toBe(true);
+    const enabled = await enable.json() as { enabled: boolean; recoveryCodes: string[] };
+    expect(enabled.enabled).toBe(true);
+    expect(enabled.recoveryCodes).toHaveLength(10);
+    expect(enabled.recoveryCodes[0]).toMatch(/^[A-Z2-7]{5}(?:-[A-Z2-7]{5}){2}$/);
+    const encryptedCodes = db.query("SELECT totp_recovery_codes FROM users WHERE id = ?").get(owner.userId) as { totp_recovery_codes: string };
+    expect(encryptedCodes.totp_recovery_codes.startsWith("v1:")).toBe(true);
+    expect(encryptedCodes.totp_recovery_codes).not.toContain(enabled.recoveryCodes[0]!);
+
+    const currentCounter = totpCounter();
+    const currentCode = totpCodeAt(setup.secret, currentCounter);
+    const reveal = await request("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ password: owner.password, code: currentCode }) }, owner);
+    expect(reveal.status).toBe(200);
+    expect(((await reveal.json()) as { recoveryCodes: string[] }).recoveryCodes).toEqual(enabled.recoveryCodes);
 
     await request("/auth/logout", { method: "POST", body: "{}" }, owner);
     const passwordOnly = await request("/auth/login", {
@@ -99,17 +113,36 @@ describe("authorization and version workflow", () => {
     expect(passwordOnly.status).toBe(428);
     expect(((await passwordOnly.json()) as { requiresTotp: boolean }).requiresTotp).toBe(true);
 
-    const currentCode = totpCodeAt(setup.secret, totpCounter());
+    db.query("UPDATE users SET totp_last_counter = ? WHERE id = ?").run(currentCounter - 1, owner.userId);
     const login = await request("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email: owner.email, password: owner.password, totpCode: currentCode })
     });
     expect(login.status).toBe(200);
+    const loginBody = await login.json() as { csrfToken: string };
+    const loginSession: Session = { ...owner, csrf: loginBody.csrfToken, cookie: login.headers.get("set-cookie")!.split(";", 1)[0]! };
     const replay = await request("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email: owner.email, password: owner.password, totpCode: currentCode })
     });
     expect(replay.status).toBe(401);
+
+    const recoveryLogin = await request("/auth/login", { method: "POST", body: JSON.stringify({ email: owner.email, password: owner.password, recoveryCode: enabled.recoveryCodes[0] }) });
+    expect(recoveryLogin.status).toBe(200);
+    const recoveryReplay = await request("/auth/login", { method: "POST", body: JSON.stringify({ email: owner.email, password: owner.password, recoveryCode: enabled.recoveryCodes[0] }) });
+    expect(recoveryReplay.status).toBe(401);
+
+    db.query("UPDATE users SET totp_last_counter = ?, totp_recovery_codes = NULL WHERE id = ?").run(currentCounter - 1, owner.userId);
+    const regenerate = await request("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ password: owner.password, code: currentCode }) }, loginSession);
+    expect(regenerate.status).toBe(200);
+    const regeneratedCodes = ((await regenerate.json()) as { recoveryCodes: string[] }).recoveryCodes;
+    expect(regeneratedCodes).toHaveLength(10);
+    expect(regeneratedCodes).not.toEqual(enabled.recoveryCodes);
+
+    db.query("UPDATE users SET totp_last_counter = ? WHERE id = ?").run(currentCounter - 1, owner.userId);
+    const revealRegenerated = await request("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ password: owner.password, code: currentCode }) }, loginSession);
+    expect(revealRegenerated.status).toBe(200);
+    expect(((await revealRegenerated.json()) as { recoveryCodes: string[] }).recoveryCodes).toEqual(regeneratedCodes);
   }, 20_000);
 
   test("keeps notes private, rejects CSRF, then shares and versions safely", async () => {

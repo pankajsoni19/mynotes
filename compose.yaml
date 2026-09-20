@@ -3,6 +3,9 @@ services:
     build:
       context: .
       target: production
+      args:
+        APP_VERSION: ${APP_VERSION:-0.1.1}
+        GIT_SHA: ${GIT_SHA:-development}
     container_name: mynotes
     restart: unless-stopped
     user: "1000:1000"

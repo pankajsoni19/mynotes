@@ -8,7 +8,9 @@ One Bun process serves the built React SPA and the `/api` JSON API. SQLite uses 
 
 Passwords use Bun's asynchronous Argon2id implementation. A random opaque session token is stored only as a SHA-256 hash in SQLite and sent in an `HttpOnly`, `SameSite=Strict` cookie. Mutations require a same-origin request, JSON content type, and an authenticated session.
 
-TOTP two-factor authentication is compatible with Google Authenticator (`SHA-1`, 6 digits, 30-second period). Secrets are encrypted at rest with AES-256-GCM using a key supplied outside the database through `.env`; authenticated setup returns the plaintext secret only for initial enrollment. Accepted counters are atomically persisted so the same code cannot be replayed. When TOTP is required, authenticated users without an enrolled factor can access only enrollment, session-status, and logout endpoints. Enabling or disabling a factor revokes every other session.
+TOTP two-factor authentication is compatible with Google Authenticator (`SHA-1`, 6 digits, 30-second period). Secrets and revealable one-time recovery codes are encrypted at rest with AES-256-GCM using purpose-separated authenticated encryption and a key supplied outside the database through `.env`. Recovery-code viewing or regeneration requires password plus a fresh TOTP code. Accepted counters and recovery-code consumption are atomically persisted so credentials cannot be replayed. When TOTP is required, authenticated users without an enrolled factor can access only enrollment, session-status, and logout endpoints. Enabling or disabling a factor revokes every other session.
+
+Database changes live in ordered files under `server/migrations`. Startup runs each pending migration in a SQLite transaction and records it in `schema_migrations` before routes are served. Released migrations are append-only.
 
 Every note query checks one of:
 

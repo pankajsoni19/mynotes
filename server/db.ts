@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { config } from "./config";
+import { runMigrations } from "./migrations";
 
 process.umask(0o077);
 mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
@@ -11,113 +12,7 @@ db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
 db.exec("PRAGMA busy_timeout = 5000");
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT NOT NULL COLLATE NOCASE UNIQUE,
-    display_name TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    disabled_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    csrf_token TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS folders (
-    id TEXT PRIMARY KEY,
-    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS notes (
-    id TEXT PRIMARY KEY,
-    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
-    title TEXT NOT NULL,
-    visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'selected', 'all_users')),
-    current_version INTEGER NOT NULL DEFAULT 0,
-    draft_revision INTEGER,
-    draft_checksum TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    deleted_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS note_versions (
-    id TEXT PRIMARY KEY,
-    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-    version_number INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    author_id TEXT NOT NULL REFERENCES users(id),
-    created_at TEXT NOT NULL,
-    UNIQUE(note_id, version_number)
-  );
-
-  CREATE TABLE IF NOT EXISTS note_shares (
-    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY(note_id, user_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS folder_shares (
-    folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY(folder_id, user_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-    note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
-    event_type TEXT NOT NULL,
-    metadata_json TEXT,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
-  CREATE INDEX IF NOT EXISTS idx_folders_owner_parent ON folders(owner_id, parent_id);
-  CREATE INDEX IF NOT EXISTS idx_notes_owner_folder ON notes(owner_id, folder_id, updated_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_versions_note_number ON note_versions(note_id, version_number DESC);
-  CREATE INDEX IF NOT EXISTS idx_shares_user_note ON note_shares(user_id, note_id);
-`);
-
-const folderColumns = db.query("PRAGMA table_info(folders)").all() as Array<{ name: string }>;
-if (!folderColumns.some((column) => column.name === "is_default")) {
-  db.exec("ALTER TABLE folders ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0");
-}
-if (!folderColumns.some((column) => column.name === "visibility")) {
-  db.exec("ALTER TABLE folders ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'selected', 'all_users'))");
-}
-const noteColumns = db.query("PRAGMA table_info(notes)").all() as Array<{ name: string }>;
-if (!noteColumns.some((column) => column.name === "sharing_override")) {
-  db.exec("ALTER TABLE notes ADD COLUMN sharing_override INTEGER NOT NULL DEFAULT 0");
-}
-const userColumns = db.query("PRAGMA table_info(users)").all() as Array<{ name: string }>;
-if (!userColumns.some((column) => column.name === "totp_secret")) {
-  db.exec("ALTER TABLE users ADD COLUMN totp_secret TEXT");
-}
-if (!userColumns.some((column) => column.name === "totp_enabled_at")) {
-  db.exec("ALTER TABLE users ADD COLUMN totp_enabled_at TEXT");
-}
-if (!userColumns.some((column) => column.name === "totp_last_counter")) {
-  db.exec("ALTER TABLE users ADD COLUMN totp_last_counter INTEGER");
-}
-db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_owner_default ON folders(owner_id) WHERE is_default = 1");
-db.exec("CREATE INDEX IF NOT EXISTS idx_folder_shares_user_folder ON folder_shares(user_id, folder_id)");
+runMigrations(db);
 
 db.exec("PRAGMA optimize");
 
@@ -135,6 +30,7 @@ export type UserRow = {
   totp_secret: string | null;
   totp_enabled_at: string | null;
   totp_last_counter: number | null;
+  totp_recovery_codes: string | null;
 };
 
 export type NoteRow = {

@@ -16,9 +16,13 @@ RUN bun install --frozen-lockfile --production
 
 FROM oven/bun:1.2.22-alpine@sha256:ab596b6d0dcad05d23799b89451e92f4cdc16da184a9a4d240c42eaf3c4b9278 AS production
 WORKDIR /app
+ARG APP_VERSION=0.1.1
+ARG GIT_SHA=development
 ENV NODE_ENV=production \
     PORT=2026 \
-    DATA_DIR=/data
+    DATA_DIR=/data \
+    APP_VERSION=$APP_VERSION \
+    GIT_SHA=$GIT_SHA
 COPY --chown=bun:bun --from=production-dependencies /app/node_modules ./node_modules
 COPY --chown=bun:bun --from=production-dependencies /app/package.json ./package.json
 COPY --chown=bun:bun --from=build /app/dist ./dist

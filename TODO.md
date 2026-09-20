@@ -24,8 +24,12 @@
 - [x] Minimal login / registration landing page
 - [x] Wide account settings dialog with responsive security navigation
 - [x] Google Authenticator-compatible encrypted TOTP enrollment and login challenge
+- [x] Encrypted, one-time TOTP recovery codes with secure reveal and regeneration
+- [x] Clear distinction between setup keys, six-digit codes, and recovery codes
 - [x] Responsive three-pane macOS Notes-inspired dashboard
 - [x] Collapsible folder navigation and note list
+- [x] Clear Settings control, Security/About navigation, version, and Git build metadata
+- [x] Delete controls, six-way note sorting, and all-notes default/resume behavior
 - [x] Outline-like Tiptap editor with bubble toolbar and `/` commands
 - [x] Visible ordered/bullet markers, underlined links, and aligned checklist rows
 - [x] Debounced draft autosave and explicit publish/discard controls
@@ -47,6 +51,7 @@
 - [x] Production dependency/build verification
 - [x] Deploy locally with Docker Compose
 - [x] Weekly full-data gzip backup with five-snapshot retention and direct restore layout
+- [x] Numbered transactional SQLite migrations that run automatically at server boot
 
 ## Quality gates
 

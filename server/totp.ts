@@ -40,22 +40,49 @@ export function createTotpSecret() {
   return encodeBase32(randomBytes(20));
 }
 
-export function encryptTotpSecret(secret: string, key: Buffer, userId: string) {
+function encryptValue(value: string, key: Buffer, userId: string, purpose: "totp" | "recovery") {
   const nonce = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, nonce);
-  cipher.setAAD(Buffer.from(`mynotes:totp:v1:${userId}`));
-  const ciphertext = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
+  cipher.setAAD(Buffer.from(`mynotes:${purpose}:v1:${userId}`));
+  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `v1:${nonce.toString("base64url")}:${tag.toString("base64url")}:${ciphertext.toString("base64url")}`;
 }
 
-export function decryptTotpSecret(encrypted: string, key: Buffer, userId: string) {
+function decryptValue(encrypted: string, key: Buffer, userId: string, purpose: "totp" | "recovery") {
   const [version, nonceValue, tagValue, ciphertextValue] = encrypted.split(":");
   if (version !== "v1" || !nonceValue || !tagValue || !ciphertextValue) throw new Error("Invalid encrypted TOTP secret");
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(nonceValue, "base64url"));
-  decipher.setAAD(Buffer.from(`mynotes:totp:v1:${userId}`));
+  decipher.setAAD(Buffer.from(`mynotes:${purpose}:v1:${userId}`));
   decipher.setAuthTag(Buffer.from(tagValue, "base64url"));
   return Buffer.concat([decipher.update(Buffer.from(ciphertextValue, "base64url")), decipher.final()]).toString("utf8");
+}
+
+export const encryptTotpSecret = (secret: string, key: Buffer, userId: string) => encryptValue(secret, key, userId, "totp");
+export const decryptTotpSecret = (encrypted: string, key: Buffer, userId: string) => decryptValue(encrypted, key, userId, "totp");
+
+export function createRecoveryCodes(count = 10) {
+  return Array.from({ length: count }, () => {
+    const value = encodeBase32(randomBytes(9)).slice(0, 15);
+    return value.match(/.{1,5}/g)!.join("-");
+  });
+}
+
+export const encryptRecoveryCodes = (codes: string[], key: Buffer, userId: string) => encryptValue(JSON.stringify(codes), key, userId, "recovery");
+export const decryptRecoveryCodes = (encrypted: string, key: Buffer, userId: string) => {
+  const value = JSON.parse(decryptValue(encrypted, key, userId, "recovery"));
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new Error("Invalid recovery-code data");
+  return value as string[];
+};
+
+export function normalizeRecoveryCode(code: string) {
+  return code.replace(/[^A-Za-z2-7]/g, "").toUpperCase();
+}
+
+export function recoveryCodeMatches(expected: string, supplied: string) {
+  const a = Buffer.from(normalizeRecoveryCode(expected));
+  const b = Buffer.from(normalizeRecoveryCode(supplied));
+  return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
 }
 
 export function totpCounter(at = Date.now()) {
