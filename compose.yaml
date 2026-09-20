@@ -1,0 +1,31 @@
+services:
+  app:
+    build:
+      context: .
+      target: production
+    container_name: mynotes
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2026:2026"
+    environment:
+      PORT: "2026"
+      DATA_DIR: /data
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:2026}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      SESSION_DAYS: ${SESSION_DAYS:-14}
+    volumes:
+      - /home/soni/Desktop/MacSSD/mynotes:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2026/api/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 8s
+
