@@ -1,0 +1,43 @@
+{
+  "name": "mynotes",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch server/index.ts",
+    "dev:client": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "NODE_ENV=production bun server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@tiptap/core": "latest",
+    "@tiptap/extension-link": "latest",
+    "@tiptap/extension-placeholder": "latest",
+    "@tiptap/extension-task-item": "latest",
+    "@tiptap/extension-task-list": "latest",
+    "@tiptap/markdown": "latest",
+    "@tiptap/pm": "latest",
+    "@tiptap/react": "latest",
+    "@tiptap/starter-kit": "latest",
+    "@tiptap/suggestion": "latest",
+    "hono": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-router-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "latest",
+    "@types/bun": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}
+
