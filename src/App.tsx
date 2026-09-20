@@ -227,6 +227,7 @@ export function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("folders");
   const [panel, setPanel] = useState<"history" | "share" | null>(null);
+  const [mobileActions, setMobileActions] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
   const [toast, setToast] = useState("");
   const revisionRef = useRef<number | null>(null);
@@ -382,8 +383,13 @@ export function App() {
               {note.isOwner && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
               {note.isOwner && note.hasDraft && <button className="text-action" onClick={discard}>Discard</button>}
               {note.isOwner && <button className="publish-button" onClick={publish}>Publish version</button>}
-              <button className="icon-button mobile-more" aria-label="More actions"><MoreHorizontal /></button>
+              <button className="icon-button mobile-more" onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
             </div>
+            {mobileActions && <div className="mobile-actions-menu">
+              <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
+              {note.isOwner && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
+              {note.isOwner && note.hasDraft && <button onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
+            </div>}
           </header>
           <article className="document-shell">
             <input className="note-title-input" value={title} onChange={(event) => setTitle(event.target.value)} readOnly={!note.isOwner} maxLength={240} aria-label="Note title" />
@@ -405,4 +411,3 @@ export function App() {
     </main>
   );
 }
-

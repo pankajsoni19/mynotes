@@ -34,6 +34,16 @@ app.use("*", secureHeaders({
     frameAncestors: ["'none'"]
   },
   referrerPolicy: "no-referrer",
+  strictTransportSecurity: config.appOrigin.startsWith("https://")
+    ? "max-age=15552000; includeSubDomains"
+    : false,
+  permissionsPolicy: {
+    camera: false,
+    microphone: false,
+    geolocation: false,
+    payment: false,
+    usb: false
+  },
   xContentTypeOptions: "nosniff",
   xFrameOptions: "DENY"
 }));
@@ -44,6 +54,17 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
+
+app.use("/api/auth/login", async (c, next) => {
+  if (c.req.header("Origin") !== config.appOrigin) return c.json({ error: "Invalid request origin" }, 403);
+  if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
+  await next();
+});
+app.use("/api/auth/register", async (c, next) => {
+  if (c.req.header("Origin") !== config.appOrigin) return c.json({ error: "Invalid request origin" }, 403);
+  if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
+  await next();
+});
 
 const authAttempts = new Map<string, { count: number; resetAt: number }>();
 function rateLimited(key: string) {
@@ -371,6 +392,8 @@ app.onError((error, c) => {
   return c.json({ error: "Something went wrong" }, 500);
 });
 
+app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
+
 if (config.isProduction) {
   app.use("/*", serveStatic({ root: "./dist" }));
   app.get("/*", serveStatic({ path: "./dist/index.html" }));
@@ -382,4 +405,3 @@ export default {
   fetch: app.fetch,
   maxRequestBodySize: 2_100_000
 };
-
