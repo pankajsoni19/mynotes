@@ -795,7 +795,7 @@ export function App() {
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane">
         <header className="sidebar-header">
-          <button className="workspace-account" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(true); }} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}><span className="brand-dot"><Sparkles /></span><span><strong>MyNotes</strong><small><Settings />Settings · {session.user.displayName}</small></span><Settings className="workspace-settings-icon" aria-hidden="true" /></button>
+          <div className="sidebar-brand"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></div>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse sidebar"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
@@ -824,7 +824,13 @@ export function App() {
           </div>)}
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
-        <footer className="sidebar-footer"><button onClick={logout}><LogOut />Sign out</button></footer>
+        <footer className="sidebar-footer">
+          <button className="footer-settings" title={session.user.displayName} onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(true); }} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
+            <strong>{session.user.displayName}</strong>
+            <span><Settings />Settings</span>
+          </button>
+          <button className="footer-signout" onClick={logout}><LogOut />Sign out</button>
+        </footer>
       </aside>
 
       <section className="note-pane">

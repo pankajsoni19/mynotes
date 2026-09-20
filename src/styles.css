@@ -54,13 +54,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .folder-pane, .note-pane, .editor-pane { min-width: 0; min-height: 0; }
 .folder-pane { display: flex; flex-direction: column; background: #0c0c0e; border-right: 1px solid var(--border); }
 .sidebar-header { height: 78px; padding: 16px 14px 12px 18px; display: flex; align-items: center; justify-content: space-between; }
-.workspace-account { min-width: 0; display: flex; align-items: center; gap: 11px; overflow: hidden; border: 0; border-radius: 10px; padding: 5px 7px 5px 0; background: transparent; text-align: left; cursor: pointer; }
-.workspace-account:hover { background: #171719; }
-.workspace-account > span:nth-child(2) { display: grid; min-width: 0; }
-.workspace-account strong { font-size: .95rem; }
-.workspace-account small { display: flex; align-items: center; gap: 4px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-account small svg { width: 12px; height: 12px; flex: none; }
-.workspace-settings-icon { width: 16px; height: 16px; margin-left: auto; color: #6f6f76; }
+.sidebar-brand { min-width: 0; display: flex; align-items: center; gap: 11px; }
+.sidebar-brand strong { font-size: .95rem; }
 .brand-dot { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--yellow); color: #2d230c; }
 .brand-dot svg { width: 17px; }
 .icon-button { width: 36px; height: 36px; flex: none; border: 0; border-radius: 9px; display: grid; place-items: center; background: transparent; color: #aaaab0; cursor: pointer; }
@@ -88,10 +83,16 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .nav-label button:hover { color: var(--yellow); background: #1b1b1e; }
 .nav-label svg { width: 15px; }
 .nav-empty { margin: 7px 10px; color: #5f5f66; font-size: .77rem; line-height: 1.5; }
-.sidebar-footer { padding: 11px; border-top: 1px solid var(--border); }
-.sidebar-footer button { width: 100%; display: flex; align-items: center; gap: 9px; border: 0; padding: 10px; border-radius: 9px; background: transparent; color: #85858c; cursor: pointer; }
-.sidebar-footer button:hover { background: #171719; color: #ddd; }
-.sidebar-footer svg { width: 17px; }
+.sidebar-footer { display: grid; gap: 5px; padding: 10px; border-top: 1px solid var(--border); }
+.sidebar-footer button { width: 100%; border: 0; border-radius: 9px; background: transparent; cursor: pointer; }
+.footer-settings { min-width: 0; display: grid; gap: 5px; padding: 10px; background: #131315; color: #e3e3e5; text-align: left; }
+.footer-settings:hover { background: #1b1b1e; }
+.footer-settings strong { overflow-wrap: anywhere; font-size: .88rem; line-height: 1.25; }
+.footer-settings span { display: flex; align-items: center; gap: 6px; color: #85858c; font-size: .74rem; }
+.footer-settings span svg { width: 14px; height: 14px; flex: none; }
+.footer-signout { display: flex; align-items: center; gap: 9px; padding: 9px 10px; color: #77777f; text-align: left; }
+.footer-signout:hover { background: #171719; color: #ddd; }
+.footer-signout svg { width: 16px; }
 
 .note-pane { display: flex; flex-direction: column; background: #111113; border-right: 1px solid var(--border); }
 .note-pane-header { padding: 22px 18px 14px; position: relative; }
