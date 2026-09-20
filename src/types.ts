@@ -1,5 +1,16 @@
 export type User = { id: string; email?: string; displayName: string };
-export type Folder = { id: string; parent_id: string | null; name: string; created_at: string; updated_at: string };
+export type Folder = {
+  id: string;
+  owner_id: string;
+  owner_name: string;
+  parent_id: string | null;
+  name: string;
+  is_default: number;
+  is_owner: number;
+  visibility: "private" | "selected" | "all_users";
+  created_at: string;
+  updated_at: string;
+};
 export type NoteSummary = {
   id: string;
   owner_id: string;
@@ -16,6 +27,7 @@ export type NoteSummary = {
 export type NoteDetail = NoteSummary & {
   isOwner: boolean;
   hasDraft: boolean;
+  hasDelta: boolean;
   markdown: string;
 };
 export type Version = {

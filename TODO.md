@@ -25,7 +25,14 @@
 - [x] Responsive three-pane macOS Notes-inspired dashboard
 - [x] Collapsible folder navigation and note list
 - [x] Outline-like Tiptap editor with bubble toolbar and `/` commands
+- [x] Visible ordered/bullet markers, underlined links, and aligned checklist rows
 - [x] Debounced draft autosave and explicit publish/discard controls
+- [x] Auto-publish changed drafts when switching notes
+- [x] Remove never-published blank notes when switching away
+- [x] Hide publish controls when draft content matches the published version
+- [x] Derive note titles from the first Markdown line
+- [x] Default folder assignment and drag-to-folder organization
+- [x] Folder sharing with note-level permission precedence
 - [x] Version history, content view, diff, and restore
 - [x] User picker and private/selected/all-users sharing controls
 - [x] Loading, empty, error, and conflict states
@@ -37,6 +44,7 @@
 - [x] Health check and port `2026`
 - [x] Production dependency/build verification
 - [x] Deploy locally with Docker Compose
+- [x] Weekly full-data gzip backup with five-snapshot retention and direct restore layout
 
 ## Quality gates
 

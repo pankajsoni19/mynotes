@@ -173,7 +173,7 @@ function HistoryPanel({ note, onClose, onRestored }: { note: NoteDetail; onClose
 
 function SharePanel({ note, onClose, onChanged }: { note: NoteDetail; onClose: () => void; onChanged: () => void }) {
   const [users, setUsers] = useState<User[]>([]);
-  const [visibility, setVisibility] = useState<"private" | "selected" | "all_users">(note.visibility);
+  const [visibility, setVisibility] = useState<"inherit" | "private" | "selected" | "all_users">("inherit");
   const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(true);
 
@@ -200,6 +200,7 @@ function SharePanel({ note, onClose, onChanged }: { note: NoteDetail; onClose: (
     <aside className="side-panel share-panel">
       <header><div><span className="eyebrow">Access</span><h2>Share note</h2></div><button className="icon-button" onClick={onClose} aria-label="Close sharing"><X /></button></header>
       <div className="share-options">
+        <label><input type="radio" checked={visibility === "inherit"} onChange={() => setVisibility("inherit")} /><span><FolderIcon />Use folder access<small>Inherit this note’s folder sharing</small></span></label>
         <label><input type="radio" checked={visibility === "private"} onChange={() => setVisibility("private")} /><span><Lock />Private<small>Only you can open this note</small></span></label>
         <label><input type="radio" checked={visibility === "selected"} onChange={() => setVisibility("selected")} /><span><Users />Selected people<small>Choose registered users below</small></span></label>
         <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>All signed-in users, never public</small></span></label>
@@ -213,6 +214,48 @@ function SharePanel({ note, onClose, onChanged }: { note: NoteDetail; onClose: (
   );
 }
 
+function FolderSharePanel({ folder, onClose, onChanged }: { folder: Folder; onClose: () => void; onChanged: () => void }) {
+  const [users, setUsers] = useState<User[]>([]);
+  const [visibility, setVisibility] = useState<"private" | "selected" | "all_users">(folder.visibility);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [busy, setBusy] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      api<{ users: User[] }>("/users"),
+      api<{ visibility: typeof visibility; users: Array<{ id: string }> }>(`/folders/${folder.id}/sharing`)
+    ]).then(([allUsers, sharing]) => {
+      setUsers(allUsers.users);
+      setVisibility(sharing.visibility);
+      setSelected(sharing.users.map((user) => user.id));
+      setBusy(false);
+    });
+  }, [folder.id]);
+
+  async function save() {
+    setBusy(true);
+    await api(`/folders/${folder.id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility, userIds: visibility === "selected" ? selected : [] }) });
+    setBusy(false);
+    onChanged();
+  }
+
+  return (
+    <aside className="side-panel share-panel">
+      <header><div><span className="eyebrow">Folder access</span><h2>{folder.name}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close folder sharing"><X /></button></header>
+      <div className="share-options">
+        <label><input type="radio" checked={visibility === "private"} onChange={() => setVisibility("private")} /><span><Lock />Private<small>Only you can open this folder’s notes</small></span></label>
+        <label><input type="radio" checked={visibility === "selected"} onChange={() => setVisibility("selected")} /><span><Users />Selected people<small>Share inherited notes with chosen users</small></span></label>
+        <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>All signed-in allowlisted users</small></span></label>
+      </div>
+      {visibility === "selected" && <div className="user-picker">
+        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}</span></label>)}
+        {!users.length && <p className="empty-copy">Another signed-in user is needed before sharing this folder.</p>}
+      </div>}
+      <button className="primary-button share-save" onClick={save} disabled={busy || (visibility === "selected" && !selected.length)}>Save folder access</button>
+    </aside>
+  );
+}
+
 export function App() {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [checking, setChecking] = useState(true);
@@ -222,16 +265,21 @@ export function App() {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [markdown, setMarkdown] = useState("");
-  const [title, setTitle] = useState("");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("folders");
   const [panel, setPanel] = useState<"history" | "share" | null>(null);
   const [mobileActions, setMobileActions] = useState(false);
+  const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
+  const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
+  const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
   const [toast, setToast] = useState("");
   const revisionRef = useRef<number | null>(null);
   const loadedRef = useRef("");
+  const savingPromiseRef = useRef<Promise<boolean> | null>(null);
+  const switchingRef = useRef(false);
+  const autosaveTimerRef = useRef<number | null>(null);
 
   const flash = useCallback((message: string) => {
     setToast(message);
@@ -251,9 +299,8 @@ export function App() {
     const { note: detail } = await api<{ note: NoteDetail }>(`/notes/${id}`);
     setNote(detail);
     setMarkdown(detail.markdown);
-    setTitle(detail.title);
     revisionRef.current = detail.draft_revision;
-    loadedRef.current = `${detail.title}\0${detail.markdown}`;
+    loadedRef.current = detail.markdown;
     setSaveState("saved");
   }, []);
 
@@ -268,36 +315,76 @@ export function App() {
   useEffect(() => { if (selectedNoteId) loadNote(selectedNoteId); else setNote(null); }, [selectedNoteId, loadNote]);
 
   const saveDraft = useCallback(async () => {
-    if (!note?.isOwner || `${title}\0${markdown}` === loadedRef.current) return revisionRef.current;
-    setSaveState("saving");
-    try {
-      const result = await api<{ revision: number }>(`/notes/${note.id}/draft`, {
+    if (savingPromiseRef.current) await savingPromiseRef.current;
+    if (!note?.isOwner || markdown === loadedRef.current) return note?.hasDelta ?? false;
+    const noteId = note.id;
+    const draftMarkdown = markdown;
+    const revision = revisionRef.current;
+    const task = (async () => {
+      setSaveState("saving");
+      const result = await api<{ revision: number; title: string; hasDelta: boolean }>(`/notes/${noteId}/draft`, {
         method: "PUT",
-        body: JSON.stringify({ title: title.trim() || "Untitled note", markdown, revision: revisionRef.current })
+        body: JSON.stringify({ markdown: draftMarkdown, revision })
       });
       revisionRef.current = result.revision;
-      loadedRef.current = `${title}\0${markdown}`;
-      setNote((current) => current ? { ...current, title, markdown, hasDraft: true, draft_revision: result.revision } : current);
+      loadedRef.current = draftMarkdown;
+      setNote((current) => current?.id === noteId ? {
+        ...current,
+        title: result.title,
+        markdown: draftMarkdown,
+        hasDraft: true,
+        hasDelta: result.hasDelta,
+        draft_revision: result.revision
+      } : current);
       setSaveState("saved");
       await loadNavigation();
-      return result.revision;
+      return result.hasDelta;
+    })();
+    savingPromiseRef.current = task;
+    try {
+      return await task;
     } catch (reason) {
       setSaveState(reason instanceof ApiError && reason.status === 409 ? "conflict" : "error");
       throw reason;
+    } finally {
+      if (savingPromiseRef.current === task) savingPromiseRef.current = null;
     }
-  }, [loadNavigation, markdown, note, title]);
+  }, [loadNavigation, markdown, note]);
 
   useEffect(() => {
-    if (!note?.isOwner || `${title}\0${markdown}` === loadedRef.current) return;
+    if (!note?.isOwner || markdown === loadedRef.current) return;
     setSaveState("saving");
     const timer = window.setTimeout(() => saveDraft().catch(() => undefined), 900);
-    return () => window.clearTimeout(timer);
-  }, [markdown, note?.id, note?.isOwner, saveDraft, title]);
+    autosaveTimerRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (autosaveTimerRef.current === timer) autosaveTimerRef.current = null;
+    };
+  }, [markdown, note?.id, note?.isOwner, saveDraft]);
 
   const visibleNotes = useMemo(() => notes.filter((item) => {
     const inSection = selectedFolder === "all" ? item.is_owner === 1 : selectedFolder === "shared" ? item.is_owner === 0 : item.folder_id === selectedFolder;
     return inSection && item.title.toLowerCase().includes(query.toLowerCase());
   }), [notes, query, selectedFolder]);
+
+  const hasPublishableDelta = Boolean(note?.isOwner && (note.hasDelta || markdown !== loadedRef.current));
+
+  function cancelPendingAutosave() {
+    if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
+  }
+
+  async function removeEmptyNewNote() {
+    if (!note?.isOwner || note.current_version !== 0 || markdown.trim() !== "") return false;
+    cancelPendingAutosave();
+    if (savingPromiseRef.current) await savingPromiseRef.current;
+    await api(`/notes/${note.id}`, { method: "DELETE", body: "{}" });
+    revisionRef.current = null;
+    loadedRef.current = "";
+    setNote(null);
+    await loadNavigation();
+    return true;
+  }
 
   async function createFolder() {
     const name = window.prompt("Folder name");
@@ -307,26 +394,79 @@ export function App() {
   }
 
   async function createNote() {
-    const folderId = typeof selectedFolder === "string" && !["all", "shared"].includes(selectedFolder) ? selectedFolder : null;
-    const { note: created } = await api<{ note: { id: string } }>("/notes", { method: "POST", body: JSON.stringify({ title: "Untitled note", folderId }) });
-    await loadNavigation();
-    setSelectedNoteId(created.id);
-    setMobilePanel("editor");
+    if (switchingRef.current) return;
+    switchingRef.current = true;
+    try {
+      const removedEmptyNote = await removeEmptyNewNote();
+      if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+      const selected = folders.find((folder) => folder.id === selectedFolder);
+      const folderId = selected?.is_owner === 1 ? selected.id : null;
+      const { note: created } = await api<{ note: { id: string } }>("/notes", { method: "POST", body: JSON.stringify({ folderId }) });
+      await loadNavigation();
+      setSelectedNoteId(created.id);
+      setMobilePanel("editor");
+    } catch (reason) {
+      flash(reason instanceof Error ? reason.message : "Could not create note");
+    } finally {
+      switchingRef.current = false;
+    }
   }
 
-  async function publish() {
-    if (!note) return;
-    await saveDraft();
+  async function moveNote(noteId: string, folder: Folder) {
+    await api(`/notes/${noteId}`, { method: "PATCH", body: JSON.stringify({ folderId: folder.id }) });
+    setNote((current) => current?.id === noteId ? { ...current, folder_id: folder.id } : current);
+    setDraggingNoteId(null);
+    setDropFolderId(null);
+    await loadNavigation();
+    flash(`Moved to ${folder.name}`);
+  }
+
+  async function publish(reloadCurrent = true) {
+    if (!note) return false;
+    const hasDelta = await saveDraft();
+    if (!hasDelta) return false;
     await api(`/notes/${note.id}/publish`, { method: "POST", body: "{}" });
-    await Promise.all([loadNote(note.id), loadNavigation()]);
+    if (reloadCurrent) await Promise.all([loadNote(note.id), loadNavigation()]);
+    else await loadNavigation();
     flash("New version published");
+    return true;
+  }
+
+  async function selectNote(nextId: string) {
+    if (nextId === selectedNoteId) {
+      setMobilePanel("editor");
+      return;
+    }
+    if (switchingRef.current) return;
+    switchingRef.current = true;
+    try {
+      const removedEmptyNote = await removeEmptyNewNote();
+      if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+      setSelectedNoteId(nextId);
+      setMobilePanel("editor");
+    } catch (reason) {
+      flash(reason instanceof Error ? reason.message : "Could not switch notes");
+    } finally {
+      switchingRef.current = false;
+    }
   }
 
   async function discard() {
     if (!note || !window.confirm("Discard this draft and return to the published version?")) return;
+    const removesNote = note.current_version === 0;
     await api(`/notes/${note.id}/draft`, { method: "DELETE", body: "{}" });
-    await Promise.all([loadNote(note.id), loadNavigation()]);
-    flash("Draft discarded");
+    if (removesNote) {
+      setSelectedNoteId(null);
+      setNote(null);
+      setMarkdown("");
+      revisionRef.current = null;
+      loadedRef.current = "";
+      await loadNavigation();
+      flash("Unpublished note removed");
+    } else {
+      await Promise.all([loadNote(note.id), loadNavigation()]);
+      flash("Draft discarded");
+    }
   }
 
   async function logout() {
@@ -349,7 +489,26 @@ export function App() {
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { setSelectedFolder("all"); setMobilePanel("notes"); }}><Archive /><span>All notes</span><b>{notes.filter((item) => item.is_owner === 1).length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { setSelectedFolder("shared"); setMobilePanel("notes"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
           <div className="nav-label"><span>Folders</span><button onClick={createFolder} aria-label="New folder"><FolderPlus /></button></div>
-          {folders.map((folder) => <button key={folder.id} className={selectedFolder === folder.id ? "active" : ""} onClick={() => { setSelectedFolder(folder.id); setMobilePanel("notes"); }}><FolderIcon /><span>{folder.name}</span><b>{notes.filter((item) => item.folder_id === folder.id && item.is_owner === 1).length}</b></button>)}
+          {folders.map((folder) => <div className="folder-entry" key={folder.id}>
+            <button
+              className={`folder-link${selectedFolder === folder.id ? " active" : ""}${dropFolderId === folder.id ? " drop-target" : ""}`}
+              onClick={() => { setSelectedFolder(folder.id); setMobilePanel("notes"); }}
+              onDragEnter={(event) => { if (draggingNoteId && folder.is_owner === 1) { event.preventDefault(); setDropFolderId(folder.id); } }}
+              onDragOver={(event) => { if (draggingNoteId && folder.is_owner === 1) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }}
+              onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === folder.id ? null : current); }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (folder.is_owner !== 1) return;
+                const noteId = event.dataTransfer.getData("application/x-mynotes-note") || draggingNoteId;
+                if (noteId) moveNote(noteId, folder).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not move note"));
+              }}
+            >
+              <FolderIcon />
+              <span className="folder-copy">{folder.name}{folder.is_owner !== 1 && <small>{folder.owner_name}</small>}</span>
+              <b>{notes.filter((item) => item.folder_id === folder.id).length}</b>
+            </button>
+            {folder.is_owner === 1 && <button className="folder-share-button" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`}><Share2 /></button>}
+          </div>)}
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
         <footer className="sidebar-footer"><button onClick={logout}><LogOut />Sign out</button></footer>
@@ -363,7 +522,20 @@ export function App() {
           <label className="search-box"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search notes" aria-label="Search notes" /></label>
         </header>
         <div className="note-list">
-          {visibleNotes.map((item) => <button key={item.id} className={selectedNoteId === item.id ? "selected" : ""} onClick={() => { setSelectedNoteId(item.id); setMobilePanel("editor"); }}>
+          {visibleNotes.map((item) => <button
+            key={item.id}
+            className={`${selectedNoteId === item.id ? "selected" : ""}${draggingNoteId === item.id ? " dragging" : ""}`}
+            draggable={item.is_owner === 1}
+            onDragStart={(event) => {
+              if (item.is_owner !== 1) return;
+              setDraggingNoteId(item.id);
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("application/x-mynotes-note", item.id);
+              event.dataTransfer.setData("text/plain", item.id);
+            }}
+            onDragEnd={() => { setDraggingNoteId(null); setDropFolderId(null); }}
+            onClick={() => { void selectNote(item.id); }}
+          >
             <span className="note-title">{item.title}</span>
             <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? <em>Draft</em> : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
             {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
@@ -382,17 +554,17 @@ export function App() {
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               {note.isOwner && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
               {note.isOwner && note.hasDraft && <button className="text-action" onClick={discard}>Discard</button>}
-              {note.isOwner && <button className="publish-button" onClick={publish}>Publish version</button>}
+              {hasPublishableDelta && <button className="publish-button" onClick={() => { void publish(); }}>Publish version</button>}
               <button className="icon-button mobile-more" onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
             </div>
             {mobileActions && <div className="mobile-actions-menu">
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
               {note.isOwner && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
               {note.isOwner && note.hasDraft && <button onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
+              {hasPublishableDelta && <button onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
             </div>}
           </header>
           <article className="document-shell">
-            <input className="note-title-input" value={title} onChange={(event) => setTitle(event.target.value)} readOnly={!note.isOwner} maxLength={240} aria-label="Note title" />
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
             <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner} onChange={setMarkdown} />
           </article>
@@ -401,7 +573,8 @@ export function App() {
 
       {panel === "history" && note && <HistoryPanel note={note} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
       {panel === "share" && note && <SharePanel note={note} onClose={() => setPanel(null)} onChanged={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Sharing updated"); }} />}
-      {panel && <button className="panel-scrim" onClick={() => setPanel(null)} aria-label="Close panel" />}
+      {sharingFolder && <FolderSharePanel folder={sharingFolder} onClose={() => setSharingFolder(null)} onChanged={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder sharing updated"); }} />}
+      {(panel || sharingFolder) && <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); }} aria-label="Close panel" />}
       {toast && <div className="toast" role="status">{toast}</div>}
       <nav className="mobile-tabbar">
         <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => setMobilePanel("folders")}><Menu />Folders</button>

@@ -136,5 +136,6 @@ export const storage = {
     await atomicWrite(join(directory, "current.md"), markdown);
     await rm(join(directory, "draft.md"), { force: true });
   },
-  discardDraft: async (noteId: string) => rm(join(await secureNoteDir(noteId), "draft.md"), { force: true })
+  discardDraft: async (noteId: string) => rm(join(await secureNoteDir(noteId), "draft.md"), { force: true }),
+  deleteUnpublished: async (noteId: string) => rm(await secureNoteDir(noteId), { recursive: true, force: true })
 };

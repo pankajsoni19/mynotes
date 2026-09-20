@@ -72,6 +72,13 @@ db.exec(`
     PRIMARY KEY(note_id, user_id)
   );
 
+  CREATE TABLE IF NOT EXISTS folder_shares (
+    folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(folder_id, user_id)
+  );
+
   CREATE TABLE IF NOT EXISTS audit_log (
     id TEXT PRIMARY KEY,
     actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -87,6 +94,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_versions_note_number ON note_versions(note_id, version_number DESC);
   CREATE INDEX IF NOT EXISTS idx_shares_user_note ON note_shares(user_id, note_id);
 `);
+
+const folderColumns = db.query("PRAGMA table_info(folders)").all() as Array<{ name: string }>;
+if (!folderColumns.some((column) => column.name === "is_default")) {
+  db.exec("ALTER TABLE folders ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0");
+}
+if (!folderColumns.some((column) => column.name === "visibility")) {
+  db.exec("ALTER TABLE folders ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'selected', 'all_users'))");
+}
+const noteColumns = db.query("PRAGMA table_info(notes)").all() as Array<{ name: string }>;
+if (!noteColumns.some((column) => column.name === "sharing_override")) {
+  db.exec("ALTER TABLE notes ADD COLUMN sharing_override INTEGER NOT NULL DEFAULT 0");
+}
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_owner_default ON folders(owner_id) WHERE is_default = 1");
+db.exec("CREATE INDEX IF NOT EXISTS idx_folder_shares_user_folder ON folder_shares(user_id, folder_id)");
 
 db.exec("PRAGMA optimize");
 
@@ -109,6 +130,7 @@ export type NoteRow = {
   folder_id: string | null;
   title: string;
   visibility: "private" | "selected" | "all_users";
+  sharing_override: number;
   current_version: number;
   draft_revision: number | null;
   draft_checksum: string | null;
@@ -118,6 +140,24 @@ export type NoteRow = {
 };
 
 export const now = () => new Date().toISOString();
+
+export function ensureDefaultFolder(userId: string) {
+  const current = db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(userId) as { id: string } | null;
+  if (current) return current.id;
+  const namedDefault = db.query("SELECT id FROM folders WHERE owner_id = ? AND name = ? COLLATE NOCASE ORDER BY created_at LIMIT 1").get(userId, "Default") as { id: string } | null;
+  if (namedDefault) {
+    db.query("UPDATE folders SET is_default = 1, parent_id = NULL, updated_at = ? WHERE id = ?").run(now(), namedDefault.id);
+    return namedDefault.id;
+  }
+  const id = crypto.randomUUID();
+  const timestamp = now();
+  db.query("INSERT INTO folders (id, owner_id, parent_id, name, is_default, created_at, updated_at) VALUES (?, ?, NULL, 'Default', 1, ?, ?)")
+    .run(id, userId, timestamp, timestamp);
+  return id;
+}
+
+const usersMissingDefault = db.query("SELECT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM folders f WHERE f.owner_id = u.id AND f.is_default = 1)").all() as Array<{ id: string }>;
+for (const user of usersMissingDefault) ensureDefaultFolder(user.id);
 
 export function audit(actorId: string | null, noteId: string | null, eventType: string, metadata?: unknown) {
   db.query(
