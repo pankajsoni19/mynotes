@@ -10,8 +10,7 @@ export const config = {
   databasePath: resolve(dataDir, "mynotes.sqlite"),
   appOrigin,
   isProduction: process.env.NODE_ENV === "production",
-  allowRegistration: process.env.ALLOW_REGISTRATION !== "false",
+  allowRegistration: process.env.ALLOW_REGISTRATION === "true",
   sessionDays: Math.max(1, Number(process.env.SESSION_DAYS ?? 14)),
   maxMarkdownBytes: Math.max(1024, Number(process.env.MAX_MARKDOWN_BYTES ?? 2_000_000))
 };
-

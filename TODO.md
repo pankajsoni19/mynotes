@@ -17,7 +17,7 @@
 - [x] Notes, drafts, publish, version history, and restore API
 - [x] Sharing with selected users and all authenticated users
 - [x] Audit log and health endpoint
-- [x] API tests for authorization, CSRF, and sharing permissions
+- [x] API tests for authorization, CSRF, sharing, concurrency, permissions, recovery, and symlink safety
 
 ## Frontend
 
@@ -43,8 +43,8 @@
 - [x] Typecheck and production build
 - [x] Desktop browser interaction QA
 - [x] Mobile viewport responsiveness QA
-- [ ] Independent security audit A
-- [ ] Independent security audit B
-- [ ] Address all high/critical audit findings
-- [ ] Final smoke test against deployed service
-- [ ] Commit all completed milestones
+- [x] Independent security audit A
+- [x] Independent security audit B
+- [x] Address all high/critical audit findings
+- [x] Final smoke test against deployed service
+- [x] Commit all completed milestones

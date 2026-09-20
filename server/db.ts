@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { config } from "./config";
 
+process.umask(0o077);
 mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+chmodSync(config.dataDir, 0o700);
 
 export const db = new Database(config.databasePath, { create: true, strict: true });
 db.exec("PRAGMA journal_mode = WAL");
@@ -88,6 +90,10 @@ db.exec(`
 
 db.exec("PRAGMA optimize");
 
+for (const path of [config.databasePath, `${config.databasePath}-wal`, `${config.databasePath}-shm`]) {
+  if (existsSync(path)) chmodSync(path, 0o600);
+}
+
 export type UserRow = {
   id: string;
   email: string;
@@ -118,4 +124,3 @@ export function audit(actorId: string | null, noteId: string | null, eventType: 
     "INSERT INTO audit_log (id, actor_id, note_id, event_type, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).run(crypto.randomUUID(), actorId, noteId, eventType, metadata ? JSON.stringify(metadata) : null, now());
 }
-

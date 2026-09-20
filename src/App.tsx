@@ -82,7 +82,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
         <button className="text-button" onClick={() => { setRegistering(!registering); setError(""); }}>
-          {registering ? "Already have an account? Sign in" : "New here? Create an account"}
+          {registering ? "Already have an account? Sign in" : "Setting up MyNotes? Create the first account"}
         </button>
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>
       </section>
@@ -205,7 +205,7 @@ function SharePanel({ note, onClose, onChanged }: { note: NoteDetail; onClose: (
         <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>All signed-in users, never public</small></span></label>
       </div>
       {visibility === "selected" && <div className="user-picker">
-        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<small>{user.email}</small></span></label>)}
+        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}{user.email && <small>{user.email}</small>}</span></label>)}
         {!users.length && <p className="empty-copy">Create another account before sharing with selected people.</p>}
       </div>}
       <button className="primary-button share-save" onClick={save} disabled={busy || (visibility === "selected" && !selected.length)}>Save access</button>

@@ -15,6 +15,7 @@ export type AppEnv = {
 const SESSION_COOKIE = "mynotes_session";
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 const randomToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+let lastSessionCleanup = 0;
 
 export async function createSession(c: Context, userId: string) {
   const token = randomToken();
@@ -39,6 +40,10 @@ export function clearSession(c: Context) {
 }
 
 export async function requireAuth(c: Context<AppEnv>, next: Next) {
+  if (Date.now() - lastSessionCleanup > 3_600_000) {
+    db.query("DELETE FROM sessions WHERE expires_at <= ?").run(now());
+    lastSessionCleanup = Date.now();
+  }
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) return c.json({ error: "Authentication required" }, 401);
   const row = db.query(`
@@ -77,4 +82,3 @@ export function logoutCurrentSession(c: Context<AppEnv>) {
   audit(c.get("user").id, null, "auth.logout");
   clearSession(c);
 }
-

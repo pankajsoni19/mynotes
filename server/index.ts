@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
+import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { ZodError } from "zod";
 import { config } from "./config";
 import { audit, db, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
 import { ownedNote, readableNote } from "./access";
-import { checksum, storage } from "./storage";
+import { checksum, storage, withNoteLock } from "./storage";
 import {
   draftSchema,
   folderSchema,
@@ -67,37 +68,49 @@ app.use("/api/auth/register", async (c, next) => {
 });
 
 const authAttempts = new Map<string, { count: number; resetAt: number }>();
-function rateLimited(key: string) {
+function rateLimited(key: string, limit = 10) {
   const time = Date.now();
+  if (authAttempts.size > 500) {
+    for (const [entryKey, entry] of authAttempts) if (entry.resetAt <= time) authAttempts.delete(entryKey);
+  }
   const item = authAttempts.get(key);
   if (!item || item.resetAt <= time) {
     authAttempts.set(key, { count: 1, resetAt: time + 60_000 });
     return false;
   }
   item.count += 1;
-  return item.count > 10;
+  return item.count > limit;
 }
 
 app.post("/api/auth/register", async (c) => {
-  if (!config.allowRegistration) return c.json({ error: "Registration is disabled" }, 403);
-  const key = `register:${c.req.header("x-real-ip") ?? "local"}`;
-  if (rateLimited(key)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
+  const userCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
+  if (!config.allowRegistration && userCount > 0) return c.json({ error: "Registration is disabled" }, 403);
+  if (rateLimited("register:global", 5)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   const body = await parseJson(c.req.raw, registerSchema);
   const exists = db.query("SELECT id FROM users WHERE email = ?").get(body.email);
   if (exists) return c.json({ error: "An account with that email already exists" }, 409);
   const id = crypto.randomUUID();
   const passwordHash = await Bun.password.hash(body.password, { algorithm: "argon2id", memoryCost: 65536, timeCost: 3 });
-  db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, body.email, body.displayName, passwordHash, now());
+  try {
+    db.transaction(() => {
+      const currentCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
+      if (!config.allowRegistration && currentCount > 0) throw new HTTPException(403, { message: "Registration is disabled" });
+      db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(id, body.email, body.displayName, passwordHash, now());
+    })();
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    if ((error as { code?: string }).code?.includes("CONSTRAINT")) return c.json({ error: "An account with that email already exists" }, 409);
+    throw error;
+  }
   const csrfToken = await createSession(c, id);
   audit(id, null, "auth.register");
   return c.json({ user: { id, email: body.email, displayName: body.displayName }, csrfToken }, 201);
 });
 
 app.post("/api/auth/login", async (c) => {
-  const key = `login:${c.req.header("x-real-ip") ?? "local"}`;
-  if (rateLimited(key)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   const body = await parseJson(c.req.raw, loginSchema);
+  if (rateLimited(`login:${body.email}`) || rateLimited("login:global", 50)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   const user = db.query("SELECT * FROM users WHERE email = ? AND disabled_at IS NULL").get(body.email) as UserRow | null;
   const valid = user ? await Bun.password.verify(body.password, user.password_hash) : false;
   if (!user || !valid) {
@@ -128,9 +141,9 @@ app.post("/api/auth/logout", (c) => {
 
 app.get("/api/users", (c) => {
   const currentUser = c.get("user");
-  const users = db.query("SELECT id, email, display_name FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
-    .all(currentUser.id) as Array<{ id: string; email: string; display_name: string }>;
-  return c.json({ users: users.map((user) => ({ id: user.id, email: user.email, displayName: user.display_name })) });
+  const users = db.query("SELECT id, display_name FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
+    .all(currentUser.id) as Array<{ id: string; display_name: string }>;
+  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name })) });
 });
 
 app.get("/api/folders", (c) => {
@@ -178,14 +191,13 @@ app.get("/api/notes", (c) => {
   const userId = c.get("user").id;
   const folderId = c.req.query("folderId");
   if (folderId) uuid.parse(folderId);
-  const params: Array<string> = [userId, userId];
   let folderClause = "";
   if (folderId) {
-    folderClause = " AND n.folder_id = ?";
-    params.push(folderId);
+    folderClause = " AND n.owner_id = ? AND n.folder_id = ?";
   }
   const rows = db.query(`
-    SELECT n.id, n.owner_id, n.folder_id, n.title, n.visibility, n.current_version,
+    SELECT n.id, n.owner_id, CASE WHEN n.owner_id = ? THEN n.folder_id ELSE NULL END AS folder_id,
+           n.title, n.visibility, n.current_version,
            n.draft_revision, n.created_at, n.updated_at, u.display_name AS owner_name,
            CASE WHEN n.owner_id = ? THEN 1 ELSE 0 END AS is_owner
     FROM notes n JOIN users u ON u.id = n.owner_id
@@ -195,7 +207,7 @@ app.get("/api/notes", (c) => {
       )
     )${folderClause}
     ORDER BY n.updated_at DESC LIMIT 500
-  `).all(...(folderId ? [userId, userId, userId, folderId] : [userId, userId, userId]));
+  `).all(...(folderId ? [userId, userId, userId, userId, userId, folderId] : [userId, userId, userId, userId]));
   return c.json({ notes: rows });
 });
 
@@ -220,7 +232,19 @@ app.get("/api/notes/:id", async (c) => {
   const note = readableNote(id, userId);
   if (!note) return c.json({ error: "Note not found" }, 404);
   const isOwner = note.owner_id === userId;
-  const markdown = isOwner && note.draft_revision !== null ? await storage.readDraft(id) : await storage.readCurrent(id);
+  let markdown: string;
+  let expectedChecksum: string | null;
+  if (isOwner && note.draft_revision !== null) {
+    markdown = await storage.readDraft(id);
+    expectedChecksum = note.draft_checksum;
+  } else {
+    if (note.current_version < 1) return c.json({ error: "Note has not been published" }, 409);
+    const metadata = db.query("SELECT checksum FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { checksum: string } | null;
+    if (!metadata) throw new Error("Published version metadata is missing");
+    markdown = await storage.readVersion(id, note.current_version);
+    expectedChecksum = metadata.checksum;
+  }
+  if (!expectedChecksum || checksum(markdown) !== expectedChecksum) throw new Error("Note content failed integrity verification");
   return c.json({
     note: {
       ...note,
@@ -234,69 +258,85 @@ app.get("/api/notes/:id", async (c) => {
 app.patch("/api/notes/:id", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
-  if (!ownedNote(id, userId)) return c.json({ error: "Note not found" }, 404);
   const body = await parseJson(c.req.raw, noteMetaSchema);
-  if (body.folderId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.folderId, userId)) {
-    return c.json({ error: "Folder not found" }, 404);
-  }
-  db.query("UPDATE notes SET title = COALESCE(?, title), folder_id = CASE WHEN ? THEN ? ELSE folder_id END, updated_at = ? WHERE id = ?")
-    .run(body.title ?? null, Object.hasOwn(body, "folderId") ? 1 : 0, body.folderId ?? null, now(), id);
-  return c.json({ ok: true });
+  return withNoteLock(id, async () => {
+    const note = ownedNote(id, userId);
+    if (!note) return c.json({ error: "Note not found" }, 404);
+    if (body.title && note.draft_revision === null) return c.json({ error: "Begin a draft before changing the title" }, 409);
+    if (body.folderId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.folderId, userId)) {
+      return c.json({ error: "Folder not found" }, 404);
+    }
+    db.query("UPDATE notes SET title = COALESCE(?, title), folder_id = CASE WHEN ? THEN ? ELSE folder_id END, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
+      .run(body.title ?? null, Object.hasOwn(body, "folderId") ? 1 : 0, body.folderId ?? null, now(), id, userId, note.draft_revision);
+    return c.json({ ok: true });
+  });
 });
 
 app.put("/api/notes/:id/draft", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
-  const note = ownedNote(id, userId);
-  if (!note) return c.json({ error: "Note not found" }, 404);
   const body = await parseJson(c.req.raw, draftSchema);
   if (Buffer.byteLength(body.markdown, "utf8") > config.maxMarkdownBytes) return c.json({ error: "Note is too large" }, 413);
-  if (body.revision !== note.draft_revision) {
-    return c.json({ error: "Draft changed in another session", currentRevision: note.draft_revision }, 409);
-  }
-  const nextRevision = (note.draft_revision ?? 0) + 1;
-  await storage.writeDraft(id, body.markdown);
-  db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ?")
-    .run(body.title, nextRevision, checksum(body.markdown), now(), id);
-  return c.json({ revision: nextRevision, savedAt: now() });
+  return withNoteLock(id, async () => {
+    const note = ownedNote(id, userId);
+    if (!note) return c.json({ error: "Note not found" }, 404);
+    if (body.revision !== note.draft_revision) {
+      return c.json({ error: "Draft changed in another session", currentRevision: note.draft_revision }, 409);
+    }
+    const nextRevision = (note.draft_revision ?? 0) + 1;
+    await storage.writeDraft(id, body.markdown);
+    const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
+      .run(body.title, nextRevision, checksum(body.markdown), now(), id, userId, note.draft_revision);
+    if (result.changes !== 1) return c.json({ error: "Draft changed in another session" }, 409);
+    return c.json({ revision: nextRevision, savedAt: now() });
+  });
 });
 
 app.delete("/api/notes/:id/draft", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
-  const note = ownedNote(id, userId);
-  if (!note) return c.json({ error: "Note not found" }, 404);
-  await storage.discardDraft(id);
-  if (note.current_version === 0) {
-    db.query("UPDATE notes SET deleted_at = ?, draft_revision = NULL, draft_checksum = NULL WHERE id = ?").run(now(), id);
-  } else {
-    const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
-    db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ?")
-      .run(versionTitle?.title ?? note.title, now(), id);
-  }
-  audit(userId, id, "draft.discard");
-  return c.json({ ok: true });
+  return withNoteLock(id, async () => {
+    const note = ownedNote(id, userId);
+    if (!note) return c.json({ error: "Note not found" }, 404);
+    if (note.current_version === 0) {
+      db.query("UPDATE notes SET deleted_at = ?, draft_revision = NULL, draft_checksum = NULL WHERE id = ? AND owner_id = ?").run(now(), id, userId);
+    } else {
+      const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
+      db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
+        .run(versionTitle?.title ?? note.title, now(), id, userId);
+    }
+    await storage.discardDraft(id).catch((error) => console.error("Could not remove discarded draft", error instanceof Error ? error.message : "Unknown error"));
+    audit(userId, id, "draft.discard");
+    return c.json({ ok: true });
+  });
 });
 
 app.post("/api/notes/:id/publish", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
-  const note = ownedNote(id, userId);
-  if (!note) return c.json({ error: "Note not found" }, 404);
-  if (note.draft_revision === null) return c.json({ error: "There is no draft to publish" }, 409);
-  const markdown = await storage.readDraft(id);
-  const nextVersion = note.current_version + 1;
-  await storage.publish(id, nextVersion, markdown);
-  const timestamp = now();
-  const versionId = crypto.randomUUID();
-  db.transaction(() => {
-    db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(versionId, id, nextVersion, note.title, checksum(markdown), userId, timestamp);
-    db.query("UPDATE notes SET current_version = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ?")
-      .run(nextVersion, timestamp, id);
-  })();
-  audit(userId, id, "note.publish", { version: nextVersion });
-  return c.json({ version: nextVersion, publishedAt: timestamp });
+  return withNoteLock(id, async () => {
+    const note = ownedNote(id, userId);
+    if (!note) return c.json({ error: "Note not found" }, 404);
+    if (note.draft_revision === null) return c.json({ error: "There is no draft to publish" }, 409);
+    const markdown = await storage.readDraft(id);
+    if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new Error("Draft content failed integrity verification");
+    const nextVersion = note.current_version + 1;
+    const stagedMetadata = db.query("SELECT id FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, nextVersion);
+    if (stagedMetadata) throw new Error("Next version is already committed");
+    await storage.stageVersion(id, nextVersion, markdown, true);
+    const timestamp = now();
+    const versionId = crypto.randomUUID();
+    db.transaction(() => {
+      db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(versionId, id, nextVersion, note.title, checksum(markdown), userId, timestamp);
+      const updated = db.query("UPDATE notes SET current_version = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND current_version = ? AND draft_revision = ?")
+        .run(nextVersion, timestamp, id, userId, note.current_version, note.draft_revision);
+      if (updated.changes !== 1) throw new Error("Concurrent note update detected");
+    })();
+    await storage.finalizePublished(id, markdown).catch((error) => console.error("Could not refresh current Markdown mirror", error instanceof Error ? error.message : "Unknown error"));
+    audit(userId, id, "note.publish", { version: nextVersion });
+    return c.json({ version: nextVersion, publishedAt: timestamp });
+  });
 });
 
 app.get("/api/notes/:id/versions", (c) => {
@@ -317,9 +357,11 @@ app.get("/api/notes/:id/versions/:version", async (c) => {
   if (!Number.isSafeInteger(version) || version < 1) return c.json({ error: "Invalid version" }, 400);
   const note = readableNote(id, c.get("user").id);
   if (!note) return c.json({ error: "Note not found" }, 404);
-  const metadata = db.query("SELECT id, version_number, title, checksum, created_at FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, version);
+  const metadata = db.query("SELECT id, version_number, title, checksum, created_at FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, version) as { checksum: string } | null;
   if (!metadata) return c.json({ error: "Version not found" }, 404);
-  return c.json({ version: metadata, markdown: await storage.readVersion(id, version) });
+  const markdown = await storage.readVersion(id, version);
+  if (checksum(markdown) !== metadata.checksum) throw new Error("Version content failed integrity verification");
+  return c.json({ version: metadata, markdown });
 });
 
 app.post("/api/notes/:id/versions/:version/restore", async (c) => {
@@ -327,24 +369,27 @@ app.post("/api/notes/:id/versions/:version/restore", async (c) => {
   const version = Number(c.req.param("version"));
   if (!Number.isSafeInteger(version) || version < 1) return c.json({ error: "Invalid version" }, 400);
   const userId = c.get("user").id;
-  const note = ownedNote(id, userId);
-  if (!note) return c.json({ error: "Note not found" }, 404);
-  const metadata = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, version) as { title: string } | null;
-  if (!metadata) return c.json({ error: "Version not found" }, 404);
-  const markdown = await storage.readVersion(id, version);
-  await storage.writeDraft(id, markdown);
-  const revision = (note.draft_revision ?? 0) + 1;
-  db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ?")
-    .run(metadata.title, revision, checksum(markdown), now(), id);
-  audit(userId, id, "version.restore_to_draft", { version });
-  return c.json({ revision });
+  return withNoteLock(id, async () => {
+    const note = ownedNote(id, userId);
+    if (!note) return c.json({ error: "Note not found" }, 404);
+    const metadata = db.query("SELECT title, checksum FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, version) as { title: string; checksum: string } | null;
+    if (!metadata) return c.json({ error: "Version not found" }, 404);
+    const markdown = await storage.readVersion(id, version);
+    if (checksum(markdown) !== metadata.checksum) throw new Error("Version content failed integrity verification");
+    await storage.writeDraft(id, markdown);
+    const revision = (note.draft_revision ?? 0) + 1;
+    db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
+      .run(metadata.title, revision, checksum(markdown), now(), id, userId, note.draft_revision);
+    audit(userId, id, "version.restore_to_draft", { version });
+    return c.json({ revision });
+  });
 });
 
 app.get("/api/notes/:id/sharing", (c) => {
   const id = uuid.parse(c.req.param("id"));
   const note = ownedNote(id, c.get("user").id);
   if (!note) return c.json({ error: "Note not found" }, 404);
-  const users = db.query("SELECT u.id, u.email, u.display_name FROM note_shares s JOIN users u ON u.id = s.user_id WHERE s.note_id = ? ORDER BY u.display_name")
+  const users = db.query("SELECT u.id, u.display_name FROM note_shares s JOIN users u ON u.id = s.user_id WHERE s.note_id = ? ORDER BY u.display_name")
     .all(id);
   return c.json({ visibility: note.visibility, users });
 });
@@ -386,6 +431,7 @@ app.delete("/api/notes/:id", (c) => {
 });
 
 app.onError((error, c) => {
+  if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
   if (error instanceof ZodError) return c.json({ error: "Invalid request", details: error.issues.map((issue) => issue.message) }, 400);
   if (error instanceof SyntaxError) return c.json({ error: "Invalid JSON" }, 400);
   console.error("Request failed", error instanceof Error ? error.message : "Unknown error");
@@ -398,6 +444,24 @@ if (config.isProduction) {
   app.use("/*", serveStatic({ root: "./dist" }));
   app.get("/*", serveStatic({ path: "./dist/index.html" }));
 }
+
+async function reconcilePublishedMirrors() {
+  const notes = db.query("SELECT id, current_version, draft_revision FROM notes WHERE deleted_at IS NULL AND current_version > 0").all() as Array<{ id: string; current_version: number; draft_revision: number | null }>;
+  for (const note of notes) {
+    try {
+      const metadata = db.query("SELECT checksum FROM note_versions WHERE note_id = ? AND version_number = ?").get(note.id, note.current_version) as { checksum: string } | null;
+      if (!metadata) throw new Error("Version metadata is missing");
+      const markdown = await storage.readVersion(note.id, note.current_version);
+      if (checksum(markdown) !== metadata.checksum) throw new Error("Version checksum does not match");
+      await storage.writeCurrentMirror(note.id, markdown);
+      if (note.draft_revision === null) await storage.discardDraft(note.id);
+    } catch (error) {
+      console.error(`Could not reconcile note ${note.id}`, error instanceof Error ? error.message : "Unknown error");
+    }
+  }
+}
+
+await reconcilePublishedMirrors();
 
 export default {
   port: config.port,

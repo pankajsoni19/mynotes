@@ -26,7 +26,7 @@ published ── first edit ──> draft ── publish ──> published (new 
 historical version ── restore ──> draft (never rewrites history)
 ```
 
-`current.md` mirrors the newest published version. `draft.md` exists only while a draft exists. Publishing uses a transaction-like sequence: write a temporary Markdown snapshot, atomically rename it, update `current.md`, then commit version metadata in SQLite. Recovery reconciles orphaned files without deleting history.
+`current.md` is a convenience mirror of the newest published version; authenticated reads use the immutable version file indexed by SQLite. `draft.md` exists only while a draft is active. All note mutations are serialized by note ID. Publishing writes the next version with exclusive-create semantics, commits version metadata with compare-and-swap state checks, then refreshes `current.md` and removes the draft. A retry can safely reuse an identical staged snapshot after interruption.
 
 ## API surface
 
@@ -40,4 +40,3 @@ historical version ── restore ──> draft (never rewrites history)
 ## UI
 
 Desktop uses a collapsible folder rail, note list, and editor. Mobile turns navigation into a drawer and keeps the editor full-width. Tiptap provides an Outline-like block editor, Markdown serialization, keyboard shortcuts, a bubble toolbar, and `/` commands.
-

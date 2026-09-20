@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HTTPException } from "hono/http-exception";
 
 export const uuid = z.string().uuid();
 export const email = z.string().trim().email().max(254).transform((value) => value.toLowerCase());
@@ -27,7 +28,6 @@ export const sharingSchema = z.object({
 
 export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   const length = Number(request.headers.get("content-length") ?? 0);
-  if (length > 2_100_000) throw new Error("Request is too large");
+  if (length > 2_100_000) throw new HTTPException(413, { message: "Request is too large" });
   return schema.parse(await request.json());
 }
-

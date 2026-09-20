@@ -12,7 +12,7 @@ services:
       PORT: "2026"
       DATA_DIR: /data
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:2026}
-      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       SESSION_DAYS: ${SESSION_DAYS:-14}
     volumes:
       - /home/soni/Desktop/MacSSD/mynotes:/data

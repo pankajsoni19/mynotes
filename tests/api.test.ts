@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,6 +9,7 @@ process.env.DATA_DIR = dataDir;
 process.env.APP_ORIGIN = origin;
 process.env.PORT = "22026";
 process.env.NODE_ENV = "test";
+process.env.ALLOW_REGISTRATION = "true";
 
 const serverOptions = (await import("../server/index")).default;
 const server = Bun.serve(serverOptions);
@@ -27,9 +28,10 @@ async function request(path: string, options: RequestInit = {}, session?: Sessio
 }
 
 async function register(label: string): Promise<Session> {
+  const emailLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const response = await request("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ email: `${label}-${crypto.randomUUID()}@example.test`, displayName: label, password: "correct horse battery staple" })
+    body: JSON.stringify({ email: `${emailLabel}-${crypto.randomUUID()}@example.test`, displayName: label, password: "correct horse battery staple" })
   });
   expect(response.status).toBe(201);
   const body = await response.json() as { csrfToken: string; user: { id: string } };
@@ -44,6 +46,11 @@ afterAll(() => {
 });
 
 describe("authorization and version workflow", () => {
+  test("enforces restrictive data and database permissions", () => {
+    expect(statSync(dataDir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(dataDir, "mynotes.sqlite")).mode & 0o777).toBe(0o600);
+  });
+
   test("keeps notes private, rejects CSRF, then shares and versions safely", async () => {
     const owner = await register("Owner");
     const reader = await register("Reader");
@@ -95,4 +102,63 @@ describe("authorization and version workflow", () => {
     expect(versions.status).toBe(200);
     expect(((await versions.json()) as { versions: unknown[] }).versions).toHaveLength(1);
   }, 20_000);
+
+  test("serializes concurrent draft saves and publishes", async () => {
+    const owner = await register("Concurrent owner");
+    const created = await request("/notes", { method: "POST", body: JSON.stringify({ title: "Race test", folderId: null }) }, owner);
+    const noteId = ((await created.json()) as { note: { id: string } }).note.id;
+
+    const save = (markdown: string) => request(`/notes/${noteId}/draft`, {
+      method: "PUT",
+      body: JSON.stringify({ title: "Race test", markdown, revision: 1 })
+    }, owner);
+    const saveResponses = await Promise.all([save("first writer"), save("second writer")]);
+    expect(saveResponses.map((response) => response.status).sort()).toEqual([200, 409]);
+
+    const loaded = await request(`/notes/${noteId}`, {}, owner);
+    const loadedBody = await loaded.json() as { note: { markdown: string; draft_revision: number } };
+    expect(["first writer", "second writer"]).toContain(loadedBody.note.markdown);
+    expect(loadedBody.note.draft_revision).toBe(2);
+
+    const publish = () => request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner);
+    const publishResponses = await Promise.all([publish(), publish()]);
+    expect(publishResponses.map((response) => response.status).sort()).toEqual([200, 409]);
+
+    const history = await request(`/notes/${noteId}/versions`, {}, owner);
+    expect(((await history.json()) as { versions: unknown[] }).versions).toHaveLength(1);
+  }, 20_000);
+
+  test("rejects a symlink substituted for a note directory", async () => {
+    const owner = await register("Symlink owner");
+    const created = await request("/notes", { method: "POST", body: JSON.stringify({ title: "Path test", folderId: null }) }, owner);
+    const noteId = ((await created.json()) as { note: { id: string } }).note.id;
+    const notePath = join(dataDir, "notes", noteId);
+    const outside = mkdtempSync(join(tmpdir(), "mynotes-outside-"));
+    rmSync(notePath, { recursive: true, force: true });
+    symlinkSync(outside, notePath, "dir");
+    const response = await request(`/notes/${noteId}`, {}, owner);
+    expect(response.status).toBe(500);
+    rmSync(notePath, { force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("recovers an uncommitted staged version without overwriting history", async () => {
+    const owner = await register("Recovery owner");
+    const created = await request("/notes", { method: "POST", body: JSON.stringify({ title: "Recovery", folderId: null }) }, owner);
+    const noteId = ((await created.json()) as { note: { id: string } }).note.id;
+    await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ title: "Recovery", markdown: "version one", revision: 1 }) }, owner);
+    await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner);
+    await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ title: "Recovery", markdown: "version two", revision: null }) }, owner);
+
+    const versionsDir = join(dataDir, "notes", noteId, "versions");
+    mkdirSync(versionsDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(versionsDir, "000002.md"), "orphan from interrupted publish", { mode: 0o600 });
+    const publish = await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner);
+    expect(publish.status).toBe(200);
+
+    const version = await request(`/notes/${noteId}/versions/2`, {}, owner);
+    expect(((await version.json()) as { markdown: string }).markdown).toBe("version two");
+    const titlePatch = await request(`/notes/${noteId}`, { method: "PATCH", body: JSON.stringify({ title: "Bypass attempt" }) }, owner);
+    expect(titlePatch.status).toBe(409);
+  });
 });

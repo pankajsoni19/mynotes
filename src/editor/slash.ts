@@ -58,7 +58,11 @@ export const SlashCommands = Extension.create({
               const button = document.createElement("button");
               button.type = "button";
               button.className = `slash-item${index === selected ? " is-selected" : ""}`;
-              button.innerHTML = `<span>${item.label}</span><small>${item.hint}</small>`;
+              const label = document.createElement("span");
+              label.textContent = item.label;
+              const hint = document.createElement("small");
+              hint.textContent = item.hint;
+              button.append(label, hint);
               button.addEventListener("mousedown", (event) => {
                 event.preventDefault();
                 current?.command(item);
@@ -112,4 +116,3 @@ export const SlashCommands = Extension.create({
     ];
   }
 });
-

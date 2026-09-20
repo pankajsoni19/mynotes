@@ -1,4 +1,4 @@
-FROM oven/bun:1.2.22-alpine AS dependencies
+FROM oven/bun:1.2.22-alpine@sha256:ab596b6d0dcad05d23799b89451e92f4cdc16da184a9a4d240c42eaf3c4b9278 AS dependencies
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
@@ -9,13 +9,18 @@ COPY public ./public
 COPY src ./src
 RUN bun run build
 
-FROM oven/bun:1.2.22-alpine AS production
+FROM oven/bun:1.2.22-alpine@sha256:ab596b6d0dcad05d23799b89451e92f4cdc16da184a9a4d240c42eaf3c4b9278 AS production-dependencies
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
+
+FROM oven/bun:1.2.22-alpine@sha256:ab596b6d0dcad05d23799b89451e92f4cdc16da184a9a4d240c42eaf3c4b9278 AS production
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=2026 \
     DATA_DIR=/data
-COPY --chown=bun:bun --from=dependencies /app/node_modules ./node_modules
-COPY --chown=bun:bun --from=dependencies /app/package.json ./package.json
+COPY --chown=bun:bun --from=production-dependencies /app/node_modules ./node_modules
+COPY --chown=bun:bun --from=production-dependencies /app/package.json ./package.json
 COPY --chown=bun:bun --from=build /app/dist ./dist
 COPY --chown=bun:bun server ./server
 RUN mkdir -p /data && chown bun:bun /data

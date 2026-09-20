@@ -1,4 +1,4 @@
-export type User = { id: string; email: string; displayName: string };
+export type User = { id: string; email?: string; displayName: string };
 export type Folder = { id: string; parent_id: string | null; name: string; created_at: string; updated_at: string };
 export type NoteSummary = {
   id: string;
@@ -26,4 +26,3 @@ export type Version = {
   created_at: string;
   author_name: string;
 };
-
