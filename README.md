@@ -24,7 +24,7 @@ MyNotes is a private, self-hosted home for the notes you cannot afford to lose: 
 
 1. Copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by Docker, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.2.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
+3. Run `APP_VERSION=0.2.2 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
 4. Open `http://localhost:2026`.
 
 The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. “Everyone here” sharing includes all current and future registered users on that allowlist.
