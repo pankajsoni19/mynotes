@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { config, isEmailAllowed } from "./config";
+import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, now, type UserRow } from "./db";
 
 export type AppEnv = {
@@ -17,6 +17,11 @@ const tokenHash = (token: string) => createHash("sha256").update(token).digest("
 const randomToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
 let lastSessionCleanup = 0;
 
+function secureCookie(c: Context) {
+  const origin = c.req.header("Origin");
+  return config.cookieSecure || Boolean(origin && new URL(origin).protocol === "https:");
+}
+
 export async function createSession(c: Context, userId: string) {
   const token = randomToken();
   const csrfToken = randomToken();
@@ -27,7 +32,7 @@ export async function createSession(c: Context, userId: string) {
     .run(id, userId, tokenHash(token), csrfToken, createdAt, createdAt, expiresAt);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: config.isProduction,
+    secure: secureCookie(c),
     sameSite: "Strict",
     path: "/",
     maxAge: config.sessionDays * 86_400
@@ -36,7 +41,7 @@ export async function createSession(c: Context, userId: string) {
 }
 
 export function clearSession(c: Context) {
-  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: config.isProduction, sameSite: "Strict" });
+  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: secureCookie(c), sameSite: "Strict" });
 }
 
 export async function requireAuth(c: Context<AppEnv>, next: Next) {
@@ -70,7 +75,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
 export async function requireMutationSafety(c: Context<AppEnv>, next: Next) {
   if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
   const origin = c.req.header("Origin");
-  if (origin !== config.appOrigin) return c.json({ error: "Invalid request origin" }, 403);
+  if (!isOriginAllowed(origin)) return c.json({ error: "Invalid request origin" }, 403);
   if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) {
     return c.json({ error: "Content-Type must be application/json" }, 415);
   }

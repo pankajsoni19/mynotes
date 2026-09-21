@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { config, isEmailAllowed } from "./config";
+import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, now } from "./db";
 import { readableNote } from "./access";
 import { checksum, storage } from "./storage";
@@ -134,19 +134,21 @@ function recordInvalidAuth() {
 }
 
 export async function handleMcpRequest(request: Request) {
-  const appUrl = new URL(config.appOrigin);
-  const expectedHost = appUrl.host;
-  const localHosts = new Set([expectedHost]);
-  if (["localhost", "127.0.0.1", "[::1]"].includes(appUrl.hostname)) {
-    const port = appUrl.port ? `:${appUrl.port}` : "";
-    localHosts.add(`localhost${port}`);
-    localHosts.add(`127.0.0.1${port}`);
-    localHosts.add(`[::1]${port}`);
+  const allowedHosts = new Set<string>();
+  for (const allowedOrigin of config.appOrigins) {
+    const appUrl = new URL(allowedOrigin);
+    allowedHosts.add(appUrl.host);
+    if (["localhost", "127.0.0.1", "[::1]"].includes(appUrl.hostname)) {
+      const port = appUrl.port ? `:${appUrl.port}` : "";
+      allowedHosts.add(`localhost${port}`);
+      allowedHosts.add(`127.0.0.1${port}`);
+      allowedHosts.add(`[::1]${port}`);
+    }
   }
   const host = request.headers.get("host");
   const origin = request.headers.get("origin");
-  if (!host || !localHosts.has(host)) return mcpJsonError("Invalid host", 403);
-  if (origin && origin !== config.appOrigin) return mcpJsonError("Invalid origin", 403);
+  if (!host || !allowedHosts.has(host)) return mcpJsonError("Invalid host", 403);
+  if (origin && !isOriginAllowed(origin)) return mcpJsonError("Invalid origin", 403);
 
   const authorization = request.headers.get("authorization") ?? "";
   const match = /^Bearer ([A-Za-z0-9_-]{40,80})$/.exec(authorization);

@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 
 const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
 const origin = "http://localhost:22026";
+const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
 process.env.DATA_DIR = dataDir;
 process.env.APP_ORIGIN = origin;
+process.env.APP_ORIGINS = `${origin},${tailscaleOrigin}`;
+process.env.COOKIE_SECURE = "false";
 process.env.PORT = "22026";
 process.env.NODE_ENV = "test";
 process.env.ALLOW_REGISTRATION = "true";
@@ -20,13 +23,13 @@ const { db } = await import("../server/db");
 const { totpCodeAt, totpCounter } = await import("../server/totp");
 const server = Bun.serve(serverOptions);
 
-type Session = { cookie: string; csrf: string; userId: string; email: string; password: string };
+type Session = { cookie: string; setCookie: string; csrf: string; userId: string; email: string; password: string };
 let registrationIndex = 0;
 
 async function request(path: string, options: RequestInit = {}, session?: Session) {
   const headers = new Headers(options.headers);
   if (options.body) headers.set("Content-Type", "application/json");
-  headers.set("Origin", origin);
+  if (!headers.has("Origin")) headers.set("Origin", origin);
   if (session) {
     headers.set("Cookie", session.cookie);
     if (options.method && options.method !== "GET") headers.set("X-CSRF-Token", session.csrf);
@@ -34,19 +37,21 @@ async function request(path: string, options: RequestInit = {}, session?: Sessio
   return fetch(`${origin}/api${path}`, { ...options, headers });
 }
 
-async function register(label: string): Promise<Session> {
+async function register(label: string, requestOrigin = origin): Promise<Session> {
   const allowedEmail = allowedTestEmails[registrationIndex++];
   if (!allowedEmail) throw new Error("Test email allowlist exhausted");
   const password = "correct horse battery staple";
   const response = await request("/auth/register", {
     method: "POST",
+    headers: { Origin: requestOrigin },
     body: JSON.stringify({ email: allowedEmail, displayName: label, password })
   });
   expect(response.status).toBe(201);
   const body = await response.json() as { csrfToken: string; user: { id: string } };
-  const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  const cookie = setCookie.split(";", 1)[0];
   expect(cookie).toBeTruthy();
-  return { cookie: cookie!, csrf: body.csrfToken, userId: body.user.id, email: allowedEmail, password };
+  return { cookie: cookie!, setCookie, csrf: body.csrfToken, userId: body.user.id, email: allowedEmail, password };
 }
 
 afterAll(() => {
@@ -73,6 +78,26 @@ describe("authorization and version workflow", () => {
       body: JSON.stringify({ email: "blocked@example.test", password: "correct horse battery staple" })
     });
     expect(login.status).toBe(401);
+  });
+
+  test("accepts exact LAN/Tailscale origins and secures HTTPS cookies", async () => {
+    const tailscaleUser = await register("Tailscale owner", tailscaleOrigin);
+    expect(tailscaleUser.setCookie).toMatch(/;\s*Secure/i);
+    const mutation = await request("/folders", {
+      method: "POST",
+      headers: { Origin: tailscaleOrigin },
+      body: JSON.stringify({ name: "Remote", parentId: null })
+    }, tailscaleUser);
+    expect(mutation.status).toBe(201);
+
+    const lanUser = await register("LAN owner", origin);
+    expect(lanUser.setCookie).not.toMatch(/;\s*Secure/i);
+    const hostile = await request("/folders", {
+      method: "POST",
+      headers: { Origin: "http://192.0.2.10:2026" },
+      body: JSON.stringify({ name: "Blocked", parentId: null })
+    }, lanUser);
+    expect(hostile.status).toBe(403);
   });
 
   test("issues one-time MCP keys, authenticates Streamable HTTP, and revokes access", async () => {
@@ -119,6 +144,25 @@ describe("authorization and version workflow", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })
     });
     expect(hostileOrigin.status).toBe(403);
+
+    const allowedRemoteHost = await fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${created.key.token}`,
+        Host: "notes.example-tailnet.ts.net",
+        Origin: tailscaleOrigin,
+        Accept: "application/json, text/event-stream",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })
+    });
+    expect(allowedRemoteHost.status).toBe(200);
+    const hostileHost = await fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${created.key.token}`, Host: "attacker.example", Accept: "application/json, text/event-stream", "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })
+    });
+    expect(hostileHost.status).toBe(403);
 
     const tools = await rpc("tools/list", {});
     expect(tools.status).toBe(200);

@@ -3,7 +3,7 @@ import { serveStatic } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { ZodError } from "zod";
-import { config, isEmailAllowed } from "./config";
+import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
 import { ownedNote, readableNote } from "./access";
@@ -125,12 +125,12 @@ app.get("/api/health", (c) => c.json({ status: "ok" }));
 app.get("/api/about", (c) => c.json({ version: config.appVersion, gitSha: config.gitSha }));
 
 app.use("/api/auth/login", async (c, next) => {
-  if (c.req.header("Origin") !== config.appOrigin) return c.json({ error: "Invalid request origin" }, 403);
+  if (!isOriginAllowed(c.req.header("Origin"))) return c.json({ error: "Invalid request origin" }, 403);
   if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
   await next();
 });
 app.use("/api/auth/register", async (c, next) => {
-  if (c.req.header("Origin") !== config.appOrigin) return c.json({ error: "Invalid request origin" }, 403);
+  if (!isOriginAllowed(c.req.header("Origin"))) return c.json({ error: "Invalid request origin" }, 403);
   if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
   await next();
 });

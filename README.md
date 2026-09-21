@@ -24,7 +24,7 @@ MyNotes is a private, self-hosted home for the notes you cannot afford to lose: 
 
 1. Copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by Docker, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.2.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
+3. Run `APP_VERSION=0.2.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
 4. Open `http://localhost:2026`.
 
 The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. “Everyone here” sharing includes all current and future registered users on that allowlist.
@@ -50,6 +50,16 @@ docker compose exec app bun server/reset-totp.ts user@example.com
 Open **Settings → MCP server** to create, review, or revoke API keys and copy a ready-to-paste Streamable HTTP client configuration. Each key is displayed in full only once; MyNotes stores its SHA-256 hash and a short identifying prefix, never the plaintext credential.
 
 The MCP endpoint is `http://localhost:2026/mcp` for the default deployment. It currently provides `list_notes` and `read_note`, restricted to the latest published versions the key owner can already access through MyNotes sharing rules. Drafts and write operations are intentionally excluded. Treat API keys like passwords, use a separate key per client, and revoke keys you no longer need.
+
+### LAN and Tailscale access
+
+`APP_ORIGINS` is a comma-separated allowlist of exact browser origins. Keep localhost and add every trusted LAN or Tailscale HTTPS origin you use, including its port when non-standard:
+
+```dotenv
+APP_ORIGINS=http://localhost:2026,http://192.168.10.20:2026,https://your-device.your-tailnet.ts.net
+```
+
+Docker is published on port `2026` for LAN access. Prefer Tailscale Serve with HTTPS and keep `COOKIE_SECURE=true`. Direct plain-HTTP access such as `http://192.168.10.20:2026` requires `COOKIE_SECURE=false`; this is less safe for notes containing credentials, even on a trusted home network. Never use a wildcard origin.
 
 ## Development
 
