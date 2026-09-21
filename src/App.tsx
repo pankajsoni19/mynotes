@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Eye,
+  EyeOff,
   FilePlus2,
   Folder as FolderIcon,
   FolderPlus,
@@ -67,6 +69,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   const [error, setError] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -109,7 +112,21 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
         <form onSubmit={submit} className="auth-form">
           {registering && <label>Name<input name="displayName" autoComplete="name" required maxLength={80} /></label>}
           <label>Email<input name="email" type="email" autoComplete="email" required /></label>
-          <label>Password<input name="password" type="password" autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? 12 : 1} /></label>
+          <div className="auth-password-group">
+            <label htmlFor="auth-password">Password</label>
+            <span className="password-field">
+              <input id="auth-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? 12 : 1} />
+              <button
+                type="button"
+                className="password-visibility-toggle"
+                aria-label={passwordVisible ? "Hide password" : "Show password"}
+                aria-pressed={passwordVisible}
+                onClick={() => setPasswordVisible((visible) => !visible)}
+              >
+                {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              </button>
+            </span>
+          </div>
           {!registering && needsTotp && (useRecoveryCode
             ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" minLength={10} maxLength={32} required autoFocus /><small>Enter one complete backup recovery code. Each code works once.</small></label>
             : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small></label>)}
@@ -117,7 +134,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
-        <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setError(""); }}>
+        <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
           {registering ? "Already have an account? Sign in" : "Setting up MyNotes? Create the first account"}
         </button>
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>

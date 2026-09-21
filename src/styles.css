@@ -35,10 +35,15 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible { out
 .auth-heading h1 { margin: 8px 0 10px; font-size: 2rem; letter-spacing: -.04em; }
 .auth-heading p { margin: 0; color: var(--muted); line-height: 1.55; }
 .auth-form { display: grid; gap: 16px; }
-.auth-form label { display: grid; gap: 8px; color: #d6d6d9; font-size: .88rem; font-weight: 600; }
+.auth-form label, .auth-password-group { display: grid; gap: 8px; color: #d6d6d9; font-size: .88rem; font-weight: 600; }
 .auth-form label small { color: #85858c; font-size: .74rem; font-weight: 400; line-height: 1.45; }
 .auth-form input { width: 100%; border: 1px solid #35353a; border-radius: 11px; background: #0c0c0e; color: white; padding: 12px 13px; min-height: 46px; }
 .auth-form input:focus { border-color: #7d642d; }
+.password-field { position: relative; display: block; }
+.password-field input { padding-right: 52px; }
+.password-visibility-toggle { position: absolute; top: 50%; right: 1px; display: grid; width: 44px; height: 44px; place-items: center; transform: translateY(-50%); border: 0; border-radius: 10px; background: transparent; color: #aaaab1; cursor: pointer; }
+.password-visibility-toggle:hover { color: #fff; background: #252529; }
+.password-visibility-toggle svg { width: 18px; height: 18px; }
 .primary-button, .publish-button { border: 0; border-radius: 10px; background: var(--yellow); color: #281f0b; font-weight: 750; cursor: pointer; }
 .primary-button { min-height: 46px; margin-top: 4px; }
 .primary-button:hover, .publish-button:hover { background: var(--yellow-strong); }
