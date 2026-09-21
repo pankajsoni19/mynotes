@@ -30,7 +30,7 @@ export const config = {
   totpEncryptionKey,
   sessionDays: Math.max(1, Number(process.env.SESSION_DAYS ?? 14)),
   maxMarkdownBytes: Math.max(1024, Number(process.env.MAX_MARKDOWN_BYTES ?? 2_000_000)),
-  appVersion: process.env.APP_VERSION ?? "0.1.2",
+  appVersion: process.env.APP_VERSION ?? "0.2.0",
   gitSha: (process.env.GIT_SHA ?? "development").slice(0, 40)
 };
 

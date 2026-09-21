@@ -59,7 +59,7 @@ describe("authorization and version workflow", () => {
     expect(statSync(dataDir).mode & 0o777).toBe(0o700);
     expect(statSync(join(dataDir, "mynotes.sqlite")).mode & 0o777).toBe(0o600);
     const migrations = db.query("SELECT id, name FROM schema_migrations ORDER BY id").all() as Array<{ id: number; name: string }>;
-    expect(migrations.map((migration) => migration.id)).toEqual([1, 2, 3, 4]);
+    expect(migrations.map((migration) => migration.id)).toEqual([1, 2, 3, 4, 5]);
   });
 
   test("rejects registration and login outside the email allowlist", async () => {
@@ -74,6 +74,73 @@ describe("authorization and version workflow", () => {
     });
     expect(login.status).toBe(401);
   });
+
+  test("issues one-time MCP keys, authenticates Streamable HTTP, and revokes access", async () => {
+    const owner = await register("MCP owner");
+    const createNote = await request("/notes", { method: "POST", body: JSON.stringify({ folderId: null }) }, owner);
+    const noteId = ((await createNote.json()) as { note: { id: string } }).note.id;
+    await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ markdown: "# MCP knowledge\n\nPublished only", revision: 1 }) }, owner);
+    await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner);
+    await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ markdown: "# DRAFT SECRET\n\nNever expose this", revision: null }) }, owner);
+
+    const rejectedKey = await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "Test client", password: "wrong password" }) }, owner);
+    expect(rejectedKey.status).toBe(401);
+    const createKey = await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "Test client", password: owner.password }) }, owner);
+    expect(createKey.status).toBe(201);
+    const created = (await createKey.json()) as { key: { id: string; token: string; prefix: string } };
+    expect(created.key.token).toMatch(/^mynotes_[A-Za-z0-9_-]{43}$/);
+    const stored = db.query("SELECT token_hash FROM mcp_api_keys WHERE id = ?").get(created.key.id) as { token_hash: string };
+    expect(stored.token_hash).not.toContain(created.key.token);
+
+    const listed = await request("/mcp/keys", {}, owner);
+    const listedBody = (await listed.json()) as { keys: Array<Record<string, unknown>> };
+    expect(JSON.stringify(listedBody)).not.toContain(created.key.token);
+    expect(listedBody.keys).toHaveLength(1);
+
+    const rpc = (method: string, params?: unknown, token = created.key.token) => fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json, text/event-stream",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) })
+    });
+    expect((await fetch(`${origin}/mcp`, { method: "POST" })).status).toBe(401);
+    const initialized = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+    expect(initialized.status).toBe(200);
+    expect(initialized.headers.get("cache-control")).toContain("no-store");
+    expect(initialized.headers.get("vary")).toContain("Authorization");
+    expect(await initialized.text()).toContain("mynotes");
+
+    const hostileOrigin = await fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${created.key.token}`, Origin: "https://attacker.example", "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })
+    });
+    expect(hostileOrigin.status).toBe(403);
+
+    const tools = await rpc("tools/list", {});
+    expect(tools.status).toBe(200);
+    const toolsBody = await tools.text();
+    expect(toolsBody).toContain("list_notes");
+    expect(toolsBody).toContain("read_note");
+    expect(toolsBody).not.toContain("create_note");
+
+    const notes = await rpc("tools/call", { name: "list_notes", arguments: { query: "MCP" } });
+    expect(notes.status).toBe(200);
+    const notesText = await notes.text();
+    expect(notesText).toContain("MCP knowledge");
+    expect(notesText).not.toContain("DRAFT SECRET");
+
+    const read = await rpc("tools/call", { name: "read_note", arguments: { noteId } });
+    const readText = await read.text();
+    expect(readText).toContain("Published only");
+    expect(readText).not.toContain("Never expose this");
+
+    expect((await request(`/mcp/keys/${created.key.id}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    expect((await rpc("tools/list", {})).status).toBe(401);
+  }, 20_000);
 
   test("encrypts TOTP and recovery codes, supports one-time recovery, and rejects replay", async () => {
     const owner = await register("TOTP owner");

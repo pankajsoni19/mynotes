@@ -8,12 +8,14 @@ import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from 
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
 import { ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
+import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
   draftSchema,
   deriveNoteTitle,
   folderSharingSchema,
   folderSchema,
   loginSchema,
+  mcpApiKeySchema,
   noteCreateSchema,
   noteMetaSchema,
   parseJson,
@@ -226,6 +228,7 @@ app.use("/api/*", async (c, next) => {
   if (["/api/health", "/api/about", "/api/auth/login", "/api/auth/register"].includes(c.req.path)) return next();
   return requireAuth(c, next);
 });
+
 app.use("/api/*", requireMutationSafety);
 
 const totpSetupPaths = new Set([
@@ -240,6 +243,36 @@ app.use("/api/*", async (c, next) => {
     return c.json({ error: "Two-factor authentication setup is required", code: "TOTP_SETUP_REQUIRED" }, 403);
   }
   await next();
+});
+
+app.get("/api/mcp/keys", (c) => c.json({ keys: listMcpApiKeys(c.get("user").id) }));
+
+app.post("/api/mcp/keys", async (c) => {
+  const body = await parseJson(c.req.raw, mcpApiKeySchema);
+  const userId = c.get("user").id;
+  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as UserRow | null;
+  const passwordValid = user ? await Bun.password.verify(body.password, user.password_hash) : false;
+  if (!user || !passwordValid) {
+    audit(userId, null, "mcp.key_create_failed");
+    return c.json({ error: "Invalid password or authentication code" }, 401);
+  }
+  if (user.totp_enabled_at) {
+    const factorValid = body.recoveryCode ? consumeRecoveryCode(user, body.recoveryCode) : body.totpCode ? consumeTotp(user, body.totpCode) !== null : false;
+    if (!factorValid) {
+      audit(userId, null, "mcp.key_create_failed");
+      return c.json({ error: "Invalid password or authentication code" }, 401);
+    }
+    if (body.recoveryCode) audit(userId, null, "auth.recovery_code_used", { purpose: "mcp_key" });
+  }
+  const activeCount = (db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(userId) as { count: number }).count;
+  if (activeCount >= 10) return c.json({ error: "Revoke an existing API key before creating another" }, 409);
+  return c.json({ key: createMcpApiKey(userId, body.name) }, 201);
+});
+
+app.delete("/api/mcp/keys/:id", (c) => {
+  const keyId = uuid.parse(c.req.param("id"));
+  if (!revokeMcpApiKey(c.get("user").id, keyId)) return c.json({ error: "API key not found" }, 404);
+  return c.json({ ok: true });
 });
 
 app.post("/api/auth/logout", (c) => {
@@ -727,6 +760,8 @@ app.onError((error, c) => {
 });
 
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
+
+app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
 
 if (config.isProduction) {
   app.use("/*", serveStatic({ root: "./dist" }));

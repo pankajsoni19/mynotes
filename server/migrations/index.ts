@@ -3,8 +3,9 @@ import { initialMigration } from "./001_initial";
 import { folderSharingMigration } from "./002_folder_sharing";
 import { totpMigration } from "./003_totp";
 import { totpRecoveryCodesMigration } from "./004_totp_recovery_codes";
+import { mcpApiKeysMigration } from "./005_mcp_api_keys";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
 
 export function runMigrations(db: Database) {
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");

@@ -4,7 +4,7 @@ services:
       context: .
       target: production
       args:
-        APP_VERSION: ${APP_VERSION:-0.1.2}
+        APP_VERSION: ${APP_VERSION:-0.2.0}
         GIT_SHA: ${GIT_SHA:-development}
     container_name: mynotes
     restart: unless-stopped
@@ -22,7 +22,7 @@ services:
       SESSION_DAYS: ${SESSION_DAYS:-14}
       MAX_MARKDOWN_BYTES: ${MAX_MARKDOWN_BYTES:-2000000}
     volumes:
-      - ${MYNOTES_DATA_DIR:-/home/soni/Desktop/MacSSD/mynotes}:/data
+      - ${MYNOTES_DATA_DIR:-/srv/mynotes}:/data
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777

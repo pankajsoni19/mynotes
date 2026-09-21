@@ -1,7 +1,7 @@
 {
   "name": "mynotes",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "bun run --watch server/index.ts",
@@ -12,6 +12,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-link": "3.31.3",
     "@tiptap/extension-placeholder": "3.31.3",

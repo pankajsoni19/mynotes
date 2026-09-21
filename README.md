@@ -8,21 +8,23 @@ Documentation: [pankajsoni19.github.io/mynotes](https://pankajsoni19.github.io/m
   <img src="docs/images/dashboard-dark.png" alt="MyNotes dark dashboard with folder navigation, note list, and Markdown editor" width="1200" />
 </p>
 
-## Product shape
+## Features
 
-- Dark, responsive workspace inspired by macOS Notes: folders, note list, editor.
-- Every user receives a protected Default folder; notes created outside a selected folder go there automatically.
-- Private notes by default; share with selected users or every registered user.
-- Optional or required Google Authenticator-compatible TOTP two-factor authentication.
-- Draft-first editing, autosave, explicit version publishing, history, and restore.
-- Markdown on disk; SQLite for identity, sessions, metadata, folders, sharing, and version indexes.
-- Local Docker deployment on port `2026`.
+MyNotes is a private, self-hosted home for the notes you cannot afford to lose: everyday ideas, runbooks, credentials, and configuration. It combines a calm, dark writing space with ownership, version history, and access controls that stay on your machine.
+
+- **Write without friction.** A responsive, macOS Notes-inspired workspace pairs folders and note cards with an Outline-like editor, slash commands, Markdown formatting, checklists, links, quotes, and code blocks.
+- **Keep every meaningful change.** Edits begin as drafts, save automatically, publish as immutable versions, and can be compared or restored when you need to understand how a note evolved.
+- **Share deliberately.** Notes start private. Share an individual note or a folder with trusted accounts or everyone signed in, with note-level permissions taking precedence.
+- **Connect trusted AI clients.** An authenticated Streamable HTTP MCP server lets tools search and read your published notes through revocable, one-time-visible API keys. Drafts and write operations stay out of reach.
+- **Own portable data.** Content remains readable Markdown on disk; SQLite holds the metadata, identities, sessions, folders, sharing rules, and version index.
+- **Protect sensitive knowledge.** Argon2id passwords, cookie and CSRF protections, optional or required Google Authenticator-compatible two-factor authentication, encrypted TOTP data, and a hardened non-root Docker container provide a practical local security baseline.
+- **Run and recover simply.** One Docker Compose service runs on port `2026`, migrates its database on boot, and includes verified weekly gzip backups with five-week retention.
 
 ## Quick start
 
 1. Copy `.env.example` to `.env` if you need to override the defaults.
-2. Ensure `/home/soni/Desktop/MacSSD/mynotes` exists and is writable by Docker.
-3. Run `APP_VERSION=0.1.2 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
+2. Ensure `/srv/mynotes` exists and is writable by Docker, or set `MYNOTES_DATA_DIR` to another host directory.
+3. Run `APP_VERSION=0.2.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up --build`.
 4. Open `http://localhost:2026`.
 
 The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. “Everyone here” sharing includes all current and future registered users on that allowlist.
@@ -43,6 +45,12 @@ If a user loses their authenticator, the local machine administrator can reset t
 docker compose exec app bun server/reset-totp.ts user@example.com
 ```
 
+### MCP server
+
+Open **Settings → MCP server** to create, review, or revoke API keys and copy a ready-to-paste Streamable HTTP client configuration. Each key is displayed in full only once; MyNotes stores its SHA-256 hash and a short identifying prefix, never the plaintext credential.
+
+The MCP endpoint is `http://localhost:2026/mcp` for the default deployment. It currently provides `list_notes` and `read_note`, restricted to the latest published versions the key owner can already access through MyNotes sharing rules. Drafts and write operations are intentionally excluded. Treat API keys like passwords, use a separate key per client, and revoke keys you no longer need.
+
 ## Development
 
 The host does not need Bun when using Docker:
@@ -58,7 +66,7 @@ The dev server is available at `http://localhost:2026` and mounts the source tre
 The container reads and writes `/data`, mapped by Compose to:
 
 ```text
-/home/soni/Desktop/MacSSD/mynotes
+/srv/mynotes
 ├── mynotes.sqlite
 └── notes/<note-id>/
     ├── current.md
@@ -82,21 +90,21 @@ Run the host-side backup script once a week:
 ./scripts/backup.sh
 ```
 
-It briefly stops a running app container so the SQLite database and Markdown files are captured at the same point in time, writes a verified gzip archive under `/home/soni/Desktop/MacSSD/mynotes/backup`, keeps the newest five archives, and starts the app again. A second run within seven days is skipped; use `./scripts/backup.sh --force` only when you intentionally want an extra snapshot.
+It briefly stops a running app container so the SQLite database and Markdown files are captured at the same point in time, writes a verified gzip archive under `/srv/mynotes/backup` (or your configured data directory), keeps the newest five archives, and starts the app again. A second run within seven days is skipped; use `./scripts/backup.sh --force` only when you intentionally want an extra snapshot.
 
 For unattended weekly execution, add this entry with `crontab -e` (Sunday at 03:00):
 
 ```cron
-0 3 * * 0 cd /home/soni/Desktop/apps/mynotes && ./scripts/backup.sh >> /home/soni/Desktop/MacSSD/mynotes/backup/backup.log 2>&1
+0 3 * * 0 cd /path/to/mynotes && ./scripts/backup.sh >> /srv/mynotes/backup/backup.log 2>&1
 ```
 
 To restore, stop MyNotes, extract an archive into an empty data directory, point `MYNOTES_DATA_DIR` at that directory if it differs from the default, and run `docker compose up -d --build`:
 
 ```sh
-mkdir -p /home/soni/Desktop/MacSSD/mynotes-restored
-tar -xzf /home/soni/Desktop/MacSSD/mynotes/backup/mynotes-YYYYMMDDTHHMMSSZ.tar.gz \
-  -C /home/soni/Desktop/MacSSD/mynotes-restored
-MYNOTES_DATA_DIR=/home/soni/Desktop/MacSSD/mynotes-restored docker compose up -d --build
+mkdir -p /srv/mynotes-restored
+tar -xzf /srv/mynotes/backup/mynotes-YYYYMMDDTHHMMSSZ.tar.gz \
+  -C /srv/mynotes-restored
+MYNOTES_DATA_DIR=/srv/mynotes-restored docker compose up -d --build
 ```
 
 The archive contains the data directory contents at its root, so no path rearrangement is required.

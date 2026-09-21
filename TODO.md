@@ -17,6 +17,7 @@
 - [x] Notes, drafts, publish, version history, and restore API
 - [x] Sharing with selected users and all authenticated users
 - [x] Audit log and health endpoint
+- [x] Authenticated read-only Streamable HTTP MCP server with revocable API keys
 - [x] API tests for authorization, CSRF, sharing, concurrency, permissions, recovery, and symlink safety
 
 ## Frontend
@@ -43,11 +44,12 @@
 - [x] User picker and private/selected/all-users sharing controls
 - [x] Loading, empty, error, and conflict states
 - [x] Open Graph/Twitter landing metadata and reusable 1280×640 social preview image
+- [x] Responsive MCP settings, API-key management, and copyable client configuration
 
 ## Container and operations
 
 - [x] Multi-stage non-root Dockerfile
-- [x] Docker Compose bind mount to `/home/soni/Desktop/MacSSD/mynotes`
+- [x] Docker Compose bind mount configurable via `MYNOTES_DATA_DIR` (portable default: `/srv/mynotes`)
 - [x] Health check and port `2026`
 - [x] Production dependency/build verification
 - [x] Deploy locally with Docker Compose

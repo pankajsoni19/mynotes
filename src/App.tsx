@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowUpDown,
   Check,
+  Copy,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -11,12 +12,14 @@ import {
   FolderPlus,
   History,
   Info,
+  KeyRound,
   Lock,
   LogOut,
   Menu,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  Plug,
   Search,
   Settings,
   ShieldCheck,
@@ -36,6 +39,7 @@ type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean }
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
 type MobilePanel = "folders" | "notes" | "editor";
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
+type McpApiKey = { id: string; name: string; key_prefix: string; created_at: string; last_used_at: string | null };
 
 const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "updated-desc", label: "Recently edited" },
@@ -122,9 +126,92 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   );
 }
 
+function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pending: boolean) => void; totpEnabled: boolean }) {
+  const [keys, setKeys] = useState<McpApiKey[]>([]);
+  const [newToken, setNewToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState("");
+  const endpoint = `${window.location.origin}/mcp`;
+  const displayToken = newToken || "<YOUR_API_KEY>";
+  const configText = JSON.stringify({
+    mcpServers: {
+      mynotes: {
+        type: "streamable-http",
+        url: endpoint,
+        headers: { Authorization: `Bearer ${displayToken}` }
+      }
+    }
+  }, null, 2);
+
+  const loadKeys = useCallback(() => {
+    api<{ keys: McpApiKey[] }>("/mcp/keys").then(({ keys: items }) => setKeys(items)).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load API keys"));
+  }, []);
+
+  useEffect(loadKeys, [loadKeys]);
+  useEffect(() => {
+    onPendingChange(Boolean(newToken));
+    return () => onPendingChange(false);
+  }, [newToken, onPendingChange]);
+
+  async function createKey(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData(event.currentTarget);
+      const result = await api<{ key: McpApiKey & { token: string } }>("/mcp/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), password: form.get("password"), ...(totpEnabled ? { totpCode: form.get("totpCode") } : {}) }) });
+      setNewToken(result.key.token);
+      event.currentTarget.reset();
+      loadKeys();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not create API key");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeKey(key: McpApiKey) {
+    if (!window.confirm(`Revoke “${key.name}”? Connected MCP clients using it will stop working.`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/mcp/keys/${key.id}`, { method: "DELETE", body: "{}" });
+      loadKeys();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not revoke API key");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(label);
+      window.setTimeout(() => setCopied(""), 1800);
+    } catch {
+      setError("Automatic copy is unavailable here. Select the value and copy it manually.");
+    }
+  }
+
+  return <section className="settings-content mcp-settings" aria-labelledby="mcp-heading">
+    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. MyNotes exposes only published notes you can already read; drafts and write operations are not available.</p></div></div>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
+    <div className="mcp-card">
+      <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
+      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create API key"}</button></form>}
+      {newToken && <div className="new-api-key" role="status"><strong>Copy this key now</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken} aria-label="New MCP API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken("")}>I saved this key</button></div></div>}
+      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small></div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
+    </div>
+    <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
+  </section>;
+}
+
 function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
-  const [section, setSection] = useState<"security" | "about">("security");
-  const [appInfo, setAppInfo] = useState({ version: "0.1.1", gitSha: "development" });
+  const [section, setSection] = useState<"security" | "mcp" | "about">("security");
+  const [appInfo, setAppInfo] = useState({ version: "0.2.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -132,6 +219,17 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [mcpKeyPending, setMcpKeyPending] = useState(false);
+
+  const guardedClose = useCallback(() => {
+    if (mcpKeyPending && !window.confirm("This API key is shown only once. Close settings without saving it?")) return;
+    onClose();
+  }, [mcpKeyPending, onClose]);
+
+  function selectSection(next: "security" | "mcp" | "about") {
+    if (next !== "mcp" && mcpKeyPending && !window.confirm("This API key is shown only once. Leave this section without saving it?")) return;
+    setSection(next);
+  }
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
@@ -140,10 +238,12 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
 
   useEffect(() => {
     if (state.setupRequired) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") guardedClose(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [onClose, state.setupRequired]);
+  }, [guardedClose, state.setupRequired]);
+
+  useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
 
   async function beginSetup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -244,10 +344,10 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
     <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header className="settings-header">
         <div><span className="eyebrow">Account</span><h2 id="settings-title">Settings</h2></div>
-        {!state.setupRequired && <button className="icon-button" onClick={onClose} aria-label="Close settings"><X /></button>}
+        {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => setSection("security")}><ShieldCheck />Security</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => setSection("about")}><Info />About</button></nav>
+        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -272,7 +372,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About MyNotes</h3><p>A private, self-hosted place for notes, configuration, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>MyNotes</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About MyNotes</h3><p>A private, self-hosted place for notes, configuration, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>MyNotes</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );

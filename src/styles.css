@@ -256,6 +256,41 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .about-card dd { margin: 0; color: #dedee1; }
 .about-card code { color: #f1ca73; }
 .about-card a { grid-column: 1 / -1; color: var(--yellow); text-decoration: underline; text-underline-offset: 3px; }
+.mcp-settings { display: grid; align-content: start; gap: 16px; }
+.mcp-settings .settings-section-heading { margin-bottom: 4px; }
+.mcp-endpoint, .mcp-card { border: 1px solid #303035; border-radius: 14px; background: #0f0f11; }
+.mcp-endpoint { display: grid; grid-template-columns: minmax(150px, .6fr) minmax(0, 1.4fr); }
+.mcp-endpoint > div { min-width: 0; display: flex; align-items: center; gap: 10px; padding: 15px 17px; }
+.mcp-endpoint > div + div { border-left: 1px solid #2b2b2f; }
+.mcp-endpoint span { color: #818188; font-size: .72rem; }
+.mcp-endpoint strong, .mcp-endpoint code { color: #e4e4e7; font-size: .8rem; }
+.mcp-endpoint code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-endpoint .icon-button { width: 30px; height: 30px; margin-left: auto; }
+.mcp-card { display: grid; gap: 17px; padding: 20px; }
+.mcp-card h4 { margin: 0 0 5px; }
+.mcp-card p { margin: 0; color: #88888f; font-size: .8rem; line-height: 1.5; }
+.mcp-key-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); align-items: end; gap: 10px; }
+.mcp-key-form label { display: grid; gap: 7px; color: #c9c9cd; font-size: .76rem; }
+.mcp-key-form input { min-height: 42px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; }
+.mcp-key-form .primary-button { min-height: 42px; padding: 0 14px; }
+.new-api-key { padding: 14px; border: 1px solid #6c5424; border-radius: 10px; background: #242016; }
+.new-api-key > p { margin: 4px 0 10px; color: #b5a77f; }
+.new-api-key textarea { width: 100%; min-height: 66px; resize: vertical; border: 1px solid #4a4129; border-radius: 8px; padding: 10px; background: #111113; color: #f1cd78; font: .76rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
+.new-api-key > div { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.new-api-key .secondary-button { min-height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
+.new-api-key .secondary-button svg { width: 15px; }
+.new-api-key .text-button { margin: 0; }
+.mcp-key-list { display: grid; border-top: 1px solid #29292d; }
+.mcp-key-list > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 13px 0; border-bottom: 1px solid #29292d; }
+.mcp-key-list .key-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #202024; color: #aaaab0; }
+.mcp-key-list svg { width: 16px; }
+.mcp-key-list div > div { min-width: 0; display: grid; gap: 4px; }
+.mcp-key-list strong { overflow-wrap: anywhere; }
+.mcp-key-list small { overflow: hidden; color: #7f7f86; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.text-danger { border: 0; background: transparent; color: #df7e7e; cursor: pointer; }
+.mcp-config pre { max-width: 100%; margin: 0; overflow-x: auto; border: 1px solid #2f2f34; border-radius: 9px; padding: 14px; background: #09090b; color: #d5d5da; font: .73rem/1.55 "SFMono-Regular", Consolas, monospace; }
+.mcp-config .secondary-button { justify-self: start; display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px; }
+.mcp-config .secondary-button svg { width: 15px; }
 .version-list { max-height: 210px; overflow-y: auto; padding: 10px; border-bottom: 1px solid var(--border); }
 .version-list button { width: 100%; display: grid; gap: 4px; padding: 11px 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; }
 .version-list button:hover, .version-list button.selected { background: #29251d; }
@@ -337,8 +372,12 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .settings-dialog { inset: 0 0 calc(61px + env(safe-area-inset-bottom)); width: 100%; max-height: none; border: 0; border-radius: 0; }
   .settings-body { display: block; overflow-y: auto; }
   .settings-nav { display: flex; overflow-x: auto; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .settings-nav { position: sticky; z-index: 2; top: 0; background: #101012; }
   .settings-nav button { width: auto; min-width: 130px; }
   .settings-content { overflow: visible; padding: 22px 18px 36px; }
+  .mcp-endpoint { grid-template-columns: 1fr; }
+  .mcp-endpoint > div + div { border-left: 0; border-top: 1px solid #2b2b2f; }
+  .mcp-key-form { grid-template-columns: 1fr; }
   .enrollment-grid { grid-template-columns: 1fr; }
   .qr-frame { margin: auto; }
   .verify-totp-form, .disable-totp-form > div, .view-recovery-form > div, .regenerate-recovery form > div { grid-template-columns: 1fr; }

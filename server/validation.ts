@@ -38,6 +38,12 @@ export const folderSharingSchema = z.object({
   visibility: z.enum(["private", "selected", "all_users"]),
   userIds: z.array(uuid).max(100).default([])
 }).strict();
+export const mcpApiKeySchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  password: z.string().min(1).max(256),
+  totpCode: totpCode.optional(),
+  recoveryCode: recoveryCode.optional()
+}).strict().refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
 
 export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   const length = Number(request.headers.get("content-length") ?? 0);

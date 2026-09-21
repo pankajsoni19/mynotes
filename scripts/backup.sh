@@ -24,7 +24,7 @@ if [[ -z "${configured_data_dir}" && -f "${PROJECT_DIR}/.env" ]]; then
   configured_data_dir="${configured_data_dir%\'}"
 fi
 
-data_dir_candidate="${mounted_data_dir:-${configured_data_dir:-/home/soni/Desktop/MacSSD/mynotes}}"
+data_dir_candidate="${mounted_data_dir:-${configured_data_dir:-/srv/mynotes}}"
 readonly DATA_DIR="$(realpath -e -- "${data_dir_candidate}")"
 readonly BACKUP_DIR="${DATA_DIR}/backup"
 readonly RETENTION_COUNT=5
