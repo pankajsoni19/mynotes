@@ -592,6 +592,7 @@ export function App() {
   const switchingRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
   const historyInitialisedRef = useRef(false);
+  const newlyCreatedNoteIdRef = useRef<string | null>(null);
 
   const flash = useCallback((message: string) => {
     setToast(message);
@@ -766,10 +767,15 @@ export function App() {
   }
 
   async function removeEmptyNewNote() {
-    if (!note?.isOwner || note.current_version !== 0 || markdown.trim() !== "") return false;
+    const unloadedNewNote = selectedNoteId !== null && selectedNoteId === newlyCreatedNoteIdRef.current;
+    const emptyUnpublishedNote = note?.isOwner && note.current_version === 0;
+    if ((!emptyUnpublishedNote && !unloadedNewNote) || markdown.trim() !== "") return false;
     cancelPendingAutosave();
     if (savingPromiseRef.current) await savingPromiseRef.current;
-    await api(`/notes/${note.id}`, { method: "DELETE", body: "{}" });
+    const noteId = note?.id ?? selectedNoteId;
+    if (!noteId) return false;
+    await api(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
+    if (newlyCreatedNoteIdRef.current === noteId) newlyCreatedNoteIdRef.current = null;
     revisionRef.current = null;
     loadedRef.current = "";
     setNote(null);
@@ -795,6 +801,7 @@ export function App() {
       const { note: created } = await api<{ note: { id: string } }>("/notes", { method: "POST", body: JSON.stringify({ folderId }) });
       await loadNavigation();
       setSelectedNoteId(created.id);
+      newlyCreatedNoteIdRef.current = created.id;
       setMobilePanel("editor");
       writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: created.id });
     } catch (reason) {
@@ -828,6 +835,7 @@ export function App() {
       setMarkdown("");
       revisionRef.current = null;
       loadedRef.current = "";
+      if (newlyCreatedNoteIdRef.current === noteId) newlyCreatedNoteIdRef.current = null;
       setMobilePanel("notes");
       writeMobileHistory({ panel: "notes", folder: selectedFolder, noteId: null });
     }
@@ -898,6 +906,7 @@ export function App() {
     const removesNote = note.current_version === 0;
     await api(`/notes/${note.id}/draft`, { method: "DELETE", body: "{}" });
     if (removesNote) {
+      if (newlyCreatedNoteIdRef.current === note.id) newlyCreatedNoteIdRef.current = null;
       setSelectedNoteId(null);
       setNote(null);
       setMarkdown("");
@@ -977,6 +986,7 @@ export function App() {
     revisionRef.current = null;
     loadedRef.current = "";
     historyInitialisedRef.current = false;
+    newlyCreatedNoteIdRef.current = null;
     setSession(null);
   }
 
@@ -994,6 +1004,7 @@ export function App() {
     setSelectionOwner(null);
     revisionRef.current = null;
     loadedRef.current = "";
+    newlyCreatedNoteIdRef.current = null;
     setSession(result);
     setChecking(false);
   }} />;
