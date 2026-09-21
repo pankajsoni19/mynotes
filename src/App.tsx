@@ -35,11 +35,11 @@ import {
 import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
 import { NoteEditor } from "./editor/NoteEditor";
+import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
-type MobilePanel = "folders" | "notes" | "editor";
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 type McpApiKey = { id: string; name: string; key_prefix: string; created_at: string; last_used_at: string | null };
 
@@ -566,7 +566,7 @@ export function App() {
   const [checking, setChecking] = useState(true);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
-  const [selectedFolder, setSelectedFolder] = useState<string | "all" | "shared">("all");
+  const [selectedFolder, setSelectedFolder] = useState<FolderSelection>("all");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [markdown, setMarkdown] = useState("");
@@ -591,6 +591,7 @@ export function App() {
   const savingPromiseRef = useRef<Promise<boolean> | null>(null);
   const switchingRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
+  const historyInitialisedRef = useRef(false);
 
   const flash = useCallback((message: string) => {
     setToast(message);
@@ -648,6 +649,12 @@ export function App() {
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
+  }, [selectedFolder, selectedNoteId, selectionOwner, session]);
+  useEffect(() => {
+    if (!session || selectionOwner !== session.user.id || historyInitialisedRef.current || !isMobileViewport()) return;
+    const snapshot: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
+    window.history.replaceState(createHistoryState(session.user.id, snapshot, window.history.state), "");
+    historyInitialisedRef.current = true;
   }, [selectedFolder, selectedNoteId, selectionOwner, session]);
   useEffect(() => {
     if (selectedNoteId) loadNote(selectedNoteId);
@@ -734,6 +741,30 @@ export function App() {
     autosaveTimerRef.current = null;
   }
 
+  function writeMobileHistory(snapshot: MobileNavigationSnapshot, mode: "push" | "replace" = "push") {
+    if (!session || !isMobileViewport()) return;
+    let current = readHistorySnapshot(window.history.state, session.user.id);
+    if (!current) {
+      const initial: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
+      window.history.replaceState(createHistoryState(session.user.id, initial, window.history.state), "");
+      current = initial;
+    }
+    if (current && sameSnapshot(current, snapshot)) return;
+    const state = createHistoryState(session.user.id, snapshot, window.history.state);
+    if (mode === "replace") window.history.replaceState(state, "");
+    else window.history.pushState(state, "");
+    historyInitialisedRef.current = true;
+  }
+
+  function showMobilePanel(panel: MobilePanel, mode: "push" | "replace" = "push") {
+    const current = session ? readHistorySnapshot(window.history.state, session.user.id) : null;
+    if (panel === "editor" && current?.panel === "folders" && selectedNoteId) {
+      writeMobileHistory({ panel: "notes", folder: selectedFolder, noteId: null });
+    }
+    setMobilePanel(panel);
+    writeMobileHistory({ panel, folder: selectedFolder, noteId: selectedNoteId }, mode);
+  }
+
   async function removeEmptyNewNote() {
     if (!note?.isOwner || note.current_version !== 0 || markdown.trim() !== "") return false;
     cancelPendingAutosave();
@@ -765,6 +796,7 @@ export function App() {
       await loadNavigation();
       setSelectedNoteId(created.id);
       setMobilePanel("editor");
+      writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: created.id });
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : "Could not create note");
     } finally {
@@ -779,6 +811,7 @@ export function App() {
     setDraggingNoteId(null);
     setDropFolderId(null);
     await loadNavigation();
+    if (selectedNoteId === noteId) writeMobileHistory({ panel: mobilePanel, folder: folder.id, noteId });
     flash(`Moved to ${folder.name}`);
   }
 
@@ -795,6 +828,8 @@ export function App() {
       setMarkdown("");
       revisionRef.current = null;
       loadedRef.current = "";
+      setMobilePanel("notes");
+      writeMobileHistory({ panel: "notes", folder: selectedFolder, noteId: null });
     }
     await loadNavigation();
     flash("Note deleted");
@@ -814,6 +849,7 @@ export function App() {
   async function selectNote(nextId: string) {
     if (nextId === selectedNoteId) {
       setMobilePanel("editor");
+      writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: nextId });
       return;
     }
     if (switchingRef.current) return;
@@ -823,6 +859,7 @@ export function App() {
       if (!removedEmptyNote && hasPublishableDelta) await publish(false);
       setSelectedNoteId(nextId);
       setMobilePanel("editor");
+      writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: nextId });
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : "Could not switch notes");
     } finally {
@@ -830,9 +867,10 @@ export function App() {
     }
   }
 
-  async function selectFolder(nextFolder: string | "all" | "shared") {
+  async function selectFolder(nextFolder: FolderSelection) {
     if (nextFolder === selectedFolder) {
       setMobilePanel("notes");
+      writeMobileHistory({ panel: "notes", folder: nextFolder, noteId: null });
       return;
     }
     if (switchingRef.current) return;
@@ -847,6 +885,7 @@ export function App() {
       revisionRef.current = null;
       loadedRef.current = "";
       setMobilePanel("notes");
+      writeMobileHistory({ panel: "notes", folder: nextFolder, noteId: null });
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : "Could not switch folders");
     } finally {
@@ -865,12 +904,62 @@ export function App() {
       revisionRef.current = null;
       loadedRef.current = "";
       await loadNavigation();
+      setMobilePanel("notes");
+      writeMobileHistory({ panel: "notes", folder: selectedFolder, noteId: null });
       flash("Unpublished note removed");
     } else {
       await Promise.all([loadNote(note.id), loadNavigation()]);
       flash("Draft discarded");
     }
   }
+
+  async function restoreMobileHistory(snapshot: MobileNavigationSnapshot) {
+    if (switchingRef.current) return;
+    const targetFolder: FolderSelection = snapshot.folder === "all" || snapshot.folder === "shared" || folders.some((folder) => folder.id === snapshot.folder) ? snapshot.folder : "all";
+    const candidate = snapshot.noteId ? notes.find((item) => item.id === snapshot.noteId) : undefined;
+    const targetNoteId = candidate && (targetFolder === "all" || (targetFolder === "shared" ? candidate.is_owner === 0 : candidate.folder_id === targetFolder)) ? candidate.id : null;
+    const targetPanel: MobilePanel = snapshot.panel === "editor" && !targetNoteId ? "notes" : snapshot.panel;
+    const selectionChanged = targetFolder !== selectedFolder || targetNoteId !== selectedNoteId;
+    switchingRef.current = true;
+    try {
+      if (selectionChanged) {
+        const removedEmptyNote = await removeEmptyNewNote();
+        if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+        setSelectedFolder(targetFolder);
+        setSelectedNoteId(targetNoteId);
+        if (!targetNoteId) {
+          setNote(null);
+          setMarkdown("");
+          revisionRef.current = null;
+          loadedRef.current = "";
+        }
+      }
+      setMobilePanel(targetPanel);
+    } catch (reason) {
+      flash(reason instanceof Error ? reason.message : "Could not restore this view");
+    } finally {
+      switchingRef.current = false;
+    }
+  }
+
+  function mobileBack(fallback: MobilePanel) {
+    if (session && isMobileViewport() && readHistorySnapshot(window.history.state, session.user.id)) {
+      window.history.back();
+      return;
+    }
+    showMobilePanel(fallback);
+  }
+
+  useEffect(() => {
+    if (!session) return;
+    const onPopState = (event: PopStateEvent) => {
+      if (!isMobileViewport()) return;
+      const snapshot = readHistorySnapshot(event.state, session.user.id);
+      if (snapshot) void restoreMobileHistory(snapshot);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [folders, hasPublishableDelta, notes, selectedFolder, selectedNoteId, session, flash]);
 
   async function logout() {
     await api("/auth/logout", { method: "POST", body: "{}" });
@@ -887,6 +976,7 @@ export function App() {
     setSelectionOwner(null);
     revisionRef.current = null;
     loadedRef.current = "";
+    historyInitialisedRef.current = false;
     setSession(null);
   }
 
@@ -910,10 +1000,10 @@ export function App() {
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
-      <aside className="folder-pane">
+      <aside className="folder-pane" id="note-folders">
         <header className="sidebar-header">
           <div className="sidebar-brand"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></div>
-          <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse sidebar"><PanelLeftClose /></button>
+          <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
@@ -952,7 +1042,8 @@ export function App() {
 
       <section className="note-pane">
         <header className="note-pane-header">
-          <div className="mobile-header"><button className="icon-button" onClick={() => setMobilePanel("folders")}><ChevronLeft /></button><strong>Notes</strong></div>
+          <button className="icon-button collapsed-trigger collapsed-sidebar-toggle" onClick={() => setCollapsed(false)} aria-label="Open folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Open folders"><PanelLeftOpen /><span>Folders</span></button>
+          <div className="mobile-header"><button className="icon-button" onClick={() => mobileBack("folders")} aria-label="Back to folders"><ChevronLeft /></button><strong>Notes</strong></div>
           <div className="note-heading"><span className="eyebrow">{selectedFolder === "shared" ? "Shared" : "Library"}</span><h1>{selectedFolder === "all" ? "All notes" : selectedFolder === "shared" ? "Shared with me" : folders.find((folder) => folder.id === selectedFolder)?.name}</h1></div>
           <div className="note-header-actions">
             <div className="sort-control">
@@ -993,8 +1084,7 @@ export function App() {
       <section className="editor-pane">
         {!note ? <div className="editor-empty"><div className="empty-glyph"><Sparkles /></div><h2>Select a note</h2><p>Choose one from the list or create something new.</p></div> : <>
           <header className="editor-toolbar">
-            <div className="mobile-editor-nav"><button className="icon-button" onClick={() => setMobilePanel("notes")}><ChevronLeft /></button></div>
-            <button className="icon-button collapsed-trigger" onClick={() => setCollapsed(false)} aria-label="Open sidebar"><PanelLeftOpen /></button>
+            <div className="mobile-editor-nav"><button className="icon-button" onClick={() => mobileBack("notes")} aria-label="Back to notes"><ChevronLeft /></button></div>
             <div className={`save-indicator ${saveState}`}><span />{saveState === "saving" ? "Saving…" : saveState === "conflict" ? "Save conflict" : saveState === "error" ? "Not saved" : note.hasDraft ? "Draft saved" : `Version ${note.current_version}`}</div>
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
@@ -1029,9 +1119,9 @@ export function App() {
         : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(false); }} aria-label="Close panel" />)}
       {toast && <div className="toast" role="status">{toast}</div>}
       <nav className="mobile-tabbar">
-        <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => setMobilePanel("folders")}><Menu />Folders</button>
-        <button className={mobilePanel === "notes" ? "active" : ""} onClick={() => setMobilePanel("notes")}><Archive />Notes</button>
-        <button className={mobilePanel === "editor" ? "active" : ""} disabled={!note} onClick={() => setMobilePanel("editor")}><Sparkles />Editor</button>
+        <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => showMobilePanel("folders")}><Menu />Folders</button>
+        <button className={mobilePanel === "notes" ? "active" : ""} onClick={() => showMobilePanel("notes")}><Archive />Notes</button>
+        <button className={mobilePanel === "editor" ? "active" : ""} disabled={!note} onClick={() => showMobilePanel("editor")}><Sparkles />Editor</button>
       </nav>
     </main>
   );

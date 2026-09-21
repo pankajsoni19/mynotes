@@ -325,10 +325,14 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .share-save { margin: 14px; flex: none; }
 .toast { position: fixed; z-index: 60; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 11px 16px; border: 1px solid #39393e; border-radius: 10px; background: #202024; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); font-size: .82rem; }
 
-.collapsed-trigger { display: none; margin-right: 8px; }
+.collapsed-trigger { display: none; }
 .workspace.nav-collapsed { grid-template-columns: 0 320px minmax(0, 1fr); }
 .workspace.nav-collapsed .folder-pane { visibility: hidden; overflow: hidden; }
 .workspace.nav-collapsed .collapsed-trigger { display: grid; }
+.collapsed-sidebar-toggle { position: absolute; z-index: 5; top: 20px; left: 10px; width: auto; min-width: 44px; min-height: 44px; grid-template-columns: 18px auto; gap: 7px; padding: 0 11px; border: 1px solid #84682b; border-radius: 11px; background: #302716; color: #ffe29a; box-shadow: 0 8px 24px rgb(0 0 0 / 32%), inset 0 0 0 1px rgb(255 226 154 / 8%); font-size: .77rem; font-weight: 700; }
+.collapsed-sidebar-toggle:hover { background: #44361b; color: #fff0c3; }
+.collapsed-sidebar-toggle svg { width: 18px; }
+.workspace.nav-collapsed .note-pane-header { padding-left: 82px; }
 .mobile-header, .mobile-editor-nav, .mobile-tabbar, .mobile-more, .mobile-actions-menu { display: none; }
 
 @media (max-width: 1020px) and (min-width: 761px) {

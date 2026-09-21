@@ -45,6 +45,8 @@
 - [x] Loading, empty, error, and conflict states
 - [x] Open Graph/Twitter landing metadata and reusable 1280×640 social preview image
 - [x] Responsive MCP settings, API-key management, and copyable client configuration
+- [x] Obvious collapsed-sidebar reopen control with keyboard/touch support
+- [x] Mobile browser Back/Forward navigation between folders, note list, and editor
 
 ## Container and operations
 
