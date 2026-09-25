@@ -116,6 +116,12 @@ export function uploadAttachment(file: File, onProgress: (fraction: number) => v
   });
 }
 
+export type ImportError = { row: number; column: number; fieldId: string | null; message: string };
+export type ImportPreview = { dryRun: true; header: string[]; total: number; valid: number; errorCount: number; errors: ImportError[]; mapping: Array<string | null>; preview: Array<Record<string, FieldValue>>; wouldExceedLimit: boolean };
+export const importCsv = (collectionId: string, csv: string, mapping: Array<string | null> | undefined, dryRun: boolean) =>
+  api<ImportPreview | { inserted: number }>(`/collections/${collectionId}/import`, json("POST", mapping ? { csv, mapping, dryRun } : { csv, dryRun }));
+export const exportUrl = (collectionId: string, viewId?: string | null) => `/api/collections/${collectionId}/export.csv${viewId ? `?viewId=${viewId}` : ""}`;
+
 export type Segment = { text: string; hit: boolean };
 export type RowSearchHit = { rowId: string; collectionId: string; collectionName: string; title: Segment[]; snippet: Segment[]; updated_at: string };
 export const searchRows = (q: string, signal?: AbortSignal, collection = "all") =>

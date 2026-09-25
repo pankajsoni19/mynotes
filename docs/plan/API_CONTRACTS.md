@@ -473,6 +473,16 @@ Views are listed by `GET /:c` for every reader and used through `POST /:c/query 
 - **Notes** in `note` fields never grant access: a note the caller cannot read resolves as `{ id, restricted: true }` (T59).
 - Audit: `collection.row_attach` and `collection.row_detach` with `{ collectionId, rowId, documentId }`; a binned upload adds `document.delete { documentId, reason: "attachment_unlinked" }`.
 
+### CSV import and export
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /:c/import { csv, mapping?, dryRun }` | editor | dry run: 200 `{ dryRun: true, header, total, valid, errorCount, errors ≤ 50, mapping, preview ≤ 20, wouldExceedLimit }`; import: 200 `{ inserted }` | 400 `INVALID_CSV` (with `line`) / `INVALID_MAPPING` / `IMPORT_INVALID { errorCount, errors }`, 403 `READ_ONLY`, 404, 409 `LIMIT_REACHED`, 413 `IMPORT_TOO_LARGE`, 429 `RATE_LIMITED` |
+| `GET /:c/export.csv?viewId=` | reader | 200 `text/csv; charset=utf-8`, `Content-Disposition: attachment`, `no-store` | 400 (bad `viewId`), 404 (collection, or a view of another collection) |
+
+- **Import** (D59, T56). `csv` is the file's text inside JSON, at most 2,000,000 UTF-8 bytes; the first record is the header, then at most 5000 rows of at most 50 columns (in-house RFC 4180 parser: quotes, doubled quotes, embedded line breaks, CRLF/LF/CR, BOM stripped, empty records skipped). `mapping` has one entry per header column: a field id or `null` to skip; without it, columns map to fields with the same name (case-insensitive). File fields cannot be mapped. Cells convert per type (numbers may use `,` separators; checkboxes accept yes/no/true/false/1/0/x; options match by label or id, several separated by `;`; notes by id and must be readable), then pass the same strict validation as `POST /rows`. `errors[].row` counts data rows from 1. A real import inserts every row in one transaction, indexed for search, or nothing; imports count five per minute per user, dry runs included. Audit: `collection.import { collectionId, count }`.
+- **Export** (T55). The rows `POST /:c/query { viewId }` returns (all pages, in order) and the view's shown fields, as UTF-8 with a BOM and CRLF. Text cells (names, text, url, option labels, note titles, file names) that start with `=`, `+`, `-`, `@`, tab, or CR get a leading `'`; numbers, dates, and checkboxes are written as-is. Note titles follow the caller's access (empty when unreadable). Importing an export removes the added `'`. Audit: `collection.export { collectionId, count }`.
+
 ### Collection sharing
 
 | Endpoint | Who | Success | Errors |

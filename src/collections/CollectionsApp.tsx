@@ -47,6 +47,8 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   useCollectionsDialogGuard();
+  const [importFor, setImportFor] = useState<string | null>(null);
+  const importOpened = useCallback(() => setImportFor(null), []);
 
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
@@ -109,8 +111,11 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
         go={go}
         onBack={back}
         onMissing={onMissing}
+        openImport={importFor === route.collectionId}
+        onImportOpened={importOpened}
         notify={flash}
       />
-      : <CollectionList userId={userId} onOpen={(collection) => go(collectionsRoute(collection.id))} onOpenRow={(collectionId, rowId) => go(collectionsRoute(collectionId, { rowId }))} notify={flash} />}
+      : <CollectionList userId={userId} onOpen={(collection) => go(collectionsRoute(collection.id))} onOpenRow={(collectionId, rowId) => go(collectionsRoute(collectionId, { rowId }))} notify={flash}
+        onCreatedForImport={(collection) => { setImportFor(collection.id); go(collectionsRoute(collection.id)); }} />}
   </main>;
 }

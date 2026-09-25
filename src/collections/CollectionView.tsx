@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Bookmark, Columns3, Eye, Pencil, RotateCcw, Save, Share2, SlidersHorizontal, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, Bookmark, Columns3, Download, Eye, Pencil, RotateCcw, Save, Share2, SlidersHorizontal, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { ApiError } from "../api";
 import { ConfirmDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
@@ -14,6 +14,7 @@ import {
   errorCode,
   errorMessage,
   errorPayload,
+  exportUrl,
   getCollection,
   renameCollection,
   undoRow,
@@ -31,6 +32,7 @@ import { CollectionSharePanel } from "./CollectionSharePanel";
 import { CollectionTable } from "./CollectionTable";
 import { useDialogLayer } from "./dialogLayers";
 import { FieldEditor } from "./FieldEditor";
+import { ImportDialog } from "./ImportDialog";
 import { CollectionIcon } from "./icons";
 import { OptionPicker } from "./OptionPicker";
 import { RowActionSheet } from "./RowActionSheet";
@@ -49,6 +51,9 @@ type CollectionViewProps = {
   onBack: () => void;
   onMissing: (what: "collection" | "view" | "row") => void;
   notify: (message: string) => void;
+  /** Open the CSV import once loaded (New collection → Create and import CSV). */
+  openImport?: boolean;
+  onImportOpened?: () => void;
 };
 
 type Dialog =
@@ -60,10 +65,11 @@ type Dialog =
   | { kind: "renameView" }
   | { kind: "deleteView" }
   | { kind: "deleteCollection" }
+  | { kind: "import" }
   | { kind: "picker"; rowId: string; fieldId: string }
   | { kind: "actions"; rowId: string };
 
-export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMissing, notify }: CollectionViewProps) {
+export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMissing, notify, openImport = false, onImportOpened }: CollectionViewProps) {
   const [collection, setCollection] = useState<CollectionDetail | null>(null);
   const [role, setRole] = useState<CollectionRole>("viewer");
   const [views, setViews] = useState<SavedView[]>([]);
@@ -89,6 +95,11 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
   }, [collectionId, onMissing]);
 
   useEffect(() => { void loadCollection(); }, [loadCollection]);
+  useEffect(() => {
+    if (!openImport || !collection) return;
+    setDialog({ kind: "import" });
+    onImportOpened?.();
+  }, [collection, onImportOpened, openImport]);
 
   const view = viewId ? views.find((item) => item.id === viewId) ?? null : null;
   // Sort and filters chosen in the sheet override the saved view's until the view changes.
@@ -255,6 +266,10 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       <span className="collection-count">{rowCountLabel(rows.total)}</span>
       {!editable && <span className="collection-role role-viewer"><Eye aria-hidden="true" />{roleLabel(role)}</span>}
       {role === "editor" && <span className="collection-role role-editor">{roleLabel(role)}</span>}
+      <span className="collection-header-actions collection-data-actions">
+        {editable && <button className="icon-button" onClick={() => setDialog({ kind: "import" })} aria-haspopup="dialog" aria-label="Import CSV" title="Import CSV"><Upload /></button>}
+        <a className="icon-button" href={exportUrl(collectionId, viewId)} download aria-label="Export CSV" title="Export CSV"><Download /></a>
+      </span>
       {isOwner && <span className="collection-header-actions">
         <button className="icon-button" onClick={() => setDialog({ kind: "rename" })} aria-haspopup="dialog" aria-label="Rename collection" title="Rename"><Pencil /></button>
         <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "fields" })} aria-haspopup="dialog"><Columns3 /><span>Fields</span></button>
@@ -337,6 +352,11 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         setCollection(saved);
         setDialog(null);
       }} />}
+    {dialog?.kind === "import" && <ImportDialog collection={collection} onClose={closeDialog} onImported={(count) => {
+      setDialog(null);
+      notify(`Imported ${rowCountLabel(count)}`);
+      void rows.reload();
+    }} />}
     {dialog?.kind === "share" && <CollectionSharePanel collection={collection} onClose={closeDialog} onChanged={() => {
       setDialog(null);
       notify("Sharing updated");

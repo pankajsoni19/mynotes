@@ -1,7 +1,9 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
+import { contentDisposition } from "../contentHeaders";
 import { parseJson, uuid } from "../validation";
+import { exportRows, importRows } from "./importExport";
 // Registers collections and rows as Bin providers (server/bin.ts).
 import "./bin";
 import { QUERY_LIMITS, querySpecShape } from "./query";
@@ -67,6 +69,8 @@ export const rowCreateSchema = safeJson(z.object({ values: valuesObject, afterRo
 export const rowPatchSchema = safeJson(z.object({ values: valuesObject, revision }).strict());
 export const rowUndoSchema = safeJson(z.object({ revision }).strict());
 export const attachSchema = safeJson(z.object({ documentId: uuid, fieldId: z.string().regex(FIELD_ID) }).strict());
+// The CSV byte cap (2 MB) is checked by importRows so that an oversized file is 413, not a generic 400.
+export const importSchema = safeJson(z.object({ csv: z.string(), mapping: z.array(z.string().regex(FIELD_ID).nullable()).max(50).optional(), dryRun: z.boolean().default(false) }).strict());
 
 export const pathId = (c: Context<AppEnv>, name: string) => uuid.parse(c.req.param(name));
 
@@ -137,6 +141,29 @@ export function registerCollectionRoutes(app: Hono<AppEnv>) {
     const collectionId = pathId(c, "collectionId");
     const body = await parseJson(c.req.raw, querySchema);
     return respond(c, () => queryRows(user(c), collectionId, body));
+  });
+
+  app.post("/api/collections/:collectionId/import", async (c) => {
+    const collectionId = pathId(c, "collectionId");
+    const body = await parseJson(c.req.raw, importSchema);
+    return respond(c, () => importRows(user(c), collectionId, body));
+  });
+
+  app.get("/api/collections/:collectionId/export.csv", (c) => {
+    const collectionId = pathId(c, "collectionId");
+    const viewParam = c.req.query("viewId");
+    const viewId = viewParam === undefined || viewParam === "" ? undefined : uuid.parse(viewParam);
+    try {
+      const { csv, name } = exportRows(user(c), collectionId, viewId);
+      return c.body(csv, 200, {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": contentDisposition("attachment", `${name}.csv`),
+        "Cache-Control": "no-store"
+      });
+    } catch (error) {
+      if (error instanceof CollectionError) return c.json(error.body(), error.status);
+      throw error;
+    }
   });
 
   app.post("/api/collections/:collectionId/views", async (c) => {

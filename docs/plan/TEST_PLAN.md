@@ -247,6 +247,18 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] Parity: a reader sees nothing before sharing, their own hits within `limit=2` despite 30 matches in a hidden collection (ACL before LIMIT), option-label hits, and nothing after unsharing; a binned row drops out and returns on restore; `collection=<id>` filters, and a bad id is 400; FTS rows equal mapping rows.
 - [x] Writes, undo, and an option rename (schema change) keep the index in step (`source_revision`, `schema_version`); boot reconcile rebuilds missing and stale entries, removes orphan FTS rows, and is idempotent.
 
+`tests/collectionsCsv.test.ts` (no server):
+
+- [x] RFC 4180: quotes, doubled quotes, commas and line breaks inside quotes, literal quotes in unquoted fields, CRLF/LF/CR, BOM, empty records skipped; unterminated quotes and text after a closing quote fail with the line; row and 50-column caps; 50,000 cells parse in well under 1.5 s.
+- [x] Writing: BOM, CRLF, quoting only when needed, round-trips through the parser; `= + - @ \t \r` starts are neutralized with `'` (and restored on import), nothing else is.
+
+`tests/collectionsImport.test.ts`:
+
+- [x] Dry run: header mapping by name (BOM, case-insensitive, unknown columns skipped), preview values, per-cell errors (required, number, date, checkbox, option, multi-option) with row numbers, nothing written; the real import with errors is 400 `IMPORT_INVALID` and writes nothing; a clean import inserts every row in order and audits a count.
+- [x] Explicit mappings (wrong length, duplicate, unknown, file field, all skipped) are `INVALID_MAPPING`; bad CSV is `INVALID_CSV`; prototype keys are refused.
+- [x] Viewers 403, strangers 404, 2 MB → 413, 5001 rows and 51 columns → 400, the 10,000-row cap → 409 with nothing written, 5000 rows import, and the sixth import in a minute → 429.
+- [x] Export: BOM, `text/csv`, attachment, `no-store`; formulas neutralized in names, text, and option labels but not in numbers; note titles only for readers who can read the note; 404 after unsharing; the export imports back unchanged; an export through a view equals the view's query (rows, order, shown fields) and a view of another collection is 404.
+
 `tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
 
 - [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.
