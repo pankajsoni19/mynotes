@@ -13,7 +13,8 @@ import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
  * The built-in Today sections (docs/plan/WAVES_10-12.md §2.2). Each one reads
  * through the owning module's predicate or list function:
  *
- * - tasks: `readableBoardPredicate` (the Tasks board list), live cards, columns not marked done
+ * - tasks: `readableBoardPredicate` (the Tasks board list), live cards, columns not marked done;
+ *   My tasks leaves out cards due within seven days, which Due soon already lists
  * - notes: `readableNotePredicate` (the Notes list and search)
  * - files: `recentListableDocuments` (the Files list predicate, `purpose = 'file'`)
  * - Bin: `listBin`; storage: `storageUsage` (the upload quota's own sum)
@@ -47,15 +48,23 @@ registerTodayProvider("tasksMine", {
   mcpScope: "tasks:read",
   href: "/tasks",
   load: ({ userId, today }) => page((db.query(`${taskSelect} AND (k.assignee_id = $userId OR k.created_by = $userId)
+      AND (k.due_on IS NULL OR k.due_on > $horizon)
       ORDER BY k.due_on IS NULL, k.due_on, k.updated_at DESC, k.id LIMIT $limit`)
-    .all({ userId, limit: TODAY_FETCH }) as TaskRow[])
+    .all({ userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[])
     .map((row) => ({ ...taskItem(row, today), reason: row.assigneeId === userId ? "assigned" as const : "created" as const })))
 });
+
+const EMPTY_CHECKSUM = checksum("");
+
+/** A never-published note the drafts section lists: a saved, non-blank draft of the owner's own (not an agent's). */
+const listedAsUnpublishedDraft = "(n.draft_revision IS NOT NULL AND n.draft_mcp_key_id IS NULL AND n.draft_checksum <> $empty)";
 
 /**
  * Recently changed notes the caller can read. Recipients see a note only once
  * it is published (GET /api/notes/:id refuses them before that), with its
  * published title and time, so the owner's draft activity stays private.
+ * The owner's never-published notes that Unpublished drafts lists (the same
+ * rule as the drafts section below) are left out here, so they appear once.
  */
 registerTodayProvider("notesRecent", {
   mcpScope: "notes:read",
@@ -67,10 +76,9 @@ registerTodayProvider("notesRecent", {
       FROM notes n JOIN users u ON u.id = n.owner_id
       LEFT JOIN note_versions v ON v.note_id = n.id AND v.version_number = n.current_version
       WHERE n.deleted_at IS NULL AND ${readableNotePredicate} AND (n.owner_id = $userId OR v.id IS NOT NULL)
-      ORDER BY 5 DESC, n.id LIMIT $limit`).all({ userId, limit: TODAY_FETCH }) as Array<{ id: string; title: string; owner_name: string; is_owner: 0 | 1; updated_at: string }>))
+        AND NOT (n.owner_id = $userId AND n.current_version = 0 AND ${listedAsUnpublishedDraft})
+      ORDER BY 5 DESC, n.id LIMIT $limit`).all({ userId, empty: EMPTY_CHECKSUM, limit: TODAY_FETCH }) as Array<{ id: string; title: string; owner_name: string; is_owner: 0 | 1; updated_at: string }>))
 });
-
-const EMPTY_CHECKSUM = checksum("");
 
 /** The caller's own drafts that differ from what is published (blank never-published drafts are not drafts). */
 registerTodayProvider("drafts", {
@@ -80,7 +88,7 @@ registerTodayProvider("drafts", {
       SELECT n.id, n.title, n.updated_at, n.current_version = 0 AS neverPublished
       FROM notes n
       WHERE n.owner_id = $userId AND n.deleted_at IS NULL AND n.draft_revision IS NOT NULL AND n.draft_mcp_key_id IS NULL
-        AND ((n.current_version = 0 AND n.draft_checksum <> $empty) OR EXISTS (
+        AND ((n.current_version = 0 AND ${listedAsUnpublishedDraft}) OR EXISTS (
           SELECT 1 FROM note_versions v WHERE v.note_id = n.id AND v.version_number = n.current_version AND v.checksum <> n.draft_checksum))
       ORDER BY n.updated_at DESC, n.id LIMIT $limit`).all({ userId, empty: EMPTY_CHECKSUM, limit: TODAY_FETCH }) as Array<{ id: string; title: string; updated_at: string; neverPublished: number }>)
     .map((row) => ({ ...row, neverPublished: row.neverPublished === 1 })))

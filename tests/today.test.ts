@@ -222,7 +222,9 @@ describe("GET /api/today", () => {
     await saveDraft(owner, shared, "# Secret new title\n\nnot yet published");
 
     const ownerView = await expectParity(owner);
-    expect(ids(ownerView.sections.notesRecent)).toEqual(expect.arrayContaining([shared, privateNote, unpublished, overridden]));
+    expect(ids(ownerView.sections.notesRecent)).toEqual(expect.arrayContaining([shared, privateNote, overridden, blank]));
+    // A never-published note listed under Unpublished drafts is not repeated in Recent notes.
+    expect(ids(ownerView.sections.notesRecent)).not.toContain(unpublished);
     // Drafts: the edited published note and the unpublished one; not the blank one or clean published notes.
     expect(ids(ownerView.sections.drafts).sort()).toEqual([shared, unpublished].sort());
     expect(ownerView.sections.drafts!.items.find((item) => item.id === unpublished)).toMatchObject({ neverPublished: true, title: "Only a draft" });
@@ -313,8 +315,11 @@ describe("GET /api/today", () => {
     expect(ids(ownerView.sections.tasksDue, "cardId")).not.toContain(later.id);
     expect(ids(ownerView.sections.tasksDue, "cardId")).not.toContain(finished.id);
     // The owner created everything but the member's card; the assigned card is still "created" for them.
+    // Cards due within seven days (and overdue ones) are already under Due soon, so My tasks leaves them out.
     const ownerMine = ids(ownerView.sections.tasksMine, "cardId");
-    expect(ownerMine).toEqual(expect.arrayContaining([overdue.id, soon.id, later.id, assigned.id]));
+    expect(ownerMine).toEqual(expect.arrayContaining([later.id, assigned.id]));
+    expect(ownerMine).not.toContain(overdue.id);
+    expect(ownerMine).not.toContain(soon.id);
     expect(ownerMine).not.toContain(memberCard.id);
     expect(ownerMine).not.toContain(finished.id);
 
