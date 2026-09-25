@@ -921,26 +921,40 @@ export function App() {
     flash(`Moved to ${folder.name}`);
   }
 
+  // Clears the editor after the open note left the list (moved to the Bin or purged).
+  function closeRemovedNote(noteId: string) {
+    if (newlyCreatedNoteIdRef.current === noteId) newlyCreatedNoteIdRef.current = null;
+    setSelectedNoteId(null);
+    setNote(null);
+    setMarkdown("");
+    revisionRef.current = null;
+    loadedRef.current = "";
+    setMobilePanel("notes");
+    navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
+  }
+
   async function deleteNote(noteId: string, title: string) {
+    if (switchingRef.current) return;
     if (!window.confirm(`Move “${title}” to the Bin? You can restore it for 30 days.`)) return;
-    if (noteId === selectedNoteId) {
-      cancelPendingAutosave();
-      // The note stays restorable from the Bin, so keep the latest edits in its draft.
-      await saveDraft();
+    // Lock the editor and note switching for the whole save + delete, like a note switch,
+    // so no keystrokes land after the saved copy and no other note is cleared by mistake.
+    switchingRef.current = true;
+    setSwitchingNote(true);
+    const deletingOpenNote = noteId === selectedNoteId;
+    try {
+      if (deletingOpenNote) {
+        cancelPendingAutosave();
+        // The note stays restorable from the Bin, so keep the latest edits in its draft.
+        await saveDraft();
+      }
+      const result = await api<{ purged?: boolean }>(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
+      if (deletingOpenNote) closeRemovedNote(noteId);
+      await loadNavigation();
+      flash(result.purged ? "Empty note removed" : "Moved to the Bin");
+    } finally {
+      switchingRef.current = false;
+      setSwitchingNote(false);
     }
-    const result = await api<{ purged?: boolean }>(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
-    if (noteId === selectedNoteId) {
-      setSelectedNoteId(null);
-      setNote(null);
-      setMarkdown("");
-      revisionRef.current = null;
-      loadedRef.current = "";
-      if (newlyCreatedNoteIdRef.current === noteId) newlyCreatedNoteIdRef.current = null;
-      setMobilePanel("notes");
-      navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
-    }
-    await loadNavigation();
-    flash(result.purged ? "Empty note removed" : "Moved to the Bin");
   }
 
   async function publish(reloadCurrent = true) {
@@ -1027,7 +1041,8 @@ export function App() {
   }
 
   async function discard() {
-    if (!note) return;
+    if (!note || switchingRef.current) return;
+    const noteId = note.id;
     const removesNote = note.current_version === 0;
     const message = !removesNote
       ? "Discard this draft and return to the published version?"
@@ -1035,26 +1050,28 @@ export function App() {
         ? "Discard this empty note?"
         : `This note was never published. Move “${note.title || "Untitled"}” to the Bin? You can restore it for 30 days.`;
     if (!window.confirm(message)) return;
-    if (removesNote) {
-      cancelPendingAutosave();
-      // Discarding an unpublished note moves it to the Bin with its draft, so save the latest edits first.
-      await saveDraft();
-    }
-    const result = await api<{ binned?: boolean; purged?: boolean }>(`/notes/${note.id}/draft`, { method: "DELETE", body: "{}" });
-    if (removesNote) {
-      if (newlyCreatedNoteIdRef.current === note.id) newlyCreatedNoteIdRef.current = null;
-      setSelectedNoteId(null);
-      setNote(null);
-      setMarkdown("");
-      revisionRef.current = null;
-      loadedRef.current = "";
-      await loadNavigation();
-      setMobilePanel("notes");
-      navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
-      flash(result.binned ? "Moved to the Bin" : "Empty note removed");
-    } else {
-      await Promise.all([loadNote(note.id), loadNavigation()]);
-      flash("Draft discarded");
+    switchingRef.current = true;
+    setSwitchingNote(true);
+    try {
+      if (removesNote) {
+        cancelPendingAutosave();
+        // Discarding an unpublished note moves it to the Bin with its draft, so save the latest edits first.
+        await saveDraft();
+      }
+      const result = await api<{ binned?: boolean; purged?: boolean }>(`/notes/${noteId}/draft`, { method: "DELETE", body: "{}" });
+      if (removesNote) {
+        closeRemovedNote(noteId);
+        await loadNavigation();
+        flash(result.binned ? "Moved to the Bin" : "Empty note removed");
+      } else {
+        await Promise.all([loadNote(noteId), loadNavigation()]);
+        flash("Draft discarded");
+      }
+    } catch (reason) {
+      flash(reason instanceof Error ? reason.message : "Could not discard this draft");
+    } finally {
+      switchingRef.current = false;
+      setSwitchingNote(false);
     }
   }
 
@@ -1360,7 +1377,7 @@ export function App() {
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               <button className="icon-button" onClick={downloadPdf} aria-label="Download as PDF" title="Download as PDF"><FileDown /></button>
               {note.isOwner && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
-              {note.isOwner && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={discard}>Discard</button>}
+              {note.isOwner && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={() => { void discard(); }}>Discard</button>}
               {hasPublishableDelta && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
               <button className="icon-button mobile-more" disabled={editorLocked} onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
             </div>
@@ -1368,7 +1385,7 @@ export function App() {
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
               <button onClick={() => { setMobileActions(false); downloadPdf(); }}><FileDown />Download as PDF</button>
               {note.isOwner && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
-              {note.isOwner && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
+              {note.isOwner && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(); }}><X />Discard draft</button>}
               {hasPublishableDelta && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
             </div>}
           </header>
