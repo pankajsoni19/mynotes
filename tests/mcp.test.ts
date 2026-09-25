@@ -341,3 +341,73 @@ describe("MCP draft-only note writes", () => {
     expect((await callTool(key, "get_note_draft", { noteId })).isError).toBe(false);
   });
 });
+
+async function uploadFile(session: Session, content: string | Uint8Array, filename: string) {
+  const form = new FormData();
+  form.append("file", new Blob([content], { type: "application/octet-stream" }), filename);
+  const response = await request("/files", { method: "POST", body: form }, session);
+  expect(response.status).toBe(201);
+  return (await json<{ document: { id: string; preview_kind: string } }>(response)).document;
+}
+
+describe("MCP document tools", () => {
+  test("files:read exposes the document tools and list_folders only", async () => {
+    const owner = await createUser("Files scopes");
+    expect(await toolNames(makeKey(owner, ["files:read"]))).toEqual(["get_document_metadata", "list_documents", "list_folders", "read_document_text"]);
+    const notesKey = makeKey(owner, ["notes:read", "notes:write-draft"]);
+    expect(await toolNames(notesKey)).not.toContain("list_documents");
+    const direct = await invokeMcpToolForTests("read_document_text", { documentId: crypto.randomUUID() }, notesKey.id);
+    expect(JSON.parse(direct.content[0]!.text)).toMatchObject({ code: "SCOPE_REQUIRED" });
+  });
+
+  test("text files are read as strict UTF-8; PDFs, binaries, and files over 1 MiB are refused", async () => {
+    const owner = await createUser("Files reader");
+    const reader = await createUser("Files recipient");
+    const stranger = await createUser("Files stranger");
+    const key = makeKey(owner, ["files:read"]);
+    const text = await uploadFile(owner, "Grocery list: café, naïve bread\n", "list.txt");
+    expect(text.preview_kind).toBe("text");
+
+    const read = await callTool(key, "read_document_text", { documentId: text.id });
+    expect(read.value).toMatchObject({ id: text.id, name: "list.txt", text: "Grocery list: café, naïve bread\n" });
+    const metadata = await callTool(key, "get_document_metadata", { documentId: text.id });
+    expect(metadata.value.document).toMatchObject({ id: text.id, name: "list.txt", preview_kind: "text" });
+    for (const secret of ["sha256", "upload_key", "objects", "deleted_at", "purpose"]) expect(JSON.stringify(metadata.value)).not.toContain(secret);
+    const listed = await callTool(key, "list_documents");
+    expect((listed.value.documents as Array<{ id: string }>).map((item) => item.id)).toContain(text.id);
+
+    const pdf = await uploadFile(owner, "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n", "paper.pdf");
+    expect(pdf.preview_kind).toBe("pdf");
+    expect((await callTool(key, "read_document_text", { documentId: pdf.id })).value).toMatchObject({ code: "NOT_TEXT" });
+    const binary = await uploadFile(owner, new Uint8Array([0, 1, 2, 3, 255, 254, 0, 9]), "blob.bin");
+    expect((await callTool(key, "read_document_text", { documentId: binary.id })).value).toMatchObject({ code: "NOT_TEXT" });
+    const large = await uploadFile(owner, "a".repeat(1_048_577), "large.txt");
+    expect(large.preview_kind).toBe("text");
+    expect((await callTool(key, "read_document_text", { documentId: large.id })).value).toMatchObject({ code: "TOO_LARGE" });
+    // The sniffer only samples the start; the full read is strict.
+    const tail = new Uint8Array(6000).fill(0x61);
+    tail[5999] = 0xff;
+    const badTail = await uploadFile(owner, tail, "tail.txt");
+    expect(badTail.preview_kind).toBe("text");
+    expect((await callTool(key, "read_document_text", { documentId: badTail.id })).value).toMatchObject({ code: "NOT_TEXT" });
+
+    // Sharing, the Bin, and non-Files documents follow the Files list predicate.
+    await request(`/files/${text.id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [reader.userId] }) }, owner);
+    expect((await callTool(makeKey(reader, ["files:read"]), "read_document_text", { documentId: text.id })).isError).toBe(false);
+    const strangerKey = makeKey(stranger, ["files:read"]);
+    const hidden = await callTool(strangerKey, "read_document_text", { documentId: text.id });
+    expect(hidden.value).toEqual((await callTool(strangerKey, "read_document_text", { documentId: crypto.randomUUID() })).value);
+    expect(hidden.value).toMatchObject({ code: "NOT_FOUND" });
+
+    const attachment = await uploadFile(owner, "attached notes", "attached.txt");
+    db.query("UPDATE documents SET purpose = 'task_attachment', folder_id = NULL WHERE id = ?").run(attachment.id);
+    expect((await callTool(key, "get_document_metadata", { documentId: attachment.id })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(key, "read_document_text", { documentId: attachment.id })).value).toMatchObject({ code: "NOT_FOUND" });
+
+    expect((await request(`/files/${text.id}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    expect((await callTool(key, "get_document_metadata", { documentId: text.id })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(key, "read_document_text", { documentId: text.id })).value).toMatchObject({ code: "NOT_FOUND" });
+    const after = await callTool(key, "list_documents");
+    expect((after.value.documents as Array<{ id: string }>).map((item) => item.id)).not.toContain(text.id);
+  }, 20_000);
+});

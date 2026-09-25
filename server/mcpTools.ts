@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { listReadableFolders, ownedNote, readableNote } from "./access";
 import { config } from "./config";
-import { audit, db, type NoteRow } from "./db";
+import { audit, db, type DocumentRow, type NoteRow } from "./db";
+import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
+import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
 import { hasAnyScope, parseStoredScopes, type McpScope } from "./mcpScopes";
 import { MAX_QUERY_LENGTH } from "./search";
@@ -287,6 +290,75 @@ const noteWriteTools: McpToolSpec[] = [
   })
 ];
 
+// ---------------------------------------------------------------- files:read
+
+export const MCP_MAX_TEXT_BYTES = 1_048_576;
+
+async function readDocumentText(document: DocumentRow) {
+  if (document.preview_kind !== "text") throw new McpToolError("NOT_TEXT", "Only text files can be read. This file is not text.");
+  if (document.size_bytes > MCP_MAX_TEXT_BYTES) throw new McpToolError("TOO_LARGE", `Text files larger than ${MCP_MAX_TEXT_BYTES} bytes cannot be read over MCP`);
+  let bytes: Uint8Array;
+  try {
+    const { handle } = await openObjectForRead(document.id, document.size_bytes);
+    try {
+      bytes = await handle.readFile();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error instanceof DocumentIntegrityError) throw new McpToolError("INTERNAL", "File content failed integrity verification");
+    throw error;
+  }
+  if (bytes.byteLength !== document.size_bytes || createHash("sha256").update(bytes).digest("hex") !== document.sha256) {
+    throw new McpToolError("INTERNAL", "File content failed integrity verification");
+  }
+  if (bytes.includes(0)) throw new McpToolError("NOT_TEXT", "This file is not valid UTF-8 text");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new McpToolError("NOT_TEXT", "This file is not valid UTF-8 text");
+  }
+}
+
+const fileTools: McpToolSpec[] = [
+  defineTool({
+    name: "list_documents",
+    title: "List files",
+    description: "List the files (documents) the user can see in Nook Files, newest first. Metadata only.",
+    scopes: ["files:read"],
+    write: false,
+    inputSchema: z.object({ folderId: z.string().uuid().optional().describe("Only files in this folder") }),
+    handler: ({ folderId }, key) => ({ documents: listReadableDocuments(key.userId, folderId ?? null) })
+  }),
+  defineTool({
+    name: "get_document_metadata",
+    title: "Get file details",
+    description: "Name, type, size, folder, owner, and sharing of one file the user can see in Nook Files.",
+    scopes: ["files:read"],
+    write: false,
+    inputSchema: z.object({ documentId: z.string().uuid() }),
+    handler: ({ documentId }, key) => {
+      const document = listableDocumentSummary(documentId, key.userId);
+      if (!document) throw notFound("File");
+      return { document };
+    }
+  }),
+  defineTool({
+    name: "read_document_text",
+    title: "Read a text file",
+    description: `Read a text file (such as .txt, .md, .csv, or .json) up to ${MCP_MAX_TEXT_BYTES} bytes as UTF-8. Other files return NOT_TEXT or TOO_LARGE.`,
+    scopes: ["files:read"],
+    write: false,
+    inputSchema: z.object({ documentId: z.string().uuid() }),
+    handler: async ({ documentId }, key) => {
+      const document = listableDocument(documentId, key.userId);
+      if (!document) throw notFound("File");
+      const text = await readDocumentText(document);
+      return { id: document.id, name: document.name, mimeType: document.mime_type, sizeBytes: document.size_bytes, text };
+    }
+  })
+];
+
 /**
  * Every tool group. Task tools (docs/plan/WAVES_7-9.md §4.2: list_boards,
  * list_cards, get_card under tasks:read; create_card, move_card,
@@ -295,7 +367,8 @@ const noteWriteTools: McpToolSpec[] = [
  */
 export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...noteReadTools,
-  ...noteWriteTools
+  ...noteWriteTools,
+  ...fileTools
   // EXTENSION POINT (tasks:read | tasks:write): ...taskTools
 ];
 
