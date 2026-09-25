@@ -502,7 +502,7 @@ type McpRow = {
 };
 ```
 
-Collection `values` are keyed by field name (or id), with select options as labels (case-insensitive) or ids; unknown fields and file fields are `INVALID` with `fieldErrors` keyed by name, and the service's strict validation (types, required fields, readable note links, 16 KiB) applies unchanged.
+Collection `values` are keyed by field name (or id), with select options as labels (case-insensitive) or ids; unknown fields and file fields are `INVALID` with `fieldErrors` keyed by name, and the service's strict validation (types, required fields, readable note links, 16 KiB) applies unchanged. Field names `__proto__`, `constructor`, and `prototype` are refused by schema validation (400 `INVALID_SCHEMA`), since name-keyed inputs drop or refuse such keys; a collection that already has one still presents it as an ordinary key (row `values` objects have no prototype), and agents write it by field id.
 
 Errors are tool results with `isError: true` whose text is `{ error, code, ...details }`:
 

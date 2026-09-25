@@ -90,7 +90,7 @@ function translateValue(field: FieldDefinition, value: unknown) {
 /** MCP values (keyed by field name or id) → API values (keyed by id, option ids). */
 function translateValues(schema: CollectionSchema, values: Record<string, unknown>) {
   const translated: Record<string, unknown> = {};
-  const fieldErrors: Record<string, string> = {};
+  const fieldErrors: Record<string, string> = Object.create(null);
   for (const [reference, value] of Object.entries(values)) {
     const field = findField(schema, reference);
     if (!field) fieldErrors[reference.slice(0, 64)] = "Unknown field";
@@ -125,7 +125,8 @@ type McpValue = FieldValue | { noteId: string; title: string } | { restricted: t
 
 /** A row as an agent sees it: values keyed by field name, labels for options, titles for notes, names for files. */
 export function presentRow(schema: CollectionSchema, row: RowSummary) {
-  const values: Record<string, McpValue> = {};
+  // Keyed by user-chosen names: no prototype, so a (legacy) field named __proto__ is an ordinary key.
+  const values: Record<string, McpValue> = Object.create(null);
   for (const field of schema.fields) {
     if (field.type === "file") {
       const names = (row.files[field.id] ?? []).map((file) => file.name);

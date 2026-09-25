@@ -221,6 +221,23 @@ describe("MCP collection tools", () => {
     expect((await direct(editor, "create_row", { collectionId: s.editable.id, values: { Name: "x", "Recipe note": insertNote(s.owner.userId, "Not readable by editor") } })).value.fieldErrors).toEqual({ "Recipe note": "You can't link this note" });
   });
 
+  test("a legacy field named __proto__ is written by id and comes back as an ordinary key", async () => {
+    const owner = await createUser("Proto owner");
+    const collection = await newCollection(owner, { name: "Proto", fields: [{ name: "Item", type: "text" }, { name: "Legacy", type: "text" }] });
+    // New schemas refuse the name; this collection predates the rule.
+    expect((await call(owner, "POST", "", { name: "Refused", fields: [{ name: "Item", type: "text" }, { name: "__proto__", type: "text" }] })).status).toBe(400);
+    const legacy = collection.fields[1]!;
+    const stored = db.query("SELECT schema_json FROM collections WHERE id = ?").get(collection.id) as { schema_json: string };
+    db.query("UPDATE collections SET schema_json = ? WHERE id = ?").run(stored.schema_json.replace('"name":"Legacy"', '"name":"__proto__"'), collection.id);
+    const key = makeKey(owner, ["collections:write"]);
+    const created = await direct(key, "create_row", { collectionId: collection.id, values: { Item: "Kettle", [legacy.id]: "kept" } });
+    expect(created.isError).toBe(false);
+    expect(JSON.parse((db.query("SELECT values_json FROM collection_rows WHERE id = ?").get(created.value.rowId) as { values_json: string }).values_json)[legacy.id]).toBe("kept");
+    const row = await direct(key, "get_row", { rowId: created.value.rowId });
+    expect(Object.keys(row.value.row.values).sort()).toEqual(["Item", "__proto__"]);
+    expect(Object.getOwnPropertyDescriptor(row.value.row.values, "__proto__")?.value).toBe("kept");
+  });
+
   test("update_row merges with revision CAS, marks the key, shows Changed by <key>, and can be undone", async () => {
     const s = await setup("Collections update");
     const key = makeKey(s.editor, ["collections:write"], "Meal planner");

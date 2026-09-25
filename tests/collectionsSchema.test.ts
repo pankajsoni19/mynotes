@@ -70,6 +70,10 @@ describe("collection schema validation", () => {
     expect(() => buildSchema([{ name: "A", type: "text", extra: 1 } as unknown as FieldInput])).toThrow(SchemaError);
     expect(() => buildSchema([{ name: "A", type: "formula" } as unknown as FieldInput])).toThrow(SchemaError);
     expect(() => buildSchema([{ name: "x".repeat(61), type: "text" }])).toThrow(SchemaError);
+    for (const name of ["__proto__", "constructor", "prototype", " constructor "]) {
+      expect(schemaError(() => buildSchema([{ name: "A", type: "text" }, { name, type: "text" }])).code).toBe("INVALID_SCHEMA");
+    }
+    expect(buildSchema([{ name: "A", type: "text" }, { name: "Constructor", type: "text" }]).fields[1]!.name).toBe("Constructor");
     expect(() => buildSchema([{ name: "bad\u0007", type: "text" }])).toThrow(SchemaError);
     expect(() => buildSchema([{ name: "A", type: "text", options: [] }])).toThrow(SchemaError);
     expect(() => buildSchema([{ name: "A", type: "text" }, { name: "B", type: "select", options: [{ label: "x" }, { label: "X" }] }])).toThrow(SchemaError);

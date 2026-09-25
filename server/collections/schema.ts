@@ -88,7 +88,8 @@ const optionInput = z.object({
 
 export const fieldInput = z.object({
   id: z.string().regex(FIELD_ID).optional(),
-  name: labelSchema(SCHEMA_LIMITS.fieldName),
+  // MCP tools and CSV key values by field name, and those keys are refused or dropped as prototype keys.
+  name: labelSchema(SCHEMA_LIMITS.fieldName).refine((name) => !PROTOTYPE_KEYS.has(name), "This name is reserved. Choose another."),
   type: z.enum(FIELD_TYPES),
   required: z.boolean().optional(),
   number: z.object({
