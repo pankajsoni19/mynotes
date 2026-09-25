@@ -15,6 +15,7 @@ import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
 import { createDraftNote, hasDraftDelta, writeDraftLocked } from "./noteDrafts";
 import { registerSearchRoutes } from "./searchRoutes";
 import { registerTaskRoutes } from "./tasks/routes";
+import { registerTodayRoutes } from "./today/routes";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -802,6 +803,7 @@ registerDocumentRoutes(app);
 registerBinRoutes(app);
 registerSearchRoutes(app);
 registerTaskRoutes(app);
+registerTodayRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);

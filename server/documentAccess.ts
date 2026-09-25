@@ -112,6 +112,15 @@ export function listableDocumentSummary(documentId: string, userId: string) {
     .get({ documentId, userId }) as DocumentSummary | null;
 }
 
+/**
+ * The newest Files items `userId` can list, under the Files list predicate
+ * (Today's `files` section, WAVES_10-12.md D51). `limit` is small and fixed.
+ */
+export function recentListableDocuments(userId: string, limit: number) {
+  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND d.purpose = 'file' ORDER BY d.updated_at DESC, d.id LIMIT $limit`)
+    .all({ userId, limit }) as DocumentSummary[];
+}
+
 /** The full row for listableDocumentSummary's predicate; for server-side reads only (never returned). */
 export function listableDocument(documentId: string, userId: string) {
   return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readablePredicate} AND d.purpose = 'file'`)

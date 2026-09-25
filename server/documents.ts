@@ -60,8 +60,15 @@ function acquireSlot(userId: string) {
   };
 }
 
-const storedBytes = (userId: string) =>
+/** Bytes that count against the quota: every document the user owns, live or binned. */
+export const storedBytes = (userId: string) =>
   (db.query("SELECT COALESCE(SUM(size_bytes), 0) AS total FROM documents WHERE owner_id = ?").get(userId) as { total: number }).total;
+
+/** The quota picture shown on Today: stored bytes (as the quota counts them), the binned part, and the quota (null = unlimited). */
+export function storageUsage(userId: string) {
+  const binnedBytes = (db.query("SELECT COALESCE(SUM(size_bytes), 0) AS total FROM documents WHERE owner_id = ? AND deleted_at IS NOT NULL").get(userId) as { total: number }).total;
+  return { usedBytes: storedBytes(userId), binnedBytes, quotaBytes: config.userStorageQuotaBytes > 0 ? config.userStorageQuotaBytes : null };
+}
 
 const ownsFolder = (folderId: string, userId: string) => Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId));
 
