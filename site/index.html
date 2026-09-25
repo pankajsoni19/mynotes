@@ -23,7 +23,7 @@
 <body>
   <header class="topbar">
     <a class="wordmark" href="#overview"><span>✦</span><strong>MyNotes</strong><em>Docs</em></a>
-    <nav class="top-actions"><span class="version">v0.4.0</span><a href="https://github.com/pankajsoni19/mynotes">GitHub ↗</a><button class="menu-button" aria-label="Open menu" aria-expanded="false">☰</button></nav>
+    <nav class="top-actions"><span class="version">v0.4.1</span><a href="https://github.com/pankajsoni19/mynotes">GitHub ↗</a><button class="menu-button" aria-label="Open menu" aria-expanded="false">☰</button></nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
@@ -96,7 +96,7 @@ cd mynotes
 cp .env.example .env
 mkdir -p /srv/mynotes</code></pre><p>Set <code>MYNOTES_DATA_DIR=/srv/mynotes</code>. The directory must be writable by UID 1000.</p></div></article><article><b>2</b><div><h3>Secure trusted accounts</h3><pre><code>ALLOWED_EMAILS=you@example.com,partner@example.com
 TOTP_POLICY=required
-TOTP_ENCRYPTION_KEY=&lt;openssl rand -base64 32&gt;</code></pre><aside class="callout warning"><strong>Keep the encryption key.</strong> It is not included in data backups.</aside></div></article><article><b>3</b><div><h3>Build and start</h3><pre><code>APP_VERSION=0.4.0 GIT_SHA=$(git rev-parse --short HEAD) \
+TOTP_ENCRYPTION_KEY=&lt;openssl rand -base64 32&gt;</code></pre><aside class="callout warning"><strong>Keep the encryption key.</strong> It is not included in data backups.</aside></div></article><article><b>3</b><div><h3>Build and start</h3><pre><code>APP_VERSION=0.4.1 GIT_SHA=$(git rev-parse --short HEAD) \
   docker compose up -d --build</code></pre><p>Open <code>http://localhost:2026</code>. The first account can be created while the database is empty.</p></div></article><article><b>4</b><div><h3>Verify</h3><pre><code>curl http://localhost:2026/api/health
 docker compose ps</code></pre></div></article></div>
       </section>
@@ -158,7 +158,7 @@ docker compose ps</code></pre><p>Pending migrations run automatically at startup
 docker compose ps
 curl http://localhost:2026/api/health</code></pre></details></div></section>
 
-      <footer><span>Built by <a href="https://github.com/pankajsoni19">Pankaj Soni</a></span><span>MyNotes v0.4.0</span></footer>
+      <footer><span>Built by <a href="https://github.com/pankajsoni19">Pankaj Soni</a></span><span>MyNotes v0.4.1</span></footer>
     </main>
   </div>
   <button class="scrim" aria-label="Close menu"></button>
