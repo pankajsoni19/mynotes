@@ -35,6 +35,15 @@ export const kindLabels: Record<PreviewKind, string> = {
   none: "File"
 };
 
+// preview_kind comes from the server; a kind this build does not know gets the generic icon and label.
+export function kindIcon(kind: string): typeof FileIcon {
+  return Object.hasOwn(kindIcons, kind) ? kindIcons[kind as PreviewKind] : FileIcon;
+}
+
+export function kindLabel(kind: string): string {
+  return Object.hasOwn(kindLabels, kind) ? kindLabels[kind as PreviewKind] : kindLabels.none;
+}
+
 export const visibilityLabels: Record<Visibility, string> = {
   private: "Private",
   selected: "Shared with selected people",

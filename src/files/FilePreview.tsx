@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronLeft, Download, ExternalLink } from "lucide-react";
 import type { DocumentSummary } from "../types";
 import { contentUrl, fetchTextPreview, formatBytes, TEXT_PREVIEW_BYTES } from "./filesApi";
-import { formatDateTime, kindIcons, kindLabels, visibilityLabels } from "./format";
+import { formatDateTime, kindIcon, kindLabel, visibilityLabels } from "./format";
 
 type TextState = { id: string; status: "loading" | "ready" | "error"; text: string };
 
@@ -31,7 +31,7 @@ function TextPreview({ document }: { document: DocumentSummary }) {
 
 function PreviewBody({ document }: { document: DocumentSummary }) {
   const inline = contentUrl(document.id, "inline");
-  const Icon = kindIcons[document.preview_kind];
+  const Icon = kindIcon(document.preview_kind);
   switch (document.preview_kind) {
     case "image":
       return <div className="file-media"><img src={inline} alt={document.name} loading="lazy" /></div>;
@@ -49,7 +49,7 @@ function PreviewBody({ document }: { document: DocumentSummary }) {
 }
 
 export function FilePreview({ document, folderName, onBack }: { document: DocumentSummary; folderName: string; onBack: () => void }) {
-  const Icon = kindIcons[document.preview_kind];
+  const Icon = kindIcon(document.preview_kind);
   return <>
     <header className="editor-toolbar file-preview-toolbar">
       <div className="mobile-editor-nav"><button className="icon-button" onClick={onBack} aria-label="Back to files"><ChevronLeft /></button></div>
@@ -60,7 +60,7 @@ export function FilePreview({ document, folderName, onBack }: { document: Docume
     <div className="file-preview-body">
       <section className="file-preview-stage" aria-label="Preview"><PreviewBody key={document.id} document={document} /></section>
       <dl className="file-details" aria-label="Details">
-        <div><dt>Type</dt><dd>{kindLabels[document.preview_kind]} · <code>{document.mime_type}</code></dd></div>
+        <div><dt>Type</dt><dd>{kindLabel(document.preview_kind)} · <code>{document.mime_type}</code></dd></div>
         <div><dt>Size</dt><dd>{formatBytes(document.size_bytes)}</dd></div>
         <div><dt>Uploaded</dt><dd>{formatDateTime(document.created_at)}</dd></div>
         <div><dt>Modified</dt><dd>{formatDateTime(document.updated_at)}</dd></div>

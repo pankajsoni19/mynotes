@@ -9,7 +9,7 @@ import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
 import { formatBytes, getFile, listFiles, uploadFile, UploadRequestError } from "./filesApi";
 import { FilePreview } from "./FilePreview";
-import { kindIcons, relativeTime } from "./format";
+import { kindIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
 
@@ -260,7 +260,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       </header>
       <div className="note-list file-list" role="list" aria-label={folderTitle}>
         {visible.map((item) => {
-          const Icon = kindIcons[item.preview_kind];
+          const Icon = kindIcon(item.preview_kind);
           return <div role="listitem" key={item.id}>
             <button className={`file-row${documentId === item.id ? " selected" : ""}`} aria-current={documentId === item.id ? "true" : undefined} onClick={() => openDocument(item)}>
               <span className="file-row-icon"><Icon aria-hidden="true" /></span>

@@ -4,6 +4,7 @@ import Link from "@tiptap/extension-link";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Image from "@tiptap/extension-image";
+import { isNoteImageSrc } from "./imageUpload";
 import { NoteTable } from "./tableMarkdown";
 import TableRow from "@tiptap/extension-table-row";
 import TableHeader from "@tiptap/extension-table-header";
@@ -20,9 +21,17 @@ export function noteContentExtensions(): AnyExtension[] {
     Link.configure({ openOnClick: false, autolink: true }),
     TaskList,
     TaskItem.configure({ nested: true }),
-    // Only same-origin file URLs survive the CSP (img-src 'self' data:); pasted HTML pointing
-    // elsewhere would leave a broken image, so drop it instead of parsing it into a node.
-    Image.extend({ parseHTML: () => [{ tag: 'img[src^="/api/files/"]' }] }).configure({ inline: false, allowBase64: false, HTMLAttributes: { class: "note-image", loading: "lazy" } }),
+    // Only this app's file URLs are kept (isNoteImageSrc); pasted HTML or loaded Markdown pointing
+    // elsewhere, or at a data: URL, is dropped instead of parsed into a node.
+    Image.extend({
+      parseHTML: () => [{ tag: 'img[src^="/api/files/"]', getAttrs: (element) => isNoteImageSrc(element.getAttribute("src")) ? null : false }],
+      parseMarkdown: (token, helpers) => {
+        if (isNoteImageSrc(token.href)) return helpers.createNode("image", { src: token.href, title: token.title, alt: token.text });
+        // Without child tokens the fallback parser has nothing to turn into alt text either.
+        delete token.tokens;
+        return [];
+      }
+    }).configure({ inline: false, allowBase64: false, HTMLAttributes: { class: "note-image", loading: "lazy" } }),
     // Column widths have no pipe-table syntax, so resizing is off; the wrapper scrolls on narrow screens.
     NoteTable.configure({ resizable: false, renderWrapper: true, HTMLAttributes: { class: "note-table" } }),
     TableRow,

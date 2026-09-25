@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { MarkdownManager } from "@tiptap/markdown";
 import { markdownOptions, noteContentExtensions } from "../src/editor/extensions";
-import { imageAltText, imageContentUrl, isInsertableImageType } from "../src/editor/imageUpload";
+import { imageAltText, imageContentUrl, isInsertableImageType, isNoteImageSrc } from "../src/editor/imageUpload";
 
 // Uses the editor's own schema extensions and marked options; MarkdownManager needs no DOM.
 const manager = () => new MarkdownManager({ extensions: noteContentExtensions(), markedOptions: markdownOptions });
@@ -22,7 +22,8 @@ test("an uploaded image round-trips as a same-origin Markdown image", () => {
 test("image alt text is safe to serialise", () => {
   expect(imageAltText("shot [final]\n.png")).toBe("shot final .png");
   expect(imageAltText("  ")).toBe("image");
-  expect(roundTrip(`![${imageAltText("a]b.png")}](${imageContentUrl("x")})`)).toBe("![a b.png](/api/files/x/content?disposition=inline)");
+  const src = imageContentUrl("0b7c1a52-3f5e-4d8e-9a51-0c6a7f2b9d11");
+  expect(roundTrip(`![${imageAltText("a]b.png")}](${src})`)).toBe(`![a b.png](${src})`);
 });
 
 test("only image kinds the server previews inline are insertable", () => {
@@ -118,4 +119,26 @@ test("an empty 3 x 3 table serialises stably", () => {
   const markdown = md.serialize({ type: "doc", content: [{ type: "table", content: [row("tableHeader"), row("tableCell"), row("tableCell")] }] });
   expect(markdown.trim().split("\n")).toHaveLength(4);
   expectStable(markdown);
+});
+
+test("only this app's file URLs load as images", () => {
+  const id = "0b7c1a52-3f5e-4d8e-9a51-0c6a7f2b9d11";
+  expect(isNoteImageSrc(`/api/files/${id}/content`)).toBe(true);
+  expect(isNoteImageSrc(imageContentUrl(id))).toBe(true);
+  for (const src of ["https://example.com/a.png", "data:image/png;base64,AAAA", "/api/files/x/content", `/api/files/${id}/content/../../x`, `//evil.test/api/files/${id}/content`, `/api/files/${id}`, null]) {
+    expect(isNoteImageSrc(src)).toBe(false);
+  }
+  const markdown = `A ![x](https://example.com/a.png) b\n\n![y](data:image/png;base64,AAAA)\n\n![z](${imageContentUrl(id)})`;
+  const json = manager().parse(markdown);
+  const images: unknown[] = [];
+  const walk = (node: { type?: string; attrs?: unknown; content?: unknown[] }) => {
+    if (node.type === "image") images.push(node.attrs);
+    node.content?.forEach((child) => walk(child as typeof node));
+  };
+  walk(json);
+  expect(images).toEqual([expect.objectContaining({ src: imageContentUrl(id) })]);
+  const out = manager().serialize(json);
+  expect(out).not.toContain("example.com");
+  expect(out).not.toContain("data:");
+  expect(out).not.toMatch(/^y$/m);
 });

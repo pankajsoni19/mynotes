@@ -1003,13 +1003,25 @@ export function App() {
   }
 
   // The print stylesheet (styles.css, @media print) keeps only the note; the title names the PDF.
+  const restorePrintTitleRef = useRef<(() => void) | null>(null);
   function downloadPdf() {
     if (!note) return;
+    // A previous print that never fired afterprint still holds the real title; restore it first.
+    restorePrintTitleRef.current?.();
     const previousTitle = document.title;
-    const restoreTitle = () => { document.title = previousTitle; };
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const restoreTitle = () => {
+      window.removeEventListener("afterprint", restoreTitle);
+      clearTimeout(fallback);
+      if (restorePrintTitleRef.current === restoreTitle) restorePrintTitleRef.current = null;
+      document.title = previousTitle;
+    };
+    restorePrintTitleRef.current = restoreTitle;
     document.title = note.title.trim() || "Untitled note";
     window.addEventListener("afterprint", restoreTitle, { once: true });
     window.print();
+    // print() blocks in most browsers, but some return at once and never fire afterprint.
+    fallback = setTimeout(restoreTitle, 1000);
   }
 
   async function discard() {

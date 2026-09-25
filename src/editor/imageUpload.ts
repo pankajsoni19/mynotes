@@ -14,6 +14,14 @@ export function imageContentUrl(documentId: string) {
   return `/api/files/${encodeURIComponent(documentId)}/content?disposition=inline`;
 }
 
+// Note images must be files served by this app. External and data: sources are dropped on load:
+// the CSP blocks most of them anyway, and a remote src would leak that the note was opened.
+const NOTE_IMAGE_SRC = /^\/api\/files\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/content(?:\?[^\s#]*)?$/i;
+
+export function isNoteImageSrc(src: unknown): src is string {
+  return typeof src === "string" && NOTE_IMAGE_SRC.test(src);
+}
+
 // Markdown image alt text cannot hold brackets or line breaks without escaping, which the
 // image serializer does not do, so keep the filename readable but safe.
 export function imageAltText(filename: string) {
