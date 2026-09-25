@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 import { addRow, call, newCollection, shareCollection } from "./support/collections";
 
-const { sweepBin } = await import("../server/bin");
+const { binProviders, sweepBin } = await import("../server/bin");
 
 type BinItem = { type: string; id: string; title: string; folder_id: string | null; folder_name: string | null; can_purge?: boolean };
 
@@ -155,5 +155,26 @@ describe("collections in the Bin", () => {
     expect(db.query("SELECT 1 FROM collections WHERE id = ?").get(doomed.id)).toBeNull();
     expect(db.query("SELECT 1 FROM collection_rows WHERE id = ?").get(row.id)).toBeNull();
     expect(db.query("SELECT 1 FROM collections WHERE id = ?").get(kept.id)).toBeTruthy();
+  });
+  test("a provided Bin type without a registered provider is refused with 400, never a 500", async () => {
+    const owner = await createUser("Unregistered owner");
+    const collection = await newCollection(owner, { name: "Gone module", fields: [{ name: "Task", type: "text" }] });
+    const row = await addRow(owner, collection.id, { [collection.fields[0]!.id]: "Orphan" });
+    expect((await call(owner, "DELETE", `/rows/${row.id}`)).status).toBe(200);
+    const provider = binProviders.get("collection_row")!;
+    binProviders.delete("collection_row");
+    try {
+      expect((await bin(owner, "collection_row")).status).toBe(400);
+      expect((await restore(owner, "collection_row", row.id)).status).toBe(400);
+      expect(await purge(owner, "collection_row", row.id)).toBe(400);
+      // The rest of the Bin keeps working, and the unregistered type is simply absent.
+      const all = await bin(owner);
+      expect(all.status).toBe(200);
+      expect(all.items.some((item) => item.id === row.id)).toBe(false);
+      expect((await bin(owner, "collection")).status).toBe(200);
+    } finally {
+      binProviders.set("collection_row", provider);
+    }
+    expect((await restore(owner, "collection_row", row.id)).status).toBe(200);
   });
 });

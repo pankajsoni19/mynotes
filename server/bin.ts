@@ -12,7 +12,8 @@ export type CoreBinType = "note" | "document";
 /** Types whose module registers a BinProvider (Collections, WAVES_10-12.md D68). */
 export type ProvidedBinType = "collection" | "collection_row";
 export type BinType = CoreBinType | ProvidedBinType;
-export const BIN_TYPES: readonly BinType[] = ["note", "document", "collection", "collection_row"];
+const CORE_BIN_TYPES: readonly CoreBinType[] = ["note", "document"];
+const PROVIDED_BIN_TYPES: readonly ProvidedBinType[] = ["collection", "collection_row"];
 /**
  * Why an item was purged, as recorded in the audit metadata. "resumed" marks a
  * purge the sweeper finished after it was interrupted: the original reason
@@ -27,7 +28,7 @@ export const purgeAfterFrom = (deletedAt: Date) => new Date(deletedAt.getTime() 
 
 const tables = { note: "notes", document: "documents" } as const;
 export const lockKey = (type: BinType, id: string) => `${type}:${id}`;
-const isProvided = (type: string): type is ProvidedBinType => type === "collection" || type === "collection_row";
+const isProvided = (type: string): type is ProvidedBinType => (PROVIDED_BIN_TYPES as readonly string[]).includes(type);
 
 /**
  * Byte removal for each type. ENOENT counts as success in both. Kept on an
@@ -109,12 +110,24 @@ export type BinProvider = {
   sweep: (cutoff: string) => Promise<BinSweepCounts>;
   empty: (userId: string) => Promise<BinSweepCounts>;
 };
-const providers = new Map<ProvidedBinType, BinProvider>();
+/** Registered providers. Exported for tests that simulate a module that is not installed. */
+export const binProviders = new Map<ProvidedBinType, BinProvider>();
+const providers = binProviders;
 
 /** Registered by server/collections/bin.ts when the module loads. */
 export function registerBinProvider(type: ProvidedBinType, provider: BinProvider) {
   providers.set(type, provider);
 }
+
+/**
+ * Whether the Bin API accepts `type`: notes and documents always, provided types only while
+ * their module has registered a provider, so an unregistered type is a 400, never a 500.
+ */
+export function binTypeAvailable(type: string): type is BinType {
+  return (CORE_BIN_TYPES as readonly string[]).includes(type) || (isProvided(type) && providers.has(type));
+}
+
+export const availableBinTypes = (): BinType[] => [...CORE_BIN_TYPES, ...PROVIDED_BIN_TYPES.filter((type) => providers.has(type))];
 
 function requireProvider(type: ProvidedBinType) {
   const provider = providers.get(type);

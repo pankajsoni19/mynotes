@@ -1,6 +1,6 @@
 import type { Context, Hono } from "hono";
 import type { AppEnv } from "./auth";
-import { BIN_TYPES, emptyBin, listBin, purgeOwnedItem, restoreItem, type BinListType } from "./bin";
+import { availableBinTypes, binTypeAvailable, emptyBin, listBin, purgeOwnedItem, restoreItem, type BinListType } from "./bin";
 import { isTaskBinType, purgeTaskItem, restoreTaskItem, type TaskBinType } from "./tasks/bin";
 import { z } from "zod";
 import { readBoundedBody, uuid } from "./validation";
@@ -9,9 +9,9 @@ import { readBoundedBody, uuid } from "./validation";
 const cardRestoreSchema = z.object({ columnId: uuid.optional(), afterCardId: uuid.nullable().optional() }).strict();
 
 const TASK_BIN_TYPES: readonly TaskBinType[] = ["card", "board"];
-const LIST_TYPES: readonly BinListType[] = [...BIN_TYPES, ...TASK_BIN_TYPES];
-const isBinType = (value: string | undefined): value is BinListType => LIST_TYPES.includes(value as BinListType);
-const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: [`type must be one of ${LIST_TYPES.join(", ")}`] }, 400);
+// Provided types (collections, rows) count only while their module is registered (fail closed).
+const isBinType = (value: string | undefined): value is BinListType => value !== undefined && (isTaskBinType(value) || binTypeAvailable(value));
+const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: [`type must be one of ${[...availableBinTypes(), ...TASK_BIN_TYPES].join(", ")}`] }, 400);
 const notFound = (c: Context<AppEnv>) => c.json({ error: "Item not found" }, 404);
 
 /** Bin API (docs/plan/API_CONTRACTS.md § Bin). Every endpoint is scoped to the caller's own items. */
