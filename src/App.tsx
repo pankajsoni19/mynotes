@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  Bot,
   ArrowUpDown,
   Check,
   Copy,
@@ -47,7 +48,8 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
-import { finalizeOpenNote } from "./noteFinalization";
+import { DEFAULT_KEY_SCOPES, lockedScopes, OFFERED_MCP_PERMISSIONS, scopeLabel, toggleScope, type McpScope } from "./mcpPermissions";
+import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
@@ -59,7 +61,7 @@ import { useNoteSearch } from "./search/useNoteSearch";
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
-type McpApiKey = { id: string; name: string; key_prefix: string; created_at: string; last_used_at: string | null };
+type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 
 const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "updated-desc", label: "Recently edited" },
@@ -167,6 +169,8 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [scopes, setScopes] = useState<McpScope[]>([...DEFAULT_KEY_SCOPES]);
+  const locked = lockedScopes(scopes);
   const endpoint = `${window.location.origin}/mcp`;
   const displayToken = newToken || "<YOUR_API_KEY>";
   const configText = JSON.stringify({
@@ -195,9 +199,10 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const result = await api<{ key: McpApiKey & { token: string } }>("/mcp/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), password: form.get("password"), ...(totpEnabled ? { totpCode: form.get("totpCode") } : {}) }) });
+      const result = await api<{ key: McpApiKey & { token: string } }>("/mcp/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), password: form.get("password"), scopes, ...(totpEnabled ? { totpCode: form.get("totpCode") } : {}) }) });
       setNewToken(result.key.token);
       event.currentTarget.reset();
+      setScopes([...DEFAULT_KEY_SCOPES]);
       loadKeys();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create API key");
@@ -231,14 +236,17 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   }
 
   return <section className="settings-content mcp-settings" aria-labelledby="mcp-heading">
-    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. Nook exposes only published notes you can already read; drafts and write operations are not available.</p></div></div>
+    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. Each key can do only what you allow below, and only with notes and files you can already open. A key can at most write drafts: publishing always stays with you.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
     <div className="mcp-card">
       <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
-      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create API key"}</button></form>}
+      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{OFFERED_MCP_PERMISSIONS.map((permission) => {
+        const isLocked = locked.includes(permission.scope);
+        return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
+      })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
       {newToken && <div className="new-api-key" role="status"><strong>Copy this key now</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken} aria-label="New MCP API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken("")}>I saved this key</button></div></div>}
-      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small></div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
+      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><ul className="scope-chips" aria-label={`Permissions for ${key.name}`}>{(key.scopes ?? []).map((scope) => <li key={scope}>{scopeLabel(scope)}</li>)}</ul></div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
     </div>
     <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
   </section>;
@@ -665,6 +673,9 @@ export function App() {
   const startupFailedUserRef = useRef<string | null>(null);
   const [startupRetry, setStartupRetry] = useState(0);
   const newlyCreatedNoteIdRef = useRef<string | null>(null);
+  // The note the user typed in since it was opened. Only such a draft is published on the way out;
+  // a draft that was already waiting (another session, or an MCP key) needs an explicit Publish.
+  const sessionEditedRef = useRef<string | null>(null);
 
   // One timer for the one toast: an earlier message's timer must not clear a newer message early.
   const toastTimerRef = useRef<number | null>(null);
@@ -690,6 +701,7 @@ export function App() {
     const generation = ++noteLoadGenerationRef.current;
     const { note: detail } = await api<{ note: NoteDetail }>(`/notes/${id}`);
     if (!expectedUserId || sessionUserRef.current !== expectedUserId || generation !== noteLoadGenerationRef.current) return;
+    if (sessionEditedRef.current !== detail.id) sessionEditedRef.current = null;
     setNote(detail);
     setMarkdown(detail.markdown);
     revisionRef.current = detail.draft_revision;
@@ -860,7 +872,9 @@ export function App() {
 
   // Also locked while the previous note is still shown but a different note is loading.
   const editorLocked = leavingNotes || switchingNote || (note !== null && note.id !== selectedNoteId);
-  const hasPublishableDelta = Boolean(note?.isOwner && (note.hasDelta || markdown !== loadedRef.current));
+  const publishInput = { isOwner: Boolean(note?.isOwner), serverHasDelta: Boolean(note?.hasDelta), hasUnsavedChanges: markdown !== loadedRef.current };
+  const hasPublishableDelta = canPublish(publishInput);
+  const draftBadge = note?.isOwner && note.hasDraft ? mcpDraftBadge(note.draftMcpKeyName) : null;
 
   function cancelPendingAutosave() {
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
@@ -913,7 +927,8 @@ export function App() {
   }
 
   function finalizeCurrentNote(reloadCurrent = false) {
-    return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta, publish: () => publish(reloadCurrent) });
+    const sessionEdited = note !== null && sessionEditedRef.current === note.id;
+    return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta: shouldAutoPublish({ ...publishInput, sessionEdited, mcpDraft: Boolean(note?.draftMcpKeyName) }), publish: () => publish(reloadCurrent) });
   }
 
   async function createFolder() {
@@ -997,7 +1012,17 @@ export function App() {
     if (!note) return false;
     const hasDelta = await saveDraft();
     if (!hasDelta) return false;
-    await api(`/notes/${note.id}/publish`, { method: "POST", body: "{}" });
+    try {
+      await api(`/notes/${note.id}/publish`, { method: "POST", body: JSON.stringify(revisionRef.current === null ? {} : { revision: revisionRef.current }) });
+    } catch (reason) {
+      if (!(reason instanceof ApiError) || !isDraftChangedError(reason.status, reason.payload)) throw reason;
+      // Someone else (an MCP key or another session) wrote the draft after this editor's last save.
+      // Show it instead of publishing text the user has not seen.
+      await Promise.all([loadNote(note.id), loadNavigation()]);
+      flash(DRAFT_CHANGED_MESSAGE);
+      return false;
+    }
+    if (sessionEditedRef.current === note.id) sessionEditedRef.current = null;
     if (reloadCurrent) await Promise.all([loadNote(note.id), loadNavigation()]);
     else await loadNavigation();
     flash("New version published");
@@ -1106,6 +1131,7 @@ export function App() {
         await loadNavigation();
         flash(result.binned ? "Moved to the Bin" : "Empty note removed");
       } else {
+        if (sessionEditedRef.current === noteId) sessionEditedRef.current = null;
         await Promise.all([loadNote(noteId), loadNavigation()]);
         flash("Draft discarded");
       }
@@ -1538,7 +1564,7 @@ export function App() {
           >
             <button className="note-card-select" onClick={() => { void selectNote(item.id); }}>
               <span className="note-title">{item.title}</span>
-              <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? <em>Draft</em> : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
+              <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? (item.draft_mcp_key_name ? <em className="mcp-draft-badge"><Bot aria-hidden="true" />{mcpDraftBadge(item.draft_mcp_key_name)}</em> : <em>Draft</em>) : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
               {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
             </button>
             {item.is_owner === 1 && <button className="note-delete-button" disabled={editorLocked} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
@@ -1552,6 +1578,7 @@ export function App() {
           <header className="editor-toolbar">
             <div className="mobile-editor-nav"><button className="icon-button" onClick={() => mobileBack("notes")} aria-label="Back to notes"><ChevronLeft /></button></div>
             <div className={`save-indicator ${saveState}`}><span />{saveState === "saving" ? "Saving…" : saveState === "conflict" ? "Save conflict" : saveState === "error" ? "Not saved" : note.hasDraft ? "Draft saved" : `Version ${note.current_version}`}</div>
+            {draftBadge && <span className="mcp-draft-badge" title="Written through an MCP API key. It stays a draft until you publish it."><Bot aria-hidden="true" />{draftBadge}</span>}
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               <button className="icon-button" onClick={downloadPdf} aria-label="Download as PDF" title="Download as PDF"><FileDown /></button>
@@ -1570,7 +1597,7 @@ export function App() {
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={setMarkdown} folderId={note.folder_id} onNotice={flash} />
+            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} onNotice={flash} />
           </article>
         </>}
       </section>

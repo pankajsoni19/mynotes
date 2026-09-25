@@ -88,6 +88,18 @@ Rows T39–T44 of [WAVES_7-9.md](WAVES_7-9.md) §5 (T33–T38 belong to Wave 8, 
 | T42 | **XSS through card Markdown** | Descriptions render through the read-only notes renderer (D44): raw HTML stays text, images other than this app's `/api/files/<id>/content` URLs are dropped (no `data:` or external sources), and unsafe link protocols render with an empty `href` (fixture tests). Comments are plain text. The global CSP is unchanged. | Required |
 | T43 | **Vandalism on an `all_users` board** | Only allowlisted accounts sign in; every change is audited with ids; binned cards restore; only the owner deletes forever. | Accepted |
 | T44 | **Resource exhaustion or comment spoofing** | Caps (50 boards per owner, 20 columns and 1000 live cards per board, 500 comments and 50 attachments per card, 10 per comment, bounded text), server-computed positions renumbered under the board lock, uploads within the quota, and the comment author is always the session user. | Required |
+### MCP scopes (Wave 8)
+
+Rows T33–T38 of [WAVES_7-9.md](WAVES_7-9.md) §5.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T33 | **MCP scope escalation** | Scopes are fixed when a key is created (no update route) and stored as JSON; unknown stored values are dropped, never widened. Each tool declares its scopes: `tools/list` shows only tools the key holds a scope for, and every handler re-reads the key (revoked, disabled user) and re-checks the scope before running (`SCOPE_REQUIRED`). Write implies only its own read scope. Tests cover hiding, direct-handler rejection, revocation, and pre-010 keys reading as `notes:read`. | Required |
+| T34 | **MCP publishes or destroys content** | There are no publish, delete, share, move, or restore tools. `create_note` makes a never-published note; `update_note_draft` writes only the draft of a note the key owner owns (shared and binned notes answer `NOT_FOUND`) and never creates a version. `notes.draft_mcp_key_id` marks the draft ("Draft by <key>") until a person publishes or discards it, and leaving an unedited MCP draft in the web app no longer publishes it. Audited as `mcp.note_create` and `mcp.note_draft_update` with `{via: "mcp", keyId}`. | Required |
+| T35 | **Prompt injection via stored content** | Out of scope for the server: note and file text is returned verbatim, and MCP clients must treat tool output as data. Mitigated by opt-in write scopes, drafts only, a human publishing, audit, and revocation. | Accepted (documented) |
+| T36 | **A stolen key floods writes** | Per key, in memory: 120 tool calls and 30 writes per minute, 200 `create_note` per day, and 500 task writes per day reserved for the task tools. Per user across all of their keys, so extra keys do not multiply the budget: 1000 calls and 60 writes per minute and 400 `create_note` per day. Exceeding either returns `RATE_LIMITED` with `retryAfterSeconds`; a refused call charges no bucket. The existing 24-request concurrency cap, 2.1 MB bounded bodies, `MAX_MARKDOWN_BYTES` (`TOO_LARGE`), and one-click revocation still apply. | Required |
+| T37 | **Binary exfiltration** | `read_document_text` returns only documents with `preview_kind = 'text'` up to 1 MiB, verified against their SHA-256 and decoded as strict UTF-8 (`NOT_TEXT`, `TOO_LARGE`). Document tools use the Files list predicate (`purpose = 'file'`), so task and collection attachments are not reachable, and never return paths, hashes, or upload keys. | Required |
+| T38 | **An MCP draft overwrites a human's autosave** | `update_note_draft` needs `baseRevision` equal to the current `draft_revision` (checked under the note lock and again in the UPDATE), else `DRAFT_CHANGED` with `currentRevision`. The web editor's autosave uses the same revision check, so neither side silently overwrites the other. | Required |
 
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
@@ -107,6 +119,7 @@ Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The
 T7, T16, T18, T19, T23, T24. Record any new acceptance here with a rationale and a date.
 
 - 2026-09-25: T32 (search text duplicated in SQLite; cross-user BM25 statistics), the operator default in WAVES_7-9.md §7.
+- 2026-09-25: T35 (prompt injection through stored content reaching an MCP client). The server cannot tell instructions from data; the controls are opt-in write scopes, drafts only, human publishing, audit, and revocation.
 - 2026-09-25: T28 (note images follow folder sharing). It fails closed (broken image, no disclosure), and fixing it needs a note-attachments model. T18 and T23 are documented in the README.
 
 ## Review checklist (Waves 3, 4, 6)

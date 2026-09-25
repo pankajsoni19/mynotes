@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createUser, dataDir, db, request, type Session } from "./support/harness";
 
 const { reconcileSearchIndex } = await import("../server/searchIndex");
+const { registeredMigrationIds } = await import("../server/migrations");
 const { checksum } = await import("../server/storage");
 
 type Row = { kind: string; source_checksum: string; title: string; body: string };
@@ -139,7 +140,7 @@ describe("search index sync", () => {
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     const result = JSON.parse(output) as Record<string, unknown>;
     expect(result).toMatchObject({
-      migrations: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      migrations: [...registeredMigrationIds],
       rows: ["binned:published", "both:draft", "both:published", "draftOnly:draft", "published:published"],
       checksumsMatch: true,
       aardvark: ["published:published"],

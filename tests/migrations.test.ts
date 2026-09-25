@@ -8,9 +8,20 @@ import { mcpApiKeysMigration } from "../server/migrations/005_mcp_api_keys";
 import { documentsMigration } from "../server/migrations/006_documents";
 import { binMigration } from "../server/migrations/007_bin";
 import { noteSearchMigration } from "../server/migrations/008_note_search";
-import { runMigrations } from "../server/migrations";
+import { mcpKeyScopesMigration } from "../server/migrations/010_mcp_key_scopes";
+import { registeredMigrationIds, runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
+
+/**
+ * Every registered migration ran. Reads the registered list so the assertion
+ * holds whether or not later migrations (for example 009 and 011) are present,
+ * and pins the ids this branch depends on.
+ */
+function expectAllMigrations(ids: number[]) {
+  expect(ids).toEqual([...registeredMigrationIds]);
+  expect(ids).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7, 8, 10]));
+}
 
 function openDb() {
   const db = new Database(":memory:", { strict: true });
@@ -19,15 +30,15 @@ function openDb() {
 }
 
 describe("database migrations", () => {
-  test("a fresh database contains migrations 1 through 9", () => {
+  test("a fresh database contains every registered migration", () => {
     const db = openDb();
     runMigrations(db);
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectAllMigrations(ids);
     db.close();
   });
 
-  test("a v0.2.2-shaped database upgrades cleanly to migration 9", () => {
+  test("a v0.2.2-shaped database upgrades cleanly to the latest migration", () => {
     const db = openDb();
     db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
     for (const migration of legacyMigrations) {
@@ -43,7 +54,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectAllMigrations(ids);
     expect((db.query("SELECT COUNT(*) AS count FROM notes").get() as { count: number }).count).toBe(2);
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'document%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
     expect(tables).toEqual(["document_shares", "documents"]);
@@ -78,7 +89,7 @@ describe("database migrations", () => {
     const after = Date.now();
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectAllMigrations(ids);
     const rows = Object.fromEntries((db.query("SELECT id, deleted_at, deleted_by, purge_after, purge_started_at FROM notes").all() as Array<{
       id: string; deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null;
     }>).map((row) => [row.id, row]));
@@ -111,7 +122,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectAllMigrations(ids);
     // Migration 008 is filesystem-free: existing notes are backfilled at boot, not here.
     expect((db.query("SELECT COUNT(*) AS count FROM note_search_rows").get() as { count: number }).count).toBe(0);
 
@@ -153,7 +164,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectAllMigrations(ids);
     // Existing documents are Files items.
     expect((db.query("SELECT purpose FROM documents WHERE id = 'd1'").get() as { purpose: string }).purpose).toBe("file");
     const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
@@ -193,6 +204,35 @@ describe("database migrations", () => {
     db.query("DELETE FROM boards WHERE id = 'b1'").run();
     expect((db.query("SELECT COUNT(*) AS count FROM cards").get() as { count: number }).count).toBe(0);
     expect((db.query("SELECT COUNT(*) AS count FROM board_members").get() as { count: number }).count).toBe(0);
+    db.close();
+  });
+  test("migration 010 gives existing MCP keys notes:read and adds draft_mcp_key_id, independently of 009", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO mcp_api_keys (id, user_id, name, key_prefix, token_hash, created_at) VALUES ('k1', 'u1', 'Laptop', 'mynotes_abcdefgh', ?, ?)").run("h".repeat(64), old);
+    db.query("INSERT INTO notes (id, owner_id, folder_id, title, current_version, created_at, updated_at) VALUES ('n1', 'u1', NULL, 'One', 1, ?, ?)").run(old, old);
+
+    // 010 applies on an 008-shaped database without 009's tables.
+    mcpKeyScopesMigration.up(db);
+    expect((db.query("SELECT scopes FROM mcp_api_keys WHERE id = 'k1'").get() as { scopes: string }).scopes).toBe('["notes:read"]');
+    expect((db.query("SELECT draft_mcp_key_id FROM notes WHERE id = 'n1'").get() as { draft_mcp_key_id: string | null }).draft_mcp_key_id).toBeNull();
+    // Idempotent column adds, then the runner records every pending migration in id order.
+    runMigrations(db);
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+
+    expect(() => db.query("UPDATE mcp_api_keys SET scopes = 'not json' WHERE id = 'k1'").run()).toThrow();
+    db.query("UPDATE mcp_api_keys SET scopes = ? WHERE id = 'k1'").run(JSON.stringify(["notes:read", "notes:write-draft"]));
+    db.query("UPDATE notes SET draft_mcp_key_id = 'k1' WHERE id = 'n1'").run();
+    expect(() => db.query("UPDATE notes SET draft_mcp_key_id = 'missing' WHERE id = 'n1'").run()).toThrow();
+    db.query("DELETE FROM mcp_api_keys WHERE id = 'k1'").run();
+    expect((db.query("SELECT draft_mcp_key_id FROM notes WHERE id = 'n1'").get() as { draft_mcp_key_id: string | null }).draft_mcp_key_id).toBeNull();
     db.close();
   });
 });

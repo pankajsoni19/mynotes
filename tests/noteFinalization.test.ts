@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { finalizeOpenNote } from "../src/noteFinalization";
+import { canPublish, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "../src/noteFinalization";
+
+test("only a 409 DRAFT_CHANGED publish failure means the draft must be reviewed", () => {
+  expect(isDraftChangedError(409, { code: "DRAFT_CHANGED", currentRevision: 3 })).toBe(true);
+  expect(isDraftChangedError(409, { error: "Draft matches the published version" })).toBe(false);
+  expect(isDraftChangedError(400, { code: "DRAFT_CHANGED" })).toBe(false);
+  expect(isDraftChangedError(409, null)).toBe(false);
+});
 
 function steps(options: { removed?: boolean; delta?: boolean; published?: boolean; publishError?: Error; removeError?: Error }) {
   const calls: string[] = [];
@@ -47,4 +54,44 @@ test("a draft that turns out to match the published version reports unchanged", 
 test("save, publish, and cleanup failures propagate so the caller can keep the note open", async () => {
   await expect(finalizeOpenNote(steps({ delta: true, publishError: new Error("Draft changed in another session") }).steps)).rejects.toThrow("Draft changed in another session");
   await expect(finalizeOpenNote(steps({ removeError: new Error("offline") }).steps)).rejects.toThrow("offline");
+});
+
+test("leaving a note auto-publishes only a draft edited in this session", () => {
+  const base = { isOwner: true, sessionEdited: true, serverHasDelta: false, hasUnsavedChanges: false, mcpDraft: false };
+  expect(shouldAutoPublish({ ...base, hasUnsavedChanges: true })).toBe(true);
+  expect(shouldAutoPublish({ ...base, serverHasDelta: true })).toBe(true);
+  expect(shouldAutoPublish(base)).toBe(false);
+  // A waiting draft (another session, or written by an MCP key) is left for an explicit Publish.
+  expect(shouldAutoPublish({ ...base, sessionEdited: false, serverHasDelta: true })).toBe(false);
+  expect(shouldAutoPublish({ ...base, isOwner: false, hasUnsavedChanges: true })).toBe(false);
+});
+
+test("the explicit Publish button is offered for any owner draft with a delta", () => {
+  expect(canPublish({ isOwner: true, serverHasDelta: true, hasUnsavedChanges: false })).toBe(true);
+  expect(canPublish({ isOwner: true, serverHasDelta: false, hasUnsavedChanges: true })).toBe(true);
+  expect(canPublish({ isOwner: true, serverHasDelta: false, hasUnsavedChanges: false })).toBe(false);
+  expect(canPublish({ isOwner: false, serverHasDelta: true, hasUnsavedChanges: true })).toBe(false);
+});
+
+test("an MCP-written draft is labelled with its key", async () => {
+  expect(mcpDraftBadge("Laptop agent")).toBe("Draft by Laptop agent");
+  expect(mcpDraftBadge(null)).toBeNull();
+  expect(mcpDraftBadge(undefined)).toBeNull();
+  // An unedited MCP draft is not published when the owner just looks at it and leaves.
+  const calls: string[] = [];
+  const outcome = await finalizeOpenNote({
+    removeEmptyNewNote: async () => false,
+    hasPublishableDelta: shouldAutoPublish({ isOwner: true, sessionEdited: false, serverHasDelta: true, hasUnsavedChanges: false, mcpDraft: true }),
+    publish: async () => { calls.push("publish"); return true; }
+  });
+  expect(outcome).toBe("unchanged");
+  expect(calls).toEqual([]);
+});
+
+test("a draft written by an MCP key is never auto-published, even after the owner types in it", () => {
+  const edited = { isOwner: true, sessionEdited: true, serverHasDelta: true, hasUnsavedChanges: true, mcpDraft: true };
+  expect(shouldAutoPublish(edited)).toBe(false);
+  expect(shouldAutoPublish({ ...edited, mcpDraft: false })).toBe(true);
+  // The explicit Publish button is still offered.
+  expect(canPublish(edited)).toBe(true);
 });

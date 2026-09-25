@@ -1,0 +1,51 @@
+/**
+ * MCP key permissions as the Settings dialog shows them. Mirrors
+ * server/mcpScopes.ts (tests/mcpPermissions.test.ts keeps them in step).
+ * Pure, so the checkbox rules are unit-tested.
+ */
+export type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write";
+
+export type McpPermission = { scope: McpScope; label: string; help: string; implies?: McpScope };
+
+export const MCP_PERMISSIONS: readonly McpPermission[] = [
+  { scope: "notes:read", label: "Read notes", help: "Published notes you can open, note search, and folders." },
+  { scope: "notes:write-draft", label: "Write drafts", help: "Create notes and edit drafts of your own notes; never publishes.", implies: "notes:read" },
+  { scope: "files:read", label: "Read files", help: "File details and the text of text files up to 1 MiB." },
+  { scope: "tasks:read", label: "Read tasks", help: "Boards and cards you can see." },
+  { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards; never deletes.", implies: "tasks:read" }
+];
+
+/**
+ * The permissions offered when creating a key. The task scopes are accepted
+ * by the API but have no tools until the MCP task tools land, so they are not
+ * offered yet; add them here with those tools.
+ */
+export const OFFERED_MCP_PERMISSIONS = MCP_PERMISSIONS.filter((permission) => !permission.scope.startsWith("tasks:"));
+
+export const DEFAULT_KEY_SCOPES: readonly McpScope[] = ["notes:read"];
+
+const order = MCP_PERMISSIONS.map((permission) => permission.scope);
+const sorted = (scopes: Iterable<McpScope>) => order.filter((scope) => new Set(scopes).has(scope));
+
+/** Read scopes that a checked write scope holds on (shown checked and disabled). */
+export function lockedScopes(selected: readonly McpScope[]): McpScope[] {
+  return sorted(MCP_PERMISSIONS.filter((permission) => permission.implies && selected.includes(permission.scope)).map((permission) => permission.implies!));
+}
+
+/** Applies one checkbox change: checking a write scope also checks its read scope, and a locked read scope stays checked. */
+export function toggleScope(selected: readonly McpScope[], scope: McpScope, checked: boolean): McpScope[] {
+  const next = new Set(selected);
+  if (checked) {
+    next.add(scope);
+    const implied = MCP_PERMISSIONS.find((permission) => permission.scope === scope)?.implies;
+    if (implied) next.add(implied);
+  } else if (!lockedScopes(selected).includes(scope)) {
+    next.delete(scope);
+  }
+  return sorted(next);
+}
+
+/** Short chip label for a stored scope; unknown scopes show as stored. */
+export function scopeLabel(scope: string) {
+  return MCP_PERMISSIONS.find((permission) => permission.scope === scope)?.label ?? scope;
+}

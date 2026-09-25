@@ -145,6 +145,9 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .save-indicator span { width: 6px; height: 6px; border-radius: 50%; background: #5f906a; }
 .save-indicator.saving span { background: #d8aa42; animation: pulse 1s infinite; }
 .save-indicator.error span, .save-indicator.conflict span { background: var(--red); }
+.mcp-draft-badge { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 220px; overflow: hidden; padding: 3px 9px; border: 1px solid #4a3f24; border-radius: 999px; color: #d7b86a; background: #1d1a12; font-size: .72rem; font-style: normal; white-space: nowrap; text-overflow: ellipsis; }
+.mcp-draft-badge svg { flex: none; width: 13px; height: 13px; }
+.note-meta .mcp-draft-badge { max-width: 60%; padding: 1px 7px; font-size: .7rem; }
 @keyframes pulse { 50% { opacity: .35; } }
 .toolbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .text-action { border: 0; background: transparent; color: #88888f; padding: 8px; cursor: pointer; font-size: .8rem; }
@@ -280,6 +283,16 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mcp-key-form label { display: grid; gap: 7px; color: #c9c9cd; font-size: .76rem; }
 .mcp-key-form input { min-height: 42px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; }
 .mcp-key-form .primary-button { min-height: 42px; padding: 0 14px; }
+.mcp-permissions { grid-column: 1 / -1; display: grid; gap: 4px; margin: 0; padding: 10px 12px; border: 1px solid #303035; border-radius: 10px; }
+.mcp-permissions legend { padding: 0 6px; color: #c9c9cd; font-size: .76rem; }
+.mcp-key-form .mcp-permissions label { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 6px 0; cursor: pointer; }
+.mcp-key-form .mcp-permissions input { flex: none; width: 18px; height: 18px; min-height: 0; margin: 2px 0 0; padding: 0; accent-color: #d7b86a; }
+.mcp-permissions label span { display: grid; gap: 2px; }
+.mcp-permissions label strong { color: #e4e4e7; font-size: .8rem; font-weight: 600; }
+.mcp-permissions label small { color: #818188; font-size: .72rem; line-height: 1.4; }
+.mcp-permissions label.locked { cursor: default; opacity: .8; }
+.scope-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 0; padding: 0; list-style: none; }
+.scope-chips li { padding: 2px 8px; border: 1px solid #38383d; border-radius: 999px; color: #c9c9cd; background: #18181b; font-size: .68rem; }
 .new-api-key { padding: 14px; border: 1px solid #6c5424; border-radius: 10px; background: #242016; }
 .new-api-key > p { margin: 4px 0 10px; color: #b5a77f; }
 .new-api-key textarea { width: 100%; min-height: 66px; resize: vertical; border: 1px solid #4a4129; border-radius: 8px; padding: 10px; background: #111113; color: #f1cd78; font: .76rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
@@ -366,6 +379,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .mobile-editor-nav { display: block; }
   .collapsed-trigger, .desktop-only { display: none !important; }
   .save-indicator { margin-left: 3px; font-size: .7rem; }
+  .editor-toolbar .mcp-draft-badge { max-width: 120px; margin-left: 6px; }
   .toolbar-actions .icon-button, .toolbar-actions .text-action { display: none; }
   .toolbar-actions .mobile-more { display: grid; }
   .mobile-actions-menu { position: absolute; z-index: 20; top: 52px; right: 9px; width: 190px; display: grid; padding: 6px; border: 1px solid #35353a; border-radius: 11px; background: #1b1b1f; box-shadow: 0 16px 42px rgb(0 0 0 / 55%); }

@@ -8,8 +8,12 @@ import { documentsMigration } from "./006_documents";
 import { binMigration } from "./007_bin";
 import { noteSearchMigration } from "./008_note_search";
 import { taskBoardsMigration } from "./009_task_boards";
+import { mcpKeyScopesMigration } from "./010_mcp_key_scopes";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration];
+
+/** Ids of every registered migration, in order. Tests assert against this list. */
+export const registeredMigrationIds: readonly number[] = migrations.map((migration) => migration.id);
 
 export function runMigrations(db: Database) {
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");

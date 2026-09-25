@@ -27,6 +27,9 @@ Database changes live in ordered files under `server/migrations`. Startup runs e
 | 005 | `mcp-api-keys` | hashed MCP API keys with prefix, name, and revocation |
 | 006 | `documents` | `documents` and `document_shares`, Bin columns on documents, per-owner `upload_key` for idempotency |
 | 007 | `bin` | `deleted_by`, `purge_after`, `purge_started_at` on notes and Bin indexes; backfills previously soft-deleted notes (published ones get 30 days from the upgrade, never-published ones are due at once) |
+| 008 | `note_search` | `note_search_rows` and the `note_fts` FTS5 table with its cascade trigger (backfilled at boot) |
+| 009 | `task_boards` | boards, members, columns, cards, comments, card attachments, and `documents.purpose` |
+| 010 | `mcp_key_scopes` | `mcp_api_keys.scopes` (JSON; existing keys read `["notes:read"]`) and `notes.draft_mcp_key_id` |
 
 Notes and documents share one folder tree and one access rule. An item is readable when it is live (`deleted_at IS NULL`) and one of these holds:
 
@@ -34,7 +37,7 @@ Notes and documents share one folder tree and one access rule. An item is readab
 2. it has its own sharing (`sharing_override = 1`) and its visibility is `all_users`, or a note/document share row names the caller; or
 3. it inherits (`sharing_override = 0`) and its **immediate** folder is `all_users` or shared with the caller. Folder sharing does not cascade to subfolders.
 
-Only owners may edit, publish, restore, move, rename, delete, purge, or change sharing; recipients are read-only. Uploads and moves must target a folder the caller owns. Missing, forbidden, and binned items all answer 404. Recipients never see a shared folder's parent, and a document's `folder_id` is masked for them unless that folder is itself visible. The predicate lives in `server/access.ts` (notes), `server/documentAccess.ts` (documents), the `GET /api/notes` query, and `server/mcp.ts`.
+Only owners may edit, publish, restore, move, rename, delete, purge, or change sharing; recipients are read-only. Uploads and moves must target a folder the caller owns. Missing, forbidden, and binned items all answer 404. Recipients never see a shared folder's parent, and a document's `folder_id` is masked for them unless that folder is itself visible. The predicate lives in `server/access.ts` (notes), `server/documentAccess.ts` (documents), the `GET /api/notes` query, and `server/mcpTools.ts`.
 
 ## Draft and version state machine
 
@@ -171,7 +174,7 @@ All `/api` routes except health, about, login, and register need a session. Muta
 - **Session:** `GET /api/auth/me`, `POST /api/auth/logout`
 - **TOTP:** `GET /api/auth/totp/status`, `POST /api/auth/totp/setup`, `POST /api/auth/totp/enable`, `DELETE /api/auth/totp`
 - **Recovery codes:** `POST /api/auth/totp/recovery-codes` (view; password and fresh TOTP code), `POST /api/auth/totp/recovery-codes/regenerate`
-- **MCP keys:** `GET /api/mcp/keys`, `POST /api/mcp/keys` (password plus a TOTP or recovery code when enrolled; the plaintext key is returned once), `DELETE /api/mcp/keys/:id`
+- **MCP keys:** `GET /api/mcp/keys`, `POST /api/mcp/keys` (password plus a TOTP or recovery code when enrolled, and optional `scopes`; the plaintext key is returned once), `DELETE /api/mcp/keys/:id`
 - **Users:** `GET /api/users`
 - **Folders:** `GET/POST /api/folders`, `PATCH/DELETE /api/folders/:id`, `GET/PUT /api/folders/:id/sharing`
 - **Notes:** `GET/POST /api/notes`, `GET/PATCH/DELETE /api/notes/:id`, `PUT/DELETE /api/notes/:id/draft`, `POST /api/notes/:id/publish`, `GET /api/notes/:id/versions`, `GET /api/notes/:id/versions/:version`, `POST /api/notes/:id/versions/:version/restore`, `GET/PUT /api/notes/:id/sharing`
@@ -180,9 +183,26 @@ All `/api` routes except health, about, login, and register need a session. Muta
 - **Tasks:** `GET/POST /api/tasks/boards`, `GET/PATCH/DELETE /api/tasks/boards/:id`, `GET/PUT /api/tasks/boards/:id/sharing`, `POST /api/tasks/boards/:id/columns`, `PATCH/DELETE /api/tasks/columns/:id`, `POST /api/tasks/boards/:id/cards`, `GET/PATCH/DELETE /api/tasks/cards/:id`, `POST /api/tasks/cards/:id/move`, `GET/POST /api/tasks/cards/:id/comments`, `PATCH/DELETE /api/tasks/comments/:id`, `POST /api/tasks/cards/:id/attachments`, `DELETE /api/tasks/cards/:id/attachments/:documentId`
 - **Bin:** `GET /api/bin?type=note|document|card|board`, `POST /api/bin/:type/:id/restore`, `DELETE /api/bin/:type/:id`, `DELETE /api/bin`
 - **Search:** `GET /api/search?q=&scope=notes&folder=all|shared|<uuid>&limit=20`
-- **MCP:** `/mcp` (outside `/api`): Streamable HTTP with a `Bearer` API key, `Host` and `Origin` checks, a failed-auth rate limit, and bounded bodies. Tools: `list_notes` and `read_note`, over the latest published versions the key owner can read. Drafts, documents, and binned items are excluded.
+- **MCP:** `/mcp` (outside `/api`): Streamable HTTP with a `Bearer` API key, `Host` and `Origin` checks, a failed-auth rate limit, and bounded bodies. Tools are registered per key scope; see [MCP](#mcp).
 
 Any other `/api` path returns a JSON 404. In production every other path serves the SPA's `index.html`. Request and response shapes for Files, Bin, Search, and Tasks are in [docs/plan/API_CONTRACTS.md](plan/API_CONTRACTS.md).
+
+<a id="mcp"></a>
+## MCP
+
+`server/mcp.ts` owns keys and the transport. It checks `Host` and `Origin`, authenticates the bearer token (SHA-256 lookup; revoked keys and disabled users are refused), caps concurrent requests at 24, bounds the body, and builds a fresh `McpServer` per request with the key's context (`keyId`, owner, name, scopes) in `authInfo`.
+
+`server/mcpTools.ts` holds every tool as a spec: a name, the scopes that allow it (any one), whether it writes, an optional daily bucket, a Zod input schema, and a handler. `registerMcpTools` registers only the specs the key's scopes allow. `runTool` wraps every handler: it reloads the key from the database and re-checks the scope, charges the per-key limits in `server/mcpRateLimit.ts` (all buckets or none), validates the arguments, and maps `McpToolError` to `isError` results with `{error, code}`. The scope vocabulary and the write-implies-read rule are pure functions in `server/mcpScopes.ts`, mirrored for Settings in `src/mcpPermissions.ts`.
+
+Tools reuse the HTTP services as the key's owner:
+
+- notes: `readableNote`/`ownedNote`, `listReadableFolders`, and `searchPublishedNotes` (published rows only, plain snippets);
+- draft writes: `createDraftNote` and `writeDraftLocked` in `server/noteDrafts.ts`, the same revision CAS, title derivation, and same-transaction index sync as `PUT /api/notes/:id/draft`, under the note lock;
+- files: the Files list predicate (`listReadableDocuments`, `listableDocument*`), never `readableDocument*`, which later modules widen for attachments.
+
+An MCP write sets `notes.draft_mcp_key_id`; publish, discard, and restore-to-draft clear it. The editor shows "Draft by <key>" from `draftMcpKeyName`, and the list from `draft_mcp_key_name`. Leaving a note auto-publishes only when the user typed in it this session and no MCP key wrote the draft (`shouldAutoPublish` in `src/noteFinalization.ts`), so an agent's draft always waits for an explicit Publish. Publish sends the draft revision the editor last saw; a newer revision (409 `DRAFT_CHANGED`) reloads the note instead of publishing it.
+
+To add a module's tools (the task tools next, then the later scopes in WAVES_10-12 D70): add its scope pair to `MCP_SCOPES` and `IMPLIED_READ_SCOPE` if it is new, write specs with `defineTool`, and spread them into `mcpToolSpecs` at the marked extension point. Writes set `write: true` (and a `dailyBucket` when capped), audit `{via: "mcp", keyId}`, use revision CAS, and never delete.
 
 ## UI
 

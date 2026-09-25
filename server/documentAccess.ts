@@ -100,6 +100,22 @@ export function listReadableDocuments(userId: string, folderId: string | null) {
     .all({ userId, folderId }) as DocumentSummary[];
 }
 
+/**
+ * One document under the Files list predicate: readable through ownership or
+ * sharing, and `purpose = 'file'`. MCP uses this, never readableDocument*, so
+ * attachments reachable only through another module (task cards) stay out.
+ */
+export function listableDocumentSummary(documentId: string, userId: string) {
+  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readablePredicate} AND d.purpose = 'file'`)
+    .get({ documentId, userId }) as DocumentSummary | null;
+}
+
+/** The full row for listableDocumentSummary's predicate; for server-side reads only (never returned). */
+export function listableDocument(documentId: string, userId: string) {
+  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readablePredicate} AND d.purpose = 'file'`)
+    .get({ documentId, userId }) as DocumentRow | null;
+}
+
 /** A document owned by `userId`. Binned rows are included only on request; rows being purged never are. */
 export function ownedDocument(documentId: string, userId: string, options: { includeDeleted?: boolean } = {}) {
   const deletedFilter = options.includeDeleted ? "purge_started_at IS NULL" : "deleted_at IS NULL";

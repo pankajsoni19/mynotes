@@ -6,19 +6,19 @@ import { ZodError } from "zod";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
-import { ownedNote, readableNote } from "./access";
+import { listReadableFolders, ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
+import { createDraftNote, hasDraftDelta, writeDraftLocked } from "./noteDrafts";
 import { registerSearchRoutes } from "./searchRoutes";
 import { registerTaskRoutes } from "./tasks/routes";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
   draftSchema,
-  deriveNoteTitle,
   folderSharingSchema,
   folderSchema,
   JSON_BODY_LIMIT_BYTES,
@@ -27,6 +27,7 @@ import {
   noteCreateSchema,
   noteMetaSchema,
   parseJson,
+  publishSchema,
   registerSchema,
   sharingSchema,
   totpCodeSchema,
@@ -54,14 +55,6 @@ function errorClass(error: unknown) {
   if (!(error instanceof Error)) return "Unknown error";
   const code = (error as NodeJS.ErrnoException).code;
   return typeof code === "string" ? `${error.name} (${code})` : error.name;
-}
-
-function hasDraftDelta(note: NoteRow, draftChecksum: string) {
-  if (note.current_version === 0) return draftChecksum !== checksum("");
-  const published = db.query("SELECT checksum FROM note_versions WHERE note_id = ? AND version_number = ?")
-    .get(note.id, note.current_version) as { checksum: string } | null;
-  if (!published) throw new Error("Published version metadata is missing");
-  return draftChecksum !== published.checksum;
 }
 
 /**
@@ -327,7 +320,7 @@ app.post("/api/mcp/keys", async (c) => {
   }
   const activeCount = (db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(userId) as { count: number }).count;
   if (activeCount >= 10) return c.json({ error: "Revoke an existing API key before creating another" }, 409);
-  return c.json({ key: createMcpApiKey(userId, body.name) }, 201);
+  return c.json({ key: createMcpApiKey(userId, body.name, body.scopes) }, 201);
 });
 
 app.delete("/api/mcp/keys/:id", (c) => {
@@ -451,23 +444,7 @@ app.get("/api/users", (c) => {
   return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name })) });
 });
 
-app.get("/api/folders", (c) => {
-  const userId = c.get("user").id;
-  const rows = db.query(`
-    SELECT f.id, CASE WHEN f.owner_id = $userId THEN f.parent_id ELSE NULL END AS parent_id,
-           f.name, f.is_default, f.visibility, f.created_at, f.updated_at,
-           f.owner_id, u.display_name AS owner_name,
-           CASE WHEN f.owner_id = $userId THEN 1 ELSE 0 END AS is_owner
-    FROM folders f JOIN users u ON u.id = f.owner_id
-    WHERE f.owner_id = $userId OR f.visibility = 'all_users' OR (
-      f.visibility = 'selected' AND EXISTS (
-        SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-      )
-    )
-    ORDER BY is_owner DESC, f.is_default DESC, f.name COLLATE NOCASE
-  `).all({ userId });
-  return c.json({ folders: rows });
-});
+app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user").id) }));
 
 app.post("/api/folders", async (c) => {
   const body = await parseJson(c.req.raw, folderSchema);
@@ -556,8 +533,10 @@ app.get("/api/notes", (c) => {
            CASE WHEN n.sharing_override = 0 THEN COALESCE(f.visibility, 'private') ELSE n.visibility END AS visibility,
            n.current_version,
            n.draft_revision, n.created_at, n.updated_at, u.display_name AS owner_name,
-           CASE WHEN n.owner_id = $userId THEN 1 ELSE 0 END AS is_owner
+           CASE WHEN n.owner_id = $userId THEN 1 ELSE 0 END AS is_owner,
+           CASE WHEN n.owner_id = $userId AND n.draft_revision IS NOT NULL THEN k.name ELSE NULL END AS draft_mcp_key_name
     FROM notes n JOIN users u ON u.id = n.owner_id LEFT JOIN folders f ON f.id = n.folder_id
+    LEFT JOIN mcp_api_keys k ON k.id = n.draft_mcp_key_id
     WHERE n.deleted_at IS NULL AND (
       n.owner_id = $userId OR (n.sharing_override = 1 AND (
         n.visibility = 'all_users' OR (n.visibility = 'selected' AND EXISTS (
@@ -580,15 +559,8 @@ app.post("/api/notes", async (c) => {
   if (body.folderId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.folderId, userId)) {
     return c.json({ error: "Folder not found" }, 404);
   }
-  const id = crypto.randomUUID();
-  const timestamp = now();
-  const initialTitle = "New note";
-  const folderId = body.folderId ?? ensureDefaultFolder(userId);
-  await storage.writeDraft(id, "");
-  db.query("INSERT INTO notes (id, owner_id, folder_id, title, draft_revision, draft_checksum, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?)")
-    .run(id, userId, folderId, initialTitle, checksum(""), timestamp, timestamp);
-  audit(userId, id, "note.create");
-  return c.json({ note: { id, title: initialTitle, folder_id: folderId, current_version: 0, draft_revision: 1 } }, 201);
+  const created = await createDraftNote(userId, body.folderId ?? null, "");
+  return c.json({ note: { id: created.id, title: created.title, folder_id: created.folderId, current_version: 0, draft_revision: created.revision } }, 201);
 });
 
 app.get("/api/notes/:id", async (c) => {
@@ -610,9 +582,14 @@ app.get("/api/notes/:id", async (c) => {
     expectedChecksum = metadata.checksum;
   }
   if (!expectedChecksum || checksum(markdown) !== expectedChecksum) throw new Error("Note content failed integrity verification");
+  const { draft_mcp_key_id: draftMcpKeyId, ...visible } = note;
+  const draftMcpKeyName = isOwner && note.draft_revision !== null && draftMcpKeyId
+    ? (db.query("SELECT name FROM mcp_api_keys WHERE id = ?").get(draftMcpKeyId) as { name: string } | null)?.name ?? null
+    : null;
   return c.json({
     note: {
-      ...note,
+      ...visible,
+      draftMcpKeyName,
       isOwner,
       hasDraft: note.draft_revision !== null,
       hasDelta: isOwner && note.draft_revision !== null && expectedChecksum !== null
@@ -650,24 +627,9 @@ app.put("/api/notes/:id/draft", async (c) => {
     if (body.revision !== note.draft_revision) {
       return c.json({ error: "Draft changed in another session", currentRevision: note.draft_revision }, 409);
     }
-    const nextRevision = (note.draft_revision ?? 0) + 1;
-    const derivedTitle = deriveNoteTitle(body.markdown);
-    await storage.writeDraft(id, body.markdown);
-    const draftChecksum = checksum(body.markdown);
-    const saved = db.transaction(() => {
-      const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
-        .run(derivedTitle, nextRevision, draftChecksum, now(), id, userId, note.draft_revision);
-      if (result.changes !== 1) return false;
-      indexNote(id, "draft", derivedTitle, body.markdown, draftChecksum);
-      return true;
-    })();
+    const saved = await writeDraftLocked(note, userId, body.markdown);
     if (!saved) return c.json({ error: "Draft changed in another session" }, 409);
-    return c.json({
-      revision: nextRevision,
-      title: derivedTitle,
-      hasDelta: hasDraftDelta(note, checksum(body.markdown)),
-      savedAt: now()
-    });
+    return c.json(saved);
   });
 });
 
@@ -685,7 +647,7 @@ app.delete("/api/notes/:id/draft", async (c) => {
     }
     const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
     db.transaction(() => {
-      db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
+      db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
         .run(versionTitle?.title ?? note.title, now(), id, userId);
       unindexNote(id, "draft");
     })();
@@ -698,10 +660,19 @@ app.delete("/api/notes/:id/draft", async (c) => {
 app.post("/api/notes/:id/publish", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
+  const body = await parseJson(c.req.raw, publishSchema);
   return withNoteLock(id, async () => {
     const note = ownedNote(id, userId);
     if (!note) return c.json({ error: "Note not found" }, 404);
     if (note.draft_revision === null) return c.json({ error: "There is no draft to publish" }, 409);
+    // The caller publishes the draft revision it last saw (T38). Older clients that send no
+    // revision may still publish their own draft, but never one an MCP key wrote.
+    if (body.revision === undefined && note.draft_mcp_key_id !== null) {
+      return c.json({ error: "Invalid request", details: ["revision is required to publish a draft written through MCP"] }, 400);
+    }
+    if (body.revision !== undefined && body.revision !== note.draft_revision) {
+      return c.json({ error: "Draft changed since you last saw it", code: "DRAFT_CHANGED", currentRevision: note.draft_revision }, 409);
+    }
     const markdown = await storage.readDraft(id);
     if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new Error("Draft content failed integrity verification");
     if (!hasDraftDelta(note, note.draft_checksum)) return c.json({ error: "Draft matches the published version" }, 409);
@@ -714,7 +685,7 @@ app.post("/api/notes/:id/publish", async (c) => {
     db.transaction(() => {
       db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(versionId, id, nextVersion, note.title, checksum(markdown), userId, timestamp);
-      const updated = db.query("UPDATE notes SET current_version = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND current_version = ? AND draft_revision = ?")
+      const updated = db.query("UPDATE notes SET current_version = ?, draft_revision = NULL, draft_checksum = NULL, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND current_version = ? AND draft_revision = ?")
         .run(nextVersion, timestamp, id, userId, note.current_version, note.draft_revision);
       if (updated.changes !== 1) throw new Error("Concurrent note update detected");
       indexNote(id, "published", note.title, markdown, note.draft_checksum!);
@@ -766,7 +737,8 @@ app.post("/api/notes/:id/versions/:version/restore", async (c) => {
     await storage.writeDraft(id, markdown);
     const revision = (note.draft_revision ?? 0) + 1;
     db.transaction(() => {
-      const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
+      // The restored text is the owner's choice, so the draft is no longer an MCP key's.
+      const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
         .run(metadata.title, revision, metadata.checksum, now(), id, userId, note.draft_revision);
       if (result.changes === 1) indexNote(id, "draft", metadata.title, markdown, metadata.checksum);
     })();

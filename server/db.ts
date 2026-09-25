@@ -43,6 +43,8 @@ export type NoteRow = {
   current_version: number;
   draft_revision: number | null;
   draft_checksum: string | null;
+  /** The MCP key that wrote the current draft (migration 010); cleared on publish, discard, and restore. */
+  draft_mcp_key_id: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

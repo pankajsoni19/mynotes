@@ -1,4 +1,4 @@
-# Test plan: Home, Files, Bin, Search, and Tasks
+# Test plan: Home, Files, Bin, Search, Tasks, and MCP scopes
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every automated case below must exist and pass before its wave's exit gate.
 
@@ -229,6 +229,33 @@ Manual QA (desktop and 390×844, two users):
 - [ ] Attach files to the card and to a comment; paste an image into the description (it shows inline and appears under Attachments); the member sees and downloads them; after removing the member from the board, the file URL is 404 for them; none of it appears in Files.
 - [ ] Delete a card from its dialog and a board from the list or header: the confirm reads like Files, the toast's Undo restores it. In the Bin, the Tasks filter shows both; restoring a card on a deleted board asks to restore the board first; the deleter of a card on someone else's board sees Restore but not Delete forever.
 - [ ] 390×844: the card view is full screen with 44 px targets; the Move sheet and confirms are reachable; no horizontal page scroll.
+## Wave 8: MCP scopes
+
+Unit tests (no server):
+
+- [x] `tests/mcpScopes.test.ts`: normalizing adds implied reads, dedupes, and orders; write implies read and never the reverse; stored JSON reads leniently (null, bad JSON, objects, unknown values) and never grants more than is stored.
+- [x] `tests/mcpPermissions.test.ts`: the Settings list mirrors the server scopes and implications; the Write drafts help says "never publishes"; checking a write scope checks and locks its read scope; unchecking it unlocks but keeps the read; only the notes and files scopes are offered until the task tools land.
+- [x] `tests/noteFinalization.test.ts`: leaving a note auto-publishes only a draft edited in this session; a waiting draft (MCP or another session) is not published; the Publish button is offered for any owner delta; the "Draft by <key>" label.
+
+`tests/migrations.test.ts`:
+
+- [x] Migration 010 applies to an 008-shaped database without 009's tables; an existing key reads `["notes:read"]`; `scopes` must be valid JSON; `draft_mcp_key_id` references a key and becomes NULL when the key row is deleted. Migration id assertions read the registered list and pin 1–8 and 10.
+
+`tests/mcp.test.ts`:
+
+- [x] Keys: an API-created key defaults to `notes:read`; chosen scopes are stored with implied reads, listed, and audited in `mcp.key_created`; empty, duplicate, unknown, too many, and non-array scopes are 400.
+- [x] Scopes: `tools/list` per scope (`files:read` sees only the document tools and `list_folders`; `notes:read` no write or document tools; `notes:write-draft` also the read tools); calling an unregistered tool fails; a direct handler call without the scope returns `SCOPE_REQUIRED`; a revoked key gets 401 and `SCOPE_REQUIRED`.
+- [x] `search_notes`: published text only (the owner's newer draft is neither searched nor used for the title), plain snippets, reader and stranger access, unsharing applies at once, folder filter, `limit` over 20 fails, FTS operators are plain words, binned notes vanish. `list_folders` equals `GET /api/folders`.
+- [x] Draft writes: `create_note` makes a draft-only note (no version) in Default or an owned folder, never a folder shared by someone else; the draft is indexed for the owner's search but not for MCP search; `draftMcpKeyName`/`draft_mcp_key_name` show the key and `draft_mcp_key_id` is never returned; publish and discard clear it. `update_note_draft` appends and replaces, keeps the version count, audits `mcp.note_draft_update`, and returns `DRAFT_CHANGED` with `currentRevision` for a stale revision and after a human autosave. Shared (readable but not owned), binned, and missing notes return the same `NOT_FOUND`.
+- [x] Documents: text is read as strict UTF-8; PDFs, binaries, a bad UTF-8 tail past the sniffed prefix (`NOT_TEXT`), and files over 1 MiB (`TOO_LARGE`) are refused; metadata carries no hash, path, or upload key; sharing, the Bin, and `purpose <> 'file'` documents follow the Files list predicate.
+- [x] Limits: 120 calls a minute, then `RATE_LIMITED` with `retryAfterSeconds`, per key; 30 writes a minute (refused CAS attempts count); a refused call charges no bucket; the daily `create_note` bucket resets after a day; per-user limits (60 writes and 1000 calls a minute, 400 `create_note` a day) span all keys of a user and leave other users unaffected.
+- [ ] Tasks: the W9 role matrix for the task tools (lands with `feat: add MCP task tools`).
+
+Manual QA:
+
+- [ ] Settings → MCP server at desktop and 390×844: Permissions rows are at least 44 px, checking Write drafts checks and locks Read notes, the key list shows scope chips, and the copied config still works.
+- [ ] With a `notes:write-draft` key, call `create_note`, then open Nook: the list and editor show "Draft by <key>"; switching notes without typing leaves it unpublished; Publish version removes the badge.
+- [ ] A notes-only client (for example the MCP Inspector) lists only the read tools.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 
