@@ -12,6 +12,14 @@ type ImportDialogProps = {
 
 const MAX_BYTES = 2_000_000;
 
+/** The import button: what it will do, or, while the check found problems, what stands in the way. */
+export function importButtonLabel(preview: Pick<ImportPreview, "valid" | "errorCount"> | null, busy: boolean) {
+  if (busy) return "Working…";
+  if (!preview) return "Import";
+  if (preview.errorCount > 0) return preview.errorCount === 1 ? "Fix 1 problem to import" : `Fix ${preview.errorCount} problems to import`;
+  return `Import ${preview.valid} ${preview.valid === 1 ? "row" : "rows"}`;
+}
+
 // CSV import wizard: choose a file (≤ 2 MB, header row plus ≤ 5000 rows), check it (a dry run maps
 // columns to fields by name and lists problems), adjust the mapping, then import all rows or none.
 // A full-screen sheet on phones; pushes no history entry (dialogLayers).
@@ -115,7 +123,7 @@ export function ImportDialog({ collection, onImported, onClose }: ImportDialogPr
     {error && <p className="file-dialog-error import-error" role="alert">{error}</p>}
     <footer className="file-dialog-actions">
       <button className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-      <button className="primary-button" onClick={() => { void run(); }} disabled={busy || !ready}>{busy ? "Working…" : preview ? `Import ${preview.valid} ${preview.valid === 1 ? "row" : "rows"}` : "Import"}</button>
+      <button className="primary-button" onClick={() => { void run(); }} disabled={busy || !ready}>{importButtonLabel(preview, busy)}</button>
     </footer>
   </ModalDialog>;
 }

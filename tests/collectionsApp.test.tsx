@@ -8,6 +8,7 @@ import { CollectionCards } from "../src/collections/CollectionCards";
 import { CollectionList } from "../src/collections/CollectionList";
 import type { CollectionRow, FieldDefinition } from "../src/collections/collectionsApi";
 import { fromDrafts, moveDraft, newFieldDraft, toDrafts, typeChoices, validateDrafts } from "../src/collections/fieldDrafts";
+import { importButtonLabel } from "../src/collections/ImportDialog";
 import { RowPanel } from "../src/collections/RowPanel";
 import { allowedTypeChanges, cardFields, defaultFilterValue, displayValue, filterReady, parseInput, submitOnEnter, validateCollectionName } from "../src/collections/values";
 
@@ -181,4 +182,13 @@ test("small Collections controls get 44 px hit areas on phones without growing",
   // The visible sizes stay as they are.
   expect(css).toMatch(/\.field-editor-check input \{ min-height: 0; width: 16px; height: 16px;/);
   expect(css).toMatch(/\.collection-reload \{ min-height: 28px;/);
+});
+
+test("the import button names the problems to fix instead of a row count it cannot import", () => {
+  expect(importButtonLabel(null, false)).toBe("Import");
+  expect(importButtonLabel({ valid: 1, errorCount: 0 }, false)).toBe("Import 1 row");
+  expect(importButtonLabel({ valid: 4, errorCount: 0 }, false)).toBe("Import 4 rows");
+  expect(importButtonLabel({ valid: 1, errorCount: 1 }, false)).toBe("Fix 1 problem to import");
+  expect(importButtonLabel({ valid: 1, errorCount: 3 }, false)).toBe("Fix 3 problems to import");
+  expect(importButtonLabel({ valid: 1, errorCount: 3 }, true)).toBe("Working…");
 });
