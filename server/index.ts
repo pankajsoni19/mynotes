@@ -763,8 +763,6 @@ app.get("/api/notes/:id/sharing", (c) => {
 app.put("/api/notes/:id/sharing", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
-  const note = ownedNote(id, userId);
-  if (!note) return c.json({ error: "Note not found" }, 404);
   const body = await parseJson(c.req.raw, sharingSchema);
   if (body.userIds.includes(userId)) return c.json({ error: "The owner cannot be added as a recipient" }, 400);
   const uniqueIds = [...new Set(body.userIds)];
@@ -774,18 +772,23 @@ app.put("/api/notes/:id/sharing", async (c) => {
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
   }
-  db.transaction(() => {
-    db.query("DELETE FROM note_shares WHERE note_id = ?").run(id);
-    if (body.visibility === "selected") {
-      const statement = db.query("INSERT INTO note_shares (note_id, user_id, created_at) VALUES (?, ?, ?)");
-      for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
-    }
-    const visibility = body.visibility === "inherit" ? "private" : body.visibility;
-    db.query("UPDATE notes SET visibility = ?, sharing_override = ?, updated_at = ? WHERE id = ?")
-      .run(visibility, body.visibility === "inherit" ? 0 : 1, now(), id);
-  })();
-  audit(userId, id, "note.sharing_changed", { visibility: body.visibility, recipientCount: uniqueIds.length });
-  return c.json({ ok: true });
+  // Ownership and the Bin check run under the note lock, so a note binned or purged
+  // meanwhile is refused instead of having its retained shares rewritten.
+  return withNoteLock(id, async () => {
+    if (!ownedNote(id, userId)) return c.json({ error: "Note not found" }, 404);
+    db.transaction(() => {
+      db.query("DELETE FROM note_shares WHERE note_id = ?").run(id);
+      if (body.visibility === "selected") {
+        const statement = db.query("INSERT INTO note_shares (note_id, user_id, created_at) VALUES (?, ?, ?)");
+        for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
+      }
+      const visibility = body.visibility === "inherit" ? "private" : body.visibility;
+      db.query("UPDATE notes SET visibility = ?, sharing_override = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
+        .run(visibility, body.visibility === "inherit" ? 0 : 1, now(), id, userId);
+    })();
+    audit(userId, id, "note.sharing_changed", { visibility: body.visibility, recipientCount: uniqueIds.length });
+    return c.json({ ok: true });
+  });
 });
 
 app.delete("/api/notes/:id", async (c) => {

@@ -113,6 +113,25 @@ describe("moving notes and documents to the Bin", () => {
     expect((await deleteNote(owner, noteId)).status).toBe(404);
   }, 20_000);
 
+  test("sharing changes are refused for a note binned or purged while the request waits for the lock", async () => {
+    const owner = await createUser("Sharing race owner");
+    const recipient = await createUser("Sharing race recipient");
+    const { withNoteLock } = await import("../server/storage");
+    for (const purgeToo of [false, true]) {
+      const noteId = await createNote(owner, "# Shared race", { publish: true });
+      let release!: () => void;
+      const held = withNoteLock(noteId, () => new Promise<void>((resolve) => { release = resolve; }));
+      const sharing = request(`/notes/${noteId}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [recipient.userId] }) }, owner);
+      await Bun.sleep(50);
+      db.query("UPDATE notes SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), owner.userId, new Date(Date.now() + 86_400_000).toISOString(), noteId);
+      if (purgeToo) db.query("DELETE FROM notes WHERE id = ?").run(noteId);
+      release();
+      await held;
+      expect((await sharing).status).toBe(404);
+      expect(db.query("SELECT 1 FROM note_shares WHERE note_id = ?").all(noteId)).toHaveLength(0);
+    }
+  });
+
   test("deleting a never-published note with a draft moves it to the Bin with the draft intact", async () => {
     const owner = await createUser("Draft bin owner");
     const noteId = await createNote(owner, "Unpublished thoughts");
