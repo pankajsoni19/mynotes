@@ -51,11 +51,11 @@ function multipart(parts: Array<{ name: string; filename?: string; content: stri
 }
 const multipartType = `multipart/form-data; boundary=${boundary}`;
 
-/** A multipart body that sends the part header and some bytes, then stalls until aborted. */
+/** A multipart body that declares 100 kB, sends the part header and some bytes, then stalls until aborted. */
 function stalledUpload(session: Session, controller: AbortController) {
   const head = encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="slow.bin"\r\n\r\n${"x".repeat(8192)}`);
   const body = new ReadableStream<Uint8Array>({ start(stream) { stream.enqueue(head); }, pull: () => new Promise<void>(() => undefined) });
-  return request("/files", { method: "POST", body, signal: controller.signal, headers: { "Content-Type": multipartType }, duplex: "half" } as RequestInit, session)
+  return request("/files", { method: "POST", body, signal: controller.signal, headers: { "Content-Type": multipartType, "Content-Length": "100000" }, duplex: "half" } as RequestInit, session)
     .catch((error: Error) => error.name);
 }
 
@@ -266,20 +266,26 @@ describe("document uploads", () => {
     expect(socket).toContain(`"limitBytes":${MAX_UPLOAD}`);
   });
 
-  test("rejects a streamed overflow without Content-Length and keeps nothing", async () => {
+  test("rejects a file that overflows the limit while streaming and keeps nothing", async () => {
     const owner = await createUser("Streamed size");
     const before = { staging: listDir(stagingDir).length, objects: listDir(objectsDir).length };
     const head = encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="big.bin"\r\n\r\n`);
+    // Declared just under the early-413 threshold, but the file part itself exceeds the limit.
+    const declared = MAX_UPLOAD + 60_000;
     let sent = 0;
     const body = new ReadableStream<Uint8Array>({
       pull(stream) {
-        if (sent === 0) stream.enqueue(head);
-        if (sent > MAX_UPLOAD + 400_000) return stream.close();
-        stream.enqueue(new Uint8Array(65_536).fill(0x61));
-        sent += 65_536;
+        if (sent === 0) {
+          stream.enqueue(head);
+          sent = head.byteLength;
+        }
+        if (sent >= declared) return stream.close();
+        const size = Math.min(65_536, declared - sent);
+        stream.enqueue(new Uint8Array(size).fill(0x61));
+        sent += size;
       }
     });
-    const response = await request("/files", { method: "POST", body, headers: { "Content-Type": multipartType }, duplex: "half" } as RequestInit, owner);
+    const response = await request("/files", { method: "POST", body, headers: { "Content-Type": multipartType, "Content-Length": String(declared) }, duplex: "half" } as RequestInit, owner);
     expect(response.status).toBe(413);
     expect(await response.json()).toEqual({ error: "File is too large", code: "FILE_TOO_LARGE", limitBytes: MAX_UPLOAD });
     await waitFor(() => listDir(stagingDir).length === before.staging);
@@ -432,7 +438,8 @@ describe("document uploads", () => {
     const before = process.memoryUsage().rss;
     let peak = before;
     const sampler = setInterval(() => { peak = Math.max(peak, process.memoryUsage().rss); }, 2);
-    const response = await request("/files", { method: "POST", body, headers: { "Content-Type": multipartType }, duplex: "half" } as RequestInit, owner);
+    const length = head.byteLength + size + tail.byteLength;
+    const response = await request("/files", { method: "POST", body, headers: { "Content-Type": multipartType, "Content-Length": String(length) }, duplex: "half" } as RequestInit, owner);
     clearInterval(sampler);
     peak = Math.max(peak, process.memoryUsage().rss);
     expect(response.status).toBe(201);
@@ -910,7 +917,8 @@ function gatedUpload(session: Session, filename: string, size: number, headers: 
       step += 1;
     }
   });
-  const response = request("/files", { method: "POST", body, headers: { "Content-Type": multipartType, ...headers }, duplex: "half" } as RequestInit, session);
+  const length = head.byteLength + size + tail.byteLength;
+  const response = request("/files", { method: "POST", body, headers: { "Content-Type": multipartType, "Content-Length": String(length), ...headers }, duplex: "half" } as RequestInit, session);
   return { response, release };
 }
 
@@ -1001,5 +1009,102 @@ describe("upload limit races", () => {
     expect(listDir(objectsDir).length).toBe(objectsBefore + 1);
     expect(existsSync(objectPath(bodies[0]!.document.id))).toBe(true);
     await waitFor(() => stagedCount() === 0);
+  });
+});
+
+const { setUploadIdleTimeoutForTests } = await import("../server/documents");
+
+function openStagingDescriptors() {
+  let count = 0;
+  for (const fd of readdirSync("/proc/self/fd")) {
+    try {
+      if (readlinkSync(`/proc/self/fd/${fd}`).startsWith(stagingDir)) count += 1;
+    } catch {
+      // The descriptor closed while listing.
+    }
+  }
+  return count;
+}
+
+describe("upload body lifecycle", () => {
+  test("requires Content-Length and answers 411 before staging anything", async () => {
+    const owner = await createUser("Length required owner");
+    const baseline = stagedCount();
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const body = new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(encoder.encode(multipart([{ name: "file", filename: "a.txt", content: "a" }])));
+          stream.close();
+        }
+      });
+      const response = await request("/files", { method: "POST", body, headers: { "Content-Type": multipartType }, duplex: "half" } as RequestInit, owner);
+      expect(response.status).toBe(411);
+      expect(await response.json()).toEqual({ error: "Content-Length is required for uploads", code: "LENGTH_REQUIRED" });
+    }
+    expect(stagedCount()).toBe(baseline);
+    // Four refusals did not use up the three upload slots.
+    await uploadOk(owner, "a", "after.txt");
+  });
+
+  test("a chunked body past Bun's transport cap leaves the server healthy", async () => {
+    const owner = await createUser("Transport cap owner");
+    const baseline = stagedCount();
+    const chunk = new Uint8Array(100_000);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(stream) {
+          if (sent === 0) stream.enqueue(encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="big.bin"\r\n\r\n`));
+          // Well past Bun's cap of max(MAX_UPLOAD_BYTES, 2.1 MB) + 1 MiB in the harness.
+          if (sent > 7_000_000) return stream.close();
+          stream.enqueue(chunk);
+          sent += chunk.byteLength;
+        }
+      });
+      const outcome = await request("/files", { method: "POST", body, headers: { "Content-Type": multipartType }, duplex: "half" } as RequestInit, owner)
+        .then((response) => response.status, () => "connection closed");
+      expect([411, 413, "connection closed"]).toContain(outcome);
+    }
+    Bun.gc(true);
+    await Bun.sleep(50);
+    expect((await request("/health")).status).toBe(200);
+    expect(stagedCount()).toBe(baseline);
+    expect(openStagingDescriptors()).toBe(0);
+    await uploadOk(owner, "still works", "after.txt");
+  });
+
+  test("the inactivity watchdog fails a stalled upload and closes its staging file", async () => {
+    const owner = await createUser("Stalled upload owner");
+    const baseline = stagedCount();
+    setUploadIdleTimeoutForTests(300);
+    const controllers: AbortController[] = [];
+    try {
+      const started = Date.now();
+      const responses = await Promise.all([1, 2, 3].map(() => {
+        const controller = new AbortController();
+        controllers.push(controller);
+        const body = new ReadableStream<Uint8Array>({
+          start(stream) {
+            stream.enqueue(encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="stalled.bin"\r\n\r\n${"s".repeat(4096)}`));
+          },
+          pull: () => new Promise<void>(() => undefined)
+        });
+        return request("/files", { method: "POST", body, signal: controller.signal, headers: { "Content-Type": multipartType, "Content-Length": "200000" }, duplex: "half" } as RequestInit, owner);
+      }));
+      expect(Date.now() - started).toBeLessThan(5000);
+      for (const response of responses) {
+        expect(response.status).toBe(408);
+        expect(await response.json()).toEqual({ error: "The upload stalled", code: "UPLOAD_TIMEOUT" });
+      }
+      await waitFor(() => stagedCount() === baseline);
+      expect(openStagingDescriptors()).toBe(0);
+      expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?").get(owner.userId)).toEqual({ count: 0 });
+      // All three slots were released.
+      await uploadOk(owner, "after the stall", "after.txt");
+      expect((await request("/health")).status).toBe(200);
+    } finally {
+      setUploadIdleTimeoutForTests(null);
+      for (const controller of controllers) controller.abort();
+    }
   });
 });

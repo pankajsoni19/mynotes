@@ -69,7 +69,7 @@ The request body is `multipart/form-data` with **exactly one** part, named `file
 Optional headers:
 
 - `Idempotency-Key: <uuid>`: the Files UI always sends one per queued file
-- `Content-Length`: browsers send it for `FormData` and it enables the early 413
+- `Content-Length` is **required** (411 without it). Browsers send it for `FormData` and it enables the early 413
 
 | Status | When | Body |
 | --- | --- | --- |
@@ -78,6 +78,8 @@ Optional headers:
 | 400 | Not multipart, missing or extra parts, a field other than `file`, a malformed boundary, or an invalid `folderId`/`Idempotency-Key` | `{ error }` |
 | 404 | Folder not found or not owned by the caller | `{ error: "Folder not found" }` |
 | 409 | `Idempotency-Key` was already used by this user for a document that is now in the Bin. Clients treat this as final and do not retry. | `{ error, code: "IDEMPOTENCY_KEY_USED" }` |
+| 408 | No body bytes arrived for 30 seconds (the upload stalled) | `{ error, code: "UPLOAD_TIMEOUT" }` |
+| 411 | `Content-Length` is missing or not a valid integer. Browsers always send it for `FormData` and `File` bodies. | `{ error, code: "LENGTH_REQUIRED" }` |
 | 413 | `Content-Length` or streamed bytes exceed `MAX_UPLOAD_BYTES` | `{ error, code: "FILE_TOO_LARGE", limitBytes }` |
 | 415 | `Content-Type` is not `multipart/form-data` | `{ error }` |
 | 429 | The user already has 3 uploads in flight | `{ error, code: "TOO_MANY_UPLOADS" }` |

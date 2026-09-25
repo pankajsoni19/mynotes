@@ -17,9 +17,16 @@ import { documentPatchSchema, parseJson, sanitizeDisplayName, sharingSchema, uui
 
 const MAX_CONCURRENT_UPLOADS = 3;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
+const DEFAULT_UPLOAD_IDLE_TIMEOUT_MS = 30_000;
+let uploadIdleTimeoutMs = DEFAULT_UPLOAD_IDLE_TIMEOUT_MS;
+
+/** Test hook: shortens the upload inactivity watchdog. Pass null to restore the default. */
+export function setUploadIdleTimeoutForTests(ms: number | null) {
+  uploadIdleTimeoutMs = ms ?? DEFAULT_UPLOAD_IDLE_TIMEOUT_MS;
+}
 
 class UploadError extends Error {
-  constructor(readonly status: 400 | 404 | 413 | 507, readonly body: Record<string, unknown>) {
+  constructor(readonly status: 400 | 404 | 408 | 411 | 413 | 507, readonly body: Record<string, unknown>) {
     super(String(body.error));
   }
 }
@@ -122,10 +129,24 @@ function receiveSingleFile(request: Request, id: string): Promise<ReceivedFile> 
     let settled = false;
     let fileStream: Readable | null = null;
     let filePromise: Promise<ReceivedFile> | null = null;
+    let sourceEnded = false;
+    // Watchdog: fail when no body bytes arrive for the idle timeout. Besides stalled clients this
+    // covers a body Bun stops delivering without ending or erroring the stream. The pending timer
+    // also keeps the pipeline reachable, so the staging FileHandle is closed here, never by GC.
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const armWatchdog = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => fail(new UploadError(408, { error: "The upload stalled", code: "UPLOAD_TIMEOUT" })), uploadIdleTimeoutMs);
+    };
+    const disarmWatchdog = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = null;
+    };
 
     const fail = (error: unknown) => {
       if (settled) return;
       settled = true;
+      disarmWatchdog();
       const failure = error instanceof UploadError ? error : badPart("The upload was interrupted or malformed");
       // Tear down after the current busboy callback returns: busboy keeps using its part
       // state after emitting events such as "limit", so destroying it synchronously throws.
@@ -177,11 +198,17 @@ function receiveSingleFile(request: Request, id: string): Promise<ReceivedFile> 
       filePromise.then((received) => {
         if (settled) return;
         settled = true;
+        disarmWatchdog();
         resolve(received);
       }, fail);
     });
+    source.on("data", armWatchdog);
+    source.on("end", () => { sourceEnded = true; });
+    // A body stream that closes without ending was cut off; busboy would never see its end.
+    source.on("close", () => { if (!sourceEnded) fail(badPart("The upload was interrupted")); });
     source.on("error", fail);
     request.signal.addEventListener("abort", () => fail(badPart("The upload was interrupted")), { once: true });
+    armWatchdog();
     source.pipe(parser);
   });
 }
@@ -205,10 +232,14 @@ async function handleUpload(c: Context<AppEnv>) {
     if (replay) return uploadResponse(c, replay.document, true);
   }
 
-  const lengthHeader = c.req.header("Content-Length");
-  const declaredLength = lengthHeader === undefined ? null : Number(lengthHeader);
-  if (declaredLength !== null && (!Number.isSafeInteger(declaredLength) || declaredLength < 0)) return c.json({ error: "Invalid Content-Length" }, 400);
-  if (declaredLength !== null && declaredLength > config.maxUploadBytes + MULTIPART_OVERHEAD_BYTES) {
+  // A declared length is required: it bounds the body Bun delivers, and without it an
+  // oversized chunked body can hit Bun's own cap and never reach an end the parser sees.
+  const lengthHeader = c.req.header("Content-Length")?.trim();
+  const declaredLength = lengthHeader !== undefined && /^\d{1,16}$/.test(lengthHeader) ? Number(lengthHeader) : null;
+  if (declaredLength === null || !Number.isSafeInteger(declaredLength)) {
+    return c.json({ error: "Content-Length is required for uploads", code: "LENGTH_REQUIRED" }, 411);
+  }
+  if (declaredLength > config.maxUploadBytes + MULTIPART_OVERHEAD_BYTES) {
     return c.json(fileTooLarge().body, 413);
   }
 
@@ -217,7 +248,7 @@ async function handleUpload(c: Context<AppEnv>) {
   const id = crypto.randomUUID();
   let committed = false;
   try {
-    const expectedBytes = Math.min(declaredLength ?? config.maxUploadBytes, config.maxUploadBytes);
+    const expectedBytes = Math.min(declaredLength, config.maxUploadBytes);
     const quota = config.userStorageQuotaBytes;
     if (quota > 0 && storedBytes(userId) + slot.otherReservations() + expectedBytes > quota) {
       return c.json({ error: "Storage quota exceeded", code: "QUOTA_EXCEEDED" }, 507);
