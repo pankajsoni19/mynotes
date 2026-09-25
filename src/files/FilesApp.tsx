@@ -26,6 +26,8 @@ import {
   isOsFileDrag,
   movedMessage,
   readDocumentDragPayload,
+  rollbackRename,
+  upsertListedDocument,
   ROW_ITEM_ATTRIBUTE,
   shortcutDocumentId,
   readFileSort,
@@ -69,10 +71,6 @@ function orderFolders(folders: Folder[]) {
 
 function mergeDocument(documents: DocumentSummary[], document: DocumentSummary) {
   return [document, ...documents.filter((item) => item.id !== document.id)].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
-}
-
-function replaceDocument(documents: DocumentSummary[], document: DocumentSummary) {
-  return documents.map((item) => item.id === document.id ? document : item);
 }
 
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -256,7 +254,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const setDocuments = (change: (documents: DocumentSummary[]) => DocumentSummary[]) =>
     setData((current) => current ? { ...current, documents: change(current.documents) } : current);
   const storeDocument = (document: DocumentSummary) => {
-    setDocuments((items) => items.some((item) => item.id === document.id) ? replaceDocument(items, document) : mergeDocument(items, document));
+    const unlistedId = extraDocument?.id ?? null;
+    setDocuments((items) => upsertListedDocument(items, document, unlistedId));
     setExtraDocument((current) => current?.id === document.id ? document : current);
   };
 
@@ -324,8 +323,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       storeDocument(saved);
       notify(`Renamed to “${saved.name}”`);
     }).catch((reason) => {
-      setDocuments((items) => items.map((item) => item.id === document.id && item.name === name ? { ...item, name: previous } : item));
-      setExtraDocument((current) => current?.id === document.id && current.name === name ? { ...current, name: previous } : current);
+      setDocuments((items) => rollbackRename(items, document.id, name, previous));
+      setExtraDocument((current) => current ? rollbackRename([current], document.id, name, previous)[0] : current);
       notify(errorMessage(reason, "Could not rename the file"));
     });
   }
@@ -382,7 +381,12 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     toastDispatch({ type: "clear" });
     try {
       const result = await restoreBinItem({ type: "document", id });
-      await refreshDocument(id).catch(() => undefined);
+      try {
+        await refreshDocument(id);
+      } catch {
+        notify(`${restoredMessage(result.folderName ?? "Default", result.visibility)}, but the list could not be refreshed. Reload to see the file.`);
+        return;
+      }
       notify(result.alreadyRestored ? `Already restored to ${result.folderName ?? "Default"}` : restoredMessage(result.folderName ?? "Default", result.visibility));
       focusRow(id);
     } catch (reason) {

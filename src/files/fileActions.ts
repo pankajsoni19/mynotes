@@ -239,3 +239,18 @@ export function shortcutDocumentId(target: ClosestCapable | null, selectedId: st
   const item = target && typeof target.closest === "function" ? target.closest(`[${ROW_ITEM_ATTRIBUTE}]`) : null;
   return item?.getAttribute(ROW_ITEM_ATTRIBUTE) || selectedId;
 }
+
+/**
+ * Puts a saved document into the list: replaces it in place when listed, adds it otherwise, and leaves
+ * the list alone for a document that is only shown because the URL named it (beyond the list limit).
+ */
+export function upsertListedDocument(documents: DocumentSummary[], document: DocumentSummary, unlistedId: string | null) {
+  if (documents.some((item) => item.id === document.id)) return documents.map((item) => item.id === document.id ? document : item);
+  if (unlistedId === document.id) return documents;
+  return [document, ...documents].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+}
+
+/** Undoes an optimistic rename after the server refused it, unless something renamed the file since. */
+export function rollbackRename<T extends Pick<DocumentSummary, "id" | "name">>(documents: T[], id: string, attempted: string, previous: string): T[] {
+  return documents.map((item) => item.id === id && item.name === attempted ? { ...item, name: previous } : item);
+}

@@ -132,7 +132,8 @@
   .file-header-row { margin-bottom: 4px; }
   .files-upload-button { min-height: 44px; padding: 0 18px; }
   .file-row { min-height: 64px; }
-  .upload-queue-toggle, .upload-item-row .icon-button { min-height: 44px; }
+  .upload-queue-toggle, .upload-item-row .icon-button, .upload-queue-header .text-action { min-height: 44px; }
+  .upload-queue-header .text-action { min-width: 44px; padding: 0 12px; }
   .upload-item-row { grid-template-columns: minmax(0, 1fr) auto 44px; }
   .upload-item-row .icon-button { width: 44px; height: 44px; }
   .files-workspace .mobile-editor-nav .icon-button, .files-workspace .mobile-header .icon-button { width: 44px; height: 44px; }

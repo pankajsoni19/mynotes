@@ -7,6 +7,8 @@ import {
   isDocumentDrag,
   isOsFileDrag,
   readDocumentDragPayload,
+  rollbackRename,
+  upsertListedDocument,
   ROW_ITEM_ATTRIBUTE,
   shortcutDocumentId,
   uploadDropMessage,
@@ -197,4 +199,21 @@ test("list shortcuts act on the item holding focus, including its ⋯ button", (
   expect(shortcutDocumentId(moreButton, "doc-a")).toBe("doc-b");
   expect(shortcutDocumentId({ closest: () => null }, "doc-a")).toBe("doc-a");
   expect(shortcutDocumentId(null, null)).toBeNull();
+});
+
+test("a saved document replaces its row, is added when new, and never pulls an unlisted one into the list", () => {
+  const saved = { ...docs[1], name: "renamed.txt" };
+  expect(names(upsertListedDocument(docs, saved, null))).toEqual(["file10.txt", "renamed.txt", "alpha.pdf", "Zeta notes.md"]);
+  const outside = doc("d9", "beyond-limit.txt", "2026-09-05T00:00:00.000Z", 1);
+  expect(upsertListedDocument(docs, outside, "d9")).toBe(docs);
+  expect(names(upsertListedDocument(docs, outside, null))[0]).toBe("beyond-limit.txt");
+});
+
+test("a refused rename rolls back only if the optimistic name is still shown", () => {
+  const optimistic = docs.map((item) => item.id === "d2" ? { ...item, name: "new.txt" } : item);
+  expect(rollbackRename(optimistic, "d2", "new.txt", "File2.txt").find((item) => item.id === "d2")?.name).toBe("File2.txt");
+  // A later rename won; the rollback leaves it alone.
+  const later = optimistic.map((item) => item.id === "d2" ? { ...item, name: "newer.txt" } : item);
+  expect(rollbackRename(later, "d2", "new.txt", "File2.txt").find((item) => item.id === "d2")?.name).toBe("newer.txt");
+  expect(rollbackRename(optimistic, "d1", "new.txt", "x").find((item) => item.id === "d1")?.name).toBe("file10.txt");
 });
