@@ -11,6 +11,7 @@ import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
+import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -650,9 +651,15 @@ app.put("/api/notes/:id/draft", async (c) => {
     const nextRevision = (note.draft_revision ?? 0) + 1;
     const derivedTitle = deriveNoteTitle(body.markdown);
     await storage.writeDraft(id, body.markdown);
-    const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
-      .run(derivedTitle, nextRevision, checksum(body.markdown), now(), id, userId, note.draft_revision);
-    if (result.changes !== 1) return c.json({ error: "Draft changed in another session" }, 409);
+    const draftChecksum = checksum(body.markdown);
+    const saved = db.transaction(() => {
+      const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
+        .run(derivedTitle, nextRevision, draftChecksum, now(), id, userId, note.draft_revision);
+      if (result.changes !== 1) return false;
+      indexNote(id, "draft", derivedTitle, body.markdown, draftChecksum);
+      return true;
+    })();
+    if (!saved) return c.json({ error: "Draft changed in another session" }, 409);
     return c.json({
       revision: nextRevision,
       title: derivedTitle,
@@ -675,8 +682,11 @@ app.delete("/api/notes/:id/draft", async (c) => {
       return c.json({ ...moveNoteToBin(note, userId), binned: true });
     }
     const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
-    db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
-      .run(versionTitle?.title ?? note.title, now(), id, userId);
+    db.transaction(() => {
+      db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
+        .run(versionTitle?.title ?? note.title, now(), id, userId);
+      unindexNote(id, "draft");
+    })();
     await storage.discardDraft(id).catch((error) => console.error(`Could not remove discarded draft for note ${id}`, errorClass(error)));
     audit(userId, id, "draft.discard");
     return c.json({ ok: true });
@@ -705,6 +715,8 @@ app.post("/api/notes/:id/publish", async (c) => {
       const updated = db.query("UPDATE notes SET current_version = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND current_version = ? AND draft_revision = ?")
         .run(nextVersion, timestamp, id, userId, note.current_version, note.draft_revision);
       if (updated.changes !== 1) throw new Error("Concurrent note update detected");
+      indexNote(id, "published", note.title, markdown, note.draft_checksum!);
+      unindexNote(id, "draft");
     })();
     await storage.finalizePublished(id, markdown).catch((error) => console.error(`Could not refresh current Markdown mirror for note ${id}`, errorClass(error)));
     audit(userId, id, "note.publish", { version: nextVersion });
@@ -751,8 +763,11 @@ app.post("/api/notes/:id/versions/:version/restore", async (c) => {
     if (checksum(markdown) !== metadata.checksum) throw new Error("Version content failed integrity verification");
     await storage.writeDraft(id, markdown);
     const revision = (note.draft_revision ?? 0) + 1;
-    db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
-      .run(metadata.title, revision, checksum(markdown), now(), id, userId, note.draft_revision);
+    db.transaction(() => {
+      const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
+        .run(metadata.title, revision, metadata.checksum, now(), id, userId, note.draft_revision);
+      if (result.changes === 1) indexNote(id, "draft", metadata.title, markdown, metadata.checksum);
+    })();
     audit(userId, id, "version.restore_to_draft", { version });
     return c.json({ revision });
   });
@@ -846,6 +861,11 @@ async function reconcilePublishedMirrors() {
 }
 
 await reconcilePublishedMirrors();
+try {
+  await reconcileSearchIndex();
+} catch (error) {
+  console.error("Search index reconcile failed", errorClass(error));
+}
 startSweeper();
 
 export default {
