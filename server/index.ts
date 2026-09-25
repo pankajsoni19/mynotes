@@ -318,7 +318,7 @@ app.post("/api/mcp/keys", async (c) => {
   }
   const activeCount = (db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(userId) as { count: number }).count;
   if (activeCount >= 10) return c.json({ error: "Revoke an existing API key before creating another" }, 409);
-  return c.json({ key: createMcpApiKey(userId, body.name) }, 201);
+  return c.json({ key: createMcpApiKey(userId, body.name, body.scopes) }, 201);
 });
 
 app.delete("/api/mcp/keys/:id", (c) => {

@@ -3,7 +3,7 @@ import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotoco
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, now } from "./db";
 import { registerMcpTools, type McpKeyContext } from "./mcpTools";
-import { parseStoredScopes } from "./mcpScopes";
+import { DEFAULT_MCP_SCOPES, normalizeScopes, parseStoredScopes, type McpScope } from "./mcpScopes";
 import { HTTPException } from "hono/http-exception";
 import { boundedRequest } from "./validation";
 
@@ -20,27 +20,34 @@ type McpKeyRow = {
 
 export const hashMcpToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
-export function createMcpApiKey(userId: string, name: string) {
+/** Creates a key with fixed scopes (write scopes add their read scope). The token is returned once and stored only as a hash. */
+export function createMcpApiKey(userId: string, name: string, requestedScopes: readonly McpScope[] = DEFAULT_MCP_SCOPES) {
   const token = `mynotes_${randomBytes(32).toString("base64url")}`;
+  const scopes = normalizeScopes(requestedScopes);
+  if (scopes.length === 0) throw new Error("An MCP key needs at least one scope");
   const row = {
     id: crypto.randomUUID(),
     userId,
     name,
     prefix: token.slice(0, 16),
+    scopes,
     createdAt: now()
   };
-  db.query("INSERT INTO mcp_api_keys (id, user_id, name, key_prefix, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(row.id, row.userId, row.name, row.prefix, hashMcpToken(token), row.createdAt);
-  audit(userId, null, "mcp.key_created", { keyId: row.id, name });
+  db.transaction(() => {
+    db.query("INSERT INTO mcp_api_keys (id, user_id, name, key_prefix, token_hash, scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(row.id, row.userId, row.name, row.prefix, hashMcpToken(token), JSON.stringify(scopes), row.createdAt);
+    audit(userId, null, "mcp.key_created", { keyId: row.id, name, scopes });
+  })();
   return { ...row, token };
 }
 
 export function listMcpApiKeys(userId: string) {
-  return db.query(`
-    SELECT id, name, key_prefix, created_at, last_used_at
+  const rows = db.query(`
+    SELECT id, name, key_prefix, scopes, created_at, last_used_at
     FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL
     ORDER BY created_at DESC
-  `).all(userId);
+  `).all(userId) as Array<{ id: string; name: string; key_prefix: string; scopes: string; created_at: string; last_used_at: string | null }>;
+  return rows.map((row) => ({ ...row, scopes: parseStoredScopes(row.scopes) }));
 }
 
 export function revokeMcpApiKey(userId: string, keyId: string) {

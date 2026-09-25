@@ -46,6 +46,7 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
+import { DEFAULT_KEY_SCOPES, lockedScopes, OFFERED_MCP_PERMISSIONS, scopeLabel, toggleScope, type McpScope } from "./mcpPermissions";
 import { canPublish, finalizeOpenNote, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -58,7 +59,7 @@ import { useNoteSearch } from "./search/useNoteSearch";
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
-type McpApiKey = { id: string; name: string; key_prefix: string; created_at: string; last_used_at: string | null };
+type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 
 const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "updated-desc", label: "Recently edited" },
@@ -166,6 +167,8 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [scopes, setScopes] = useState<McpScope[]>([...DEFAULT_KEY_SCOPES]);
+  const locked = lockedScopes(scopes);
   const endpoint = `${window.location.origin}/mcp`;
   const displayToken = newToken || "<YOUR_API_KEY>";
   const configText = JSON.stringify({
@@ -194,9 +197,10 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const result = await api<{ key: McpApiKey & { token: string } }>("/mcp/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), password: form.get("password"), ...(totpEnabled ? { totpCode: form.get("totpCode") } : {}) }) });
+      const result = await api<{ key: McpApiKey & { token: string } }>("/mcp/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), password: form.get("password"), scopes, ...(totpEnabled ? { totpCode: form.get("totpCode") } : {}) }) });
       setNewToken(result.key.token);
       event.currentTarget.reset();
+      setScopes([...DEFAULT_KEY_SCOPES]);
       loadKeys();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create API key");
@@ -230,14 +234,17 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   }
 
   return <section className="settings-content mcp-settings" aria-labelledby="mcp-heading">
-    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. Nook exposes only published notes you can already read; drafts and write operations are not available.</p></div></div>
+    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. Each key can do only what you allow below, and only with notes and files you can already open. A key can at most write drafts: publishing always stays with you.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
     <div className="mcp-card">
       <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
-      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create API key"}</button></form>}
+      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{OFFERED_MCP_PERMISSIONS.map((permission) => {
+        const isLocked = locked.includes(permission.scope);
+        return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
+      })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
       {newToken && <div className="new-api-key" role="status"><strong>Copy this key now</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken} aria-label="New MCP API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken("")}>I saved this key</button></div></div>}
-      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small></div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
+      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><ul className="scope-chips" aria-label={`Permissions for ${key.name}`}>{(key.scopes ?? []).map((scope) => <li key={scope}>{scopeLabel(scope)}</li>)}</ul></div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
     </div>
     <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
   </section>;

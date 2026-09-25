@@ -79,6 +79,27 @@ describe("MCP scopes", () => {
     expect(await toolNames(key)).toEqual(NOTES_READ_TOOLS);
   });
 
+  test("the keys API stores chosen scopes with implied reads, lists them, and audits them", async () => {
+    const owner = await createUser("Scope chooser");
+    const create = (body: Record<string, unknown>) => request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "Chosen", password: owner.password, ...body }) }, owner);
+    const created = await create({ scopes: ["files:read", "notes:write-draft"] });
+    expect(created.status).toBe(201);
+    const { key } = await json<{ key: Key & { scopes: string[] } }>(created);
+    expect(key.scopes).toEqual(["notes:read", "notes:write-draft", "files:read"]);
+    const listed = await json<{ keys: Array<{ id: string; scopes: string[] }> }>(await request("/mcp/keys", {}, owner));
+    expect(listed.keys.find((item) => item.id === key.id)?.scopes).toEqual(["notes:read", "notes:write-draft", "files:read"]);
+    const auditRow = db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'mcp.key_created'").get(owner.userId) as { metadata_json: string };
+    expect(JSON.parse(auditRow.metadata_json)).toEqual({ keyId: key.id, name: "Chosen", scopes: ["notes:read", "notes:write-draft", "files:read"] });
+    expect(await toolNames(key)).toContain("read_document_text");
+    expect(await toolNames(key)).toContain("update_note_draft");
+
+    const tasks = await json<{ key: { scopes: string[] } }>(await create({ scopes: ["tasks:write"] }));
+    expect(tasks.key.scopes).toEqual(["tasks:read", "tasks:write"]);
+    for (const scopes of [[], ["notes:read", "notes:read"], ["admin"], ["notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "notes:read"], "notes:read"]) {
+      expect((await create({ scopes })).status).toBe(400);
+    }
+  });
+
   test("tools are registered only for the key's scopes, and handlers re-check the scope", async () => {
     const owner = await createUser("Scope matrix");
     const filesOnly = makeKey(owner, ["files:read"]);

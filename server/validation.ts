@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
+import { MCP_SCOPES } from "./mcpScopes";
 
 export const uuid = z.string().uuid();
 export const email = z.string().trim().email().max(254).transform((value) => value.toLowerCase());
@@ -44,6 +45,10 @@ export const folderSharingSchema = z.object({
 }).strict();
 export const mcpApiKeySchema = z.object({
   name: z.string().trim().min(1).max(80),
+  /** 1 to one-per-defined-scope unique values (five today); defaults to notes:read. A write scope adds its read scope. */
+  scopes: z.array(z.enum(MCP_SCOPES)).min(1).max(MCP_SCOPES.length)
+    .refine((values) => new Set(values).size === values.length, "Scopes must be unique")
+    .optional(),
   password: z.string().min(1).max(256),
   totpCode: totpCode.optional(),
   recoveryCode: recoveryCode.optional()
