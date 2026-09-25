@@ -217,6 +217,11 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] Note links: only readable notes can be linked; a note binned later reads as `{ id, restricted: true }`.
 - [x] Caps: 100 collections, 10,000 live rows (`LIMIT_REACHED`); CSRF, Origin, and JSON rules.
 
+`tests/collectionsSharing.test.ts`:
+
+- [x] Role matrix: viewers read and query; every row write is 403 `READ_ONLY` for a viewer-role audience; with the editor role, members create, edit, and undo rows; every owner-only route (rename, delete, schema, sharing) is 403 `OWNER_ONLY` to members and 404 to strangers; the list shows each member's role; audit records visibility, role, and a recipient count.
+- [x] Sharing rules (owner not a recipient, `selected` needs users, unknown users, ≤ 100, bad visibility or role); `all_users` gives everyone the viewer role; switching to private revokes at once.
+
 `tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
 
 - [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.

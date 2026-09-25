@@ -423,6 +423,15 @@ type RowSummary = {
 | `POST /rows/:r/undo { revision }` | editor | 200 `{ row }`: the previous values, projected onto the current schema; undo is one step | 403, 404, 409 `ROW_CHANGED` or `NOTHING_TO_UNDO` |
 | `DELETE /rows/:r` | editor | 200 `{ ok: true, purgeAfter }`: to the Bin | 403, 404 |
 
+### Collection sharing
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /:c/sharing` | owner | 200 `{ visibility, role: "viewer" \| "editor", users: [{ id, display_name }] }` | 403 `OWNER_ONLY`, 404 |
+| `PUT /:c/sharing { visibility: "private" \| "selected" \| "all_users", userIds ≤ 100, role? = "viewer" }` | owner | 200 `{ ok: true }` | 400, 403, 404 |
+
+Same rules as board sharing: the owner cannot be a recipient (400), `selected` needs at least one user (400), every user must exist and be enabled (400), and member rows are kept only for `selected`. `role` applies to the whole audience (D54). Removing someone revokes access to the collection, its rows, its search hits, and its row attachments at once. Audit: `collection.sharing_changed { collectionId, visibility, role, recipientCount }`.
+
 **Query** (D56, T54). `sort` ≤ 3 `{ fieldId, direction: "asc" | "desc" }` (text, url, number, date, checkbox, and select fields; select sorts by option order; empty values last); `filters` ≤ 10 `{ fieldId, op, value? }`, AND-ed; `q` ≤ 200 characters matches any text or url field (case-insensitive substring); `limit` 1–100 (default 50). Field ids are checked against the schema, operators are enumerated, and JSON paths are bound as parameters. With `viewId`, the view's sort and filters apply unless the request gives its own; view clauses that name removed fields are dropped.
 
 | Types | Operators and `value` |

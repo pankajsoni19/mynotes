@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Columns3, Eye, Pencil, RotateCcw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, Columns3, Eye, Pencil, RotateCcw, Share2, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { NameDialog } from "../files/RenameDialog";
 import { formatRoute } from "../router";
@@ -20,6 +20,7 @@ import {
   type FieldValue
 } from "./collectionsApi";
 import { CollectionCards, useIsPhone } from "./CollectionCards";
+import { CollectionSharePanel } from "./CollectionSharePanel";
 import { CollectionTable } from "./CollectionTable";
 import { useDialogLayer } from "./dialogLayers";
 import { FieldEditor } from "./FieldEditor";
@@ -47,6 +48,7 @@ type Dialog =
   | { kind: "fields" }
   | { kind: "rename" }
   | { kind: "sortFilter" }
+  | { kind: "share" }
   | { kind: "picker"; rowId: string; fieldId: string }
   | { kind: "actions"; rowId: string };
 
@@ -192,7 +194,8 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       {role === "editor" && <span className="collection-role role-editor">{roleLabel(role)}</span>}
       {isOwner && <span className="collection-header-actions">
         <button className="icon-button" onClick={() => setDialog({ kind: "rename" })} aria-haspopup="dialog" aria-label="Rename collection" title="Rename"><Pencil /></button>
-        <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "fields" })} aria-haspopup="dialog"><Columns3 />Fields</button>
+        <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "fields" })} aria-haspopup="dialog"><Columns3 /><span>Fields</span></button>
+        <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "share" })} aria-haspopup="dialog" aria-label="Share collection"><Share2 /><span>Share</span></button>
       </span>}
     </header>
 
@@ -259,7 +262,12 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         setCollection(saved);
         setDialog(null);
       }} />}
-    {dialog?.kind === "sortFilter" && <SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {
+    {dialog?.kind === "share" && <CollectionSharePanel collection={collection} onClose={closeDialog} onChanged={() => {
+      setDialog(null);
+      notify("Sharing updated");
+      void loadCollection();
+    }} />}
+    {dialog?.kind === "sortFilter" &&<SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {
       setDialog(null);
       setLocal(next);
     }} />}

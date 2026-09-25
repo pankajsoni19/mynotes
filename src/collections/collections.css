@@ -28,6 +28,10 @@
 .collection-role.role-viewer { background: #1e2230; color: #a9c1f5; }
 .collection-role.role-editor { background: #1c261e; color: #a7e3b2; }
 
+.collection-share-copy { margin: 4px 14px 12px; color: #8d8d94; font-size: .8rem; line-height: 1.5; }
+.collection-share-role { margin-top: 10px; }
+.collection-share-role input:disabled + span { opacity: .45; }
+
 /* New collection */
 .collection-new { display: flex; min-height: 0; flex-direction: column; }
 .collection-new-label { margin: 14px 20px 4px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

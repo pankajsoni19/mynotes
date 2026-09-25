@@ -84,6 +84,12 @@ export const patchRow = (rowId: string, values: Record<string, unknown>, revisio
 export const undoRow = (rowId: string, revision: number) => api<{ row: CollectionRow }>(`/collections/rows/${rowId}/undo`, json("POST", { revision }));
 export const deleteRow = (rowId: string) => api<{ ok: true; purgeAfter: string }>(`/collections/rows/${rowId}`, json("DELETE", {}));
 
+export type ShareRole = "viewer" | "editor";
+export type CollectionSharing = { visibility: Visibility; role: ShareRole; users: Array<{ id: string; display_name: string }> };
+export const getSharing = (collectionId: string) => api<CollectionSharing>(`/collections/${collectionId}/sharing`);
+export const saveSharing = (collectionId: string, visibility: Visibility, userIds: string[], role: ShareRole) =>
+  api<{ ok: true }>(`/collections/${collectionId}/sharing`, json("PUT", { visibility, userIds: visibility === "selected" ? userIds : [], role }));
+
 export const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
   ? (reason.payload as { code?: unknown }).code
   : undefined;

@@ -215,6 +215,48 @@ export function deleteCollection(userId: string, collectionId: string) {
   });
 }
 
+export function getSharing(userId: string, collectionId: string) {
+  const collection = requireOwnedCollection(collectionId, userId);
+  const users = db.query("SELECT u.id, u.display_name FROM collection_members m JOIN users u ON u.id = m.user_id WHERE m.collection_id = ? ORDER BY u.display_name")
+    .all(collectionId) as Array<{ id: string; display_name: string }>;
+  return { visibility: collection.visibility, role: collection.share_role, users };
+}
+
+/**
+ * Replaces the audience and its role (D54), like board sharing: members are
+ * kept only for `selected`, the owner is never a recipient, and removing
+ * someone revokes access (and attachment access) at once.
+ */
+export async function putSharing(userId: string, collectionId: string, input: { visibility: CollectionVisibility; userIds: string[]; role: ShareRole }) {
+  requireOwnedCollection(collectionId, userId);
+  if (input.userIds.includes(userId)) throw new CollectionError(400, "The owner cannot be added as a recipient");
+  const uniqueIds = [...new Set(input.userIds)];
+  if (input.visibility === "selected" && uniqueIds.length === 0) throw new CollectionError(400, "Select at least one user");
+  if (uniqueIds.length) {
+    const placeholders = uniqueIds.map(() => "?").join(",");
+    const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
+    if (validUsers.length !== uniqueIds.length) throw new CollectionError(400, "One or more users were not found");
+  }
+  return withCollectionLock(collectionId, () => {
+    requireOwnedCollection(collectionId, userId);
+    db.transaction(() => {
+      db.query("DELETE FROM collection_members WHERE collection_id = ?").run(collectionId);
+      if (input.visibility === "selected") {
+        const statement = db.query("INSERT INTO collection_members (collection_id, user_id, created_at) VALUES (?, ?, ?)");
+        for (const recipientId of uniqueIds) statement.run(collectionId, recipientId, now());
+      }
+      db.query("UPDATE collections SET visibility = ?, share_role = ?, updated_at = ? WHERE id = ?").run(input.visibility, input.role, now(), collectionId);
+      audit(userId, null, "collection.sharing_changed", {
+        collectionId,
+        visibility: input.visibility,
+        role: input.role,
+        recipientCount: input.visibility === "selected" ? uniqueIds.length : 0
+      });
+    })();
+    return { ok: true as const };
+  });
+}
+
 /**
  * Replaces the schema with a compare-and-swap on schema_version (409
  * SCHEMA_CHANGED carries the current collection). Rows are not rewritten:

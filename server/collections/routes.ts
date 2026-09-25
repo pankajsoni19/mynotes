@@ -12,11 +12,13 @@ import {
   deleteRow,
   getCollection,
   getRow,
+  getSharing,
   listCollections,
   listTemplates,
   patchCollection,
   patchRow,
   putSchema,
+  putSharing,
   queryRows,
   undoRow
 } from "./service";
@@ -41,7 +43,12 @@ export const querySchema = safeJson(z.object({
   cursor: z.string().max(256).optional(),
   limit: z.number().int().min(1).max(QUERY_LIMITS.pageSize).optional()
 }).strict());
-export const rowCreateSchema = safeJson(z.object({ values: valuesObject, afterRowId: uuid.nullable().optional() }).strict());
+export const sharingSchema = safeJson(z.object({
+  visibility: z.enum(["private", "selected", "all_users"]),
+  userIds: z.array(uuid).max(100).default([]),
+  role: z.enum(["viewer", "editor"]).default("viewer")
+}).strict());
+export const rowCreateSchema =safeJson(z.object({ values: valuesObject, afterRowId: uuid.nullable().optional() }).strict());
 export const rowPatchSchema = safeJson(z.object({ values: valuesObject, revision }).strict());
 export const rowUndoSchema = safeJson(z.object({ revision }).strict());
 
@@ -97,6 +104,17 @@ export function registerCollectionRoutes(app: Hono<AppEnv>) {
     const collectionId = pathId(c, "collectionId");
     const body = await parseJson(c.req.raw, schemaPutSchema);
     return respond(c, () => putSchema(user(c), collectionId, { fields: body.fields as FieldInput[], schemaVersion: body.schemaVersion }));
+  });
+
+  app.get("/api/collections/:collectionId/sharing", (c) => {
+    const collectionId = pathId(c, "collectionId");
+    return respond(c, () => getSharing(user(c), collectionId));
+  });
+
+  app.put("/api/collections/:collectionId/sharing", async (c) => {
+    const collectionId = pathId(c, "collectionId");
+    const body = await parseJson(c.req.raw, sharingSchema);
+    return respond(c, () => putSharing(user(c), collectionId, body));
   });
 
   app.post("/api/collections/:collectionId/query", async (c) => {
