@@ -95,7 +95,8 @@ if [[ -n "${container_id}" && "$(docker inspect -f '{{.State.Running}}' "${conta
 fi
 
 # The backup directory is excluded to prevent archives recursively containing older archives.
-tar --exclude='./backup' -C "${DATA_DIR}" -czf "${temporary}" .
+# In-flight upload staging files are never needed for a restore.
+tar --exclude='./backup' --exclude='./documents/.staging' -C "${DATA_DIR}" -czf "${temporary}" .
 gzip -t -- "${temporary}"
 mv -- "${temporary}" "${archive}"
 chmod 600 -- "${archive}"

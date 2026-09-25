@@ -86,6 +86,26 @@ The container reads and writes `/data`, mapped by Compose to:
 
 Markdown files are never exposed as static files; authenticated API handlers enforce note access before reading them.
 
+### Documents and upload limits
+
+Uploaded documents are stored only under server-generated ids, next to the notes:
+
+```text
+/srv/mynotes/documents/
+├── objects/<document-id>          file bytes, no extension
+└── .staging/<document-id>.part    uploads in progress
+```
+
+File names live only in SQLite and are never used as paths. Uploads are streamed to `.staging` on the data volume (never to the container's small `/tmp`), and a sweeper removes abandoned staging files and orphaned objects at boot and hourly.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MAX_UPLOAD_BYTES` | `104857600` (100 MiB) | Largest single file, from 1 MiB to 2 GiB. Bun's request body cap is this (or 2.1 MB, whichever is larger) plus 1 MiB; JSON bodies stay limited to 2.1 MB. |
+| `USER_STORAGE_QUOTA_BYTES` | `10737418240` (10 GiB) | Document bytes per user, including documents in the Bin. `0` means unlimited. |
+| `MIN_FREE_DISK_BYTES` | `1073741824` (1 GiB) | Uploads are refused when they would leave less free space than this on the data volume. |
+
+Only one MyNotes instance may use a data directory at a time: upload slots, per-document locks, and the sweeper live in the process.
+
 ## Database migrations
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. Existing databases are upgraded automatically on container boot; new schema changes must be added as a new migration rather than editing an already released migration.
@@ -118,5 +138,7 @@ MYNOTES_DATA_DIR=/srv/mynotes-restored docker compose up -d --build
 ```
 
 The archive contains the data directory contents at its root, so no path rearrangement is required.
+
+Archives include `documents/objects` but not `documents/.staging`. With documents stored, archive size and the time the app is stopped grow with the stored files (gzip gains little on already-compressed media), five archives multiply that disk use, and a purged document can survive in older archives for up to about five weeks.
 
 The backup intentionally does not include `.env`. Store `.env` securely alongside your backup process—especially `TOTP_ENCRYPTION_KEY`, which is required to use restored TOTP enrollments.
