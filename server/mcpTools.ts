@@ -96,7 +96,7 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
   const buckets: McpLimitBucket[] = ["call"];
   if (spec.write) buckets.push("write");
   if (spec.dailyBucket) buckets.push(spec.dailyBucket);
-  const retryAfter = consumeMcpLimits(key.keyId, buckets);
+  const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, buckets);
   if (retryAfter) return errorResult("RATE_LIMITED", "Too many requests for this API key. Try again later.", { retryAfterSeconds: retryAfter });
   try {
     const parsed = spec.inputSchema.safeParse(args ?? {});

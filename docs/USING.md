@@ -99,6 +99,6 @@ Keys created before this release keep exactly what they could do before: Read no
 
 **Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Leaving such a note never publishes it, even after you edit it; only the Publish button does. (Your own drafts are published automatically when you leave a note only if you edited them in the current session.) If the draft changed after you last saw it, Publish reloads it and asks you to review it first. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
 
-**Limits.** Each key can make 120 tool calls and 30 writes a minute and create 200 notes a day; beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
+**Limits.** Each key can make 120 tool calls and 30 writes a minute and create 200 notes a day, and all keys of one account together get 1000 calls and 60 writes a minute and 400 new notes a day; beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
 
 Treat API keys like passwords, use a separate key per client, and give each only the permissions it needs. The text of your notes and files is passed to the client as data. A client that follows instructions hidden in that text is the client's risk, which is why writing is opt-in and publishing always stays with you.

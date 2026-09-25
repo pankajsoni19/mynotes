@@ -3,7 +3,7 @@ import { createUser, db, origin, request, type Session } from "./support/harness
 
 const { createMcpApiKey } = await import("../server/mcp");
 const { invokeMcpToolForTests } = await import("../server/mcpTools");
-const { resetMcpLimits, consumeMcpLimits, MCP_LIMITS } = await import("../server/mcpRateLimit");
+const { resetMcpLimits, consumeMcpLimits, MCP_LIMITS, MCP_USER_LIMITS } = await import("../server/mcpRateLimit");
 type McpScope = import("../server/mcpScopes").McpScope;
 
 beforeEach(() => resetMcpLimits());
@@ -208,19 +208,57 @@ describe("MCP rate limits", () => {
     expect((await callTool(other, "list_folders")).isError).toBe(false);
   });
 
+  test("per-user limits span every key of the user", async () => {
+    const owner = await createUser("User limit");
+    const other = await createUser("User limit other");
+    const noteId = await publishedNote(owner, "# Shared budget");
+    const userWrites = MCP_USER_LIMITS.write!.limit;
+    // Two keys of one user share the 60-writes budget although each key allows 30.
+    const first = makeKey(owner, ["notes:write-draft"]);
+    const second = makeKey(owner, ["notes:write-draft"]);
+    for (let index = 0; index < userWrites; index += 1) {
+      const key = index < userWrites / 2 ? first : second;
+      await invokeMcpToolForTests("update_note_draft", { noteId, markdown: "x", baseRevision: 99, mode: "replace" }, key.id);
+    }
+    const third = makeKey(owner, ["notes:write-draft"]);
+    expect((await callTool(third, "update_note_draft", { noteId, markdown: "x", baseRevision: 99, mode: "replace" })).value).toMatchObject({ code: "RATE_LIMITED" });
+    // Reads are still under the per-user call limit, and other users are unaffected.
+    expect((await callTool(third, "get_note_draft", { noteId })).isError).toBe(false);
+    const otherNote = await publishedNote(other, "# Other");
+    expect((await callTool(makeKey(other, ["notes:write-draft"]), "update_note_draft", { noteId: otherNote, markdown: "y", baseRevision: null, mode: "replace" })).isError).toBe(false);
+  });
+
+  test("per-user call and create_note limits apply across keys", () => {
+    const start = 5_000_000;
+    const callLimit = MCP_USER_LIMITS.call!.limit;
+    const keys = Math.ceil(callLimit / MCP_LIMITS.call.limit);
+    let admitted = 0;
+    for (let key = 0; key <= keys; key += 1) {
+      for (let index = 0; index < MCP_LIMITS.call.limit; index += 1) if (consumeMcpLimits({ keyId: `c${key}`, userId: "u" }, ["call"], start) === 0) admitted += 1;
+    }
+    expect(admitted).toBe(callLimit);
+    let created = 0;
+    for (let key = 0; key < 3; key += 1) {
+      for (let index = 0; index < MCP_LIMITS.create_note.limit; index += 1) if (consumeMcpLimits({ keyId: `n${key}`, userId: "v" }, ["create_note"], start) === 0) created += 1;
+    }
+    expect(created).toBe(MCP_USER_LIMITS.create_note!.limit);
+    // A refused user-level charge does not use the key's own budget.
+    expect(consumeMcpLimits({ keyId: "n2" }, ["create_note"], start)).toBe(0);
+  });
+
   test("write and daily buckets are charged only when every bucket has room", () => {
     const start = 1_000_000;
-    for (let index = 0; index < MCP_LIMITS.write.limit; index += 1) expect(consumeMcpLimits("k", ["call", "write"], start)).toBe(0);
-    expect(consumeMcpLimits("k", ["call", "write"], start)).toBeGreaterThan(0);
+    for (let index = 0; index < MCP_LIMITS.write.limit; index += 1) expect(consumeMcpLimits({ keyId: "k" }, ["call", "write"], start)).toBe(0);
+    expect(consumeMcpLimits({ keyId: "k" }, ["call", "write"], start)).toBeGreaterThan(0);
     // The refused write did not use a call.
-    expect(consumeMcpLimits("k", ["call"], start)).toBe(0);
+    expect(consumeMcpLimits({ keyId: "k" }, ["call"], start)).toBe(0);
     // A minute later the write window resets; the daily bucket keeps counting.
     for (let index = 0; index < MCP_LIMITS.create_note.limit; index += 1) {
-      expect(consumeMcpLimits("d", ["create_note"], start + index)).toBe(0);
+      expect(consumeMcpLimits({ keyId: "d" }, ["create_note"], start + index)).toBe(0);
     }
-    expect(consumeMcpLimits("d", ["create_note"], start + 120_000)).toBeGreaterThan(3600);
-    expect(consumeMcpLimits("d", ["create_note"], start + 86_400_000)).toBe(0);
-    expect(consumeMcpLimits("k", ["call", "write"], start + 60_000)).toBe(0);
+    expect(consumeMcpLimits({ keyId: "d" }, ["create_note"], start + 120_000)).toBeGreaterThan(3600);
+    expect(consumeMcpLimits({ keyId: "d" }, ["create_note"], start + 86_400_000)).toBe(0);
+    expect(consumeMcpLimits({ keyId: "k" }, ["call", "write"], start + 60_000)).toBe(0);
   });
 });
 

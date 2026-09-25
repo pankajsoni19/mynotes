@@ -298,7 +298,7 @@ Errors are tool results with `isError: true` whose text is `{ error, code, ...de
 | `NOT_FOUND` | Missing, not readable, not owned (draft tools), binned, or not a Files document; all look the same |
 | `INVALID` | Arguments fail validation (the transport may also reject them before the tool runs) |
 | `SCOPE_REQUIRED` | The key lacks the tool's scope, or was revoked meanwhile |
-| `RATE_LIMITED` | Per key: 120 calls and 30 writes per minute, 200 `create_note` per day (500 task writes per day reserved). Includes `retryAfterSeconds` |
+| `RATE_LIMITED` | Per key: 120 calls and 30 writes per minute, 200 `create_note` per day (500 task writes per day reserved); per user across keys: 1000 calls and 60 writes per minute, 400 `create_note` per day. Includes `retryAfterSeconds` |
 | `DRAFT_CHANGED` | `baseRevision` is not the current draft revision. Includes `currentRevision` |
 | `NOT_TEXT` | Not a text file, or not valid UTF-8 |
 | `TOO_LARGE` | Text file over 1 MiB, or Markdown over `MAX_MARKDOWN_BYTES` |
