@@ -109,11 +109,11 @@ Rows T50, T51, and T74 of [WAVES_10-12.md](WAVES_10-12.md) §5.
 | --- | --- | --- | --- |
 | T50 | **Today leaks through a new aggregation path** | Every section is a provider that calls its module's own predicate or list function (`readableBoardPredicate`, `readableNotePredicate`, the Files list predicate, `listBin`, the quota sum). Recipients see a note only once it is published, with its published title. `tests/today.test.ts` checks every item against the owning app's list across sharing, unsharing, the Bin, member removal, and drafts | Done (Wave 10) |
 | T51 | **Today cost amplification** | Each provider fetches at most 11 rows (ten plus `more`) using the 011 indexes; titles and ids only, no bodies or counts; 30 requests a minute per user, shared by the web and `get_today`; `binSoon` queries by `purge_after` with its own limit; no caching or polling (a refetch on tab focus only after 60 s) | Done (Wave 10) |
-| T74 | **`get_today` bypasses module scopes** | `get_today` needs `today:read` and returns only sections whose module read scope the key also holds (notes, files, tasks); Bin and storage need `today:read` alone, and Bin items are filtered by type to the same module scopes (collection and calendar items never reach MCP until those scopes exist; the `upcoming` section is session-only for the same reason). Registered per scope and re-checked in the handler; `tests/mcpToday.test.ts` | Done (Wave 10) |
+| T74 | **`get_today` bypasses module scopes** | `get_today` needs `today:read` and returns only sections whose module read scope the key also holds (`mcpScope` on each provider: notes, files, tasks, `collectionsRecent` → `collections:read`, `upcoming` → `calendar:read`); Bin and storage need `today:read` alone, and Bin items are filtered by type to the same module scopes (`BIN_TYPE_MCP_SCOPE`: collections and rows need `collections:read`, calendars and events `calendar:read`). Registered per scope and re-checked in the handler; `tests/mcpToday.test.ts`, `tests/mcpCalendar.test.ts`, `tests/mcpCollections.test.ts` | Done (Waves 10–12) |
 
 ### Collections (Wave 11)
 
-Rows T52–T60 of [WAVES_10-12.md](WAVES_10-12.md) §5. The MCP rows (T72–T75) arrive with Stage E; T76 (history) is covered by the Collections route and dialog-guard tests.
+Rows T52–T60 of [WAVES_10-12.md](WAVES_10-12.md) §5. The MCP rows for Collections and Calendar (T72, T73, T75) are under [MCP for Collections and Calendar](#mcp-for-collections-and-calendar-waves-1112); T76 (history) is covered by the Collections route and dialog-guard tests.
 
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
@@ -122,26 +122,39 @@ Rows T52–T60 of [WAVES_10-12.md](WAVES_10-12.md) §5. The MCP rows (T72–T75)
 | T54 | **SQL injection through sort or filter** | Operators come from a per-type enum, field ids must exist in the schema, and values and JSON paths are bound parameters (`json_extract(r.values_json, ?)`); unit tests assert hostile input never reaches the SQL text. | Required |
 | T55 | **CSV formula injection** | Export prefixes `'` to text cells (names, text, links, option labels, note titles, file names) starting with `= + - @ \t \r`; numbers and dates are written as-is. Import strips the prefix again. | Required |
 | T56 | **Import exhaustion** | JSON-wrapped text ≤ 2 MB, header + 5000 rows, 50 columns, one transaction, all or nothing, 5 imports per minute per user, 10,000-row cap checked before writing. | Required |
-| T57 | **A viewer writes** | `requireEditable*` in the shared services refuses every row, attachment, and import write with 403 `READ_ONLY`; owner-only actions return `OWNER_ONLY`. The role matrix is tested. MCP writes will call the same services. | Required |
+| T57 | **A viewer writes** | `requireEditable*` in the shared services refuses every row, attachment, and import write with 403 `READ_ONLY`; owner-only actions return `OWNER_ONLY`. The role matrix is tested. MCP writes call the same services and return `READ_ONLY` (`tests/mcpCollections.test.ts`). | Required |
 | T58 | **An attachment stays reachable after unshare or bin** | Attachment access is a live predicate on a live row in a live, readable collection, OR-ed into `readableDocument*` only (never lists); content is `no-store`. Files routes refuse attachments, and folder or sharing access never applies to them. Tests cover unshare, row bin, collection bin, and unlink. | Required |
 | T59 | **Links disclose unreadable titles** | Note links resolve per viewer to `{ id, restricted: true }`, only readable notes can be linked, note titles are never indexed, and export writes titles only for readers who can read the note. | Required |
 | T60 | **Row search leaks** | The collection access rule is inside the search query, before `LIMIT`; binned rows and collections never match; parity and unshare tests. | Required |
 
 ### Calendar (Wave 12)
 
-Rows T61–T71 of [WAVES_10-12.md](WAVES_10-12.md) §5. Feeds (T64, T65, T70) arrive with stage D; the calendar MCP tools (T72, T73) with Stage E.
+Rows T61–T71 of [WAVES_10-12.md](WAVES_10-12.md) §5, including the iCalendar feeds (T64, T65, T70, stage D).
 
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
-| T61 | **IDOR across calendars, events, reminders, subscriptions** | Every path id is joined to its calendar and checked against the live readable or editable predicate in `server/calendar/access.ts`; reminders, notifications, and push subscriptions are scoped to their owner; strangers get 404. `tests/calendarApi.test.ts`, `tests/calendarReminders.test.ts`, `tests/push.test.ts` | Required |
+| T61 | **IDOR across calendars, events, reminders, subscriptions, feeds** | Every path id is joined to its calendar and checked against the live readable or editable predicate in `server/calendar/access.ts`; reminders, notifications, push subscriptions, and feed links are scoped to their owner (listing and revoking someone else's feed is 404); strangers get 404. `tests/calendarApi.test.ts`, `tests/calendarReminders.test.ts`, `tests/push.test.ts`, `tests/calendarFeeds.test.ts` | Required |
 | T62 | **Push endpoint SSRF or abuse** | Endpoints must be https:443 on the built-in push hosts or `PUSH_ENDPOINT_HOSTS`, resolve to public addresses after DNS, and are sent without redirects with a 5 s timeout; 10 subscriptions per user; repeated failures disable one | Required |
 | T63 | **Push services learn content** | Pushes are payload-less; the service worker fetches unread notifications with the session cookie | Accepted (documented) |
+| T64 | **Feed token leakage (shared URL, cloud providers)** | 256-bit tokens shown once and stored as SHA-256 hashes with a display prefix; one calendar per token; up to 5 per user per calendar, each revocable at once; `busy` links send only times, "Busy", and a calendar named "Busy"; every fetch re-checks that the creator is enabled, allowed, and can still read the (live) calendar; every failure is the same 404; 60 fetches per hour per token (429 with `Retry-After`); `last_used_at` shown in the dialog; the token is never logged or audited (audit rows carry `feedId` and `calendarId`), and a test captures console output and the audit log during create, fetch, and revoke. The Feed dialog warns that anyone with the link can read it and that cloud calendars fetch it from their own servers. `tests/calendarFeeds.test.ts` | Done (Wave 12) |
+| T65 | **ICS injection through CRLF** | `server/calendar/ics.ts` escapes every TEXT value (`\`, `;`, `,`), turns CR, LF, CRLF, U+2028, and U+2029 into `\n`, drops other control characters, emits `TZID` only for zone-shaped names, and folds lines at 75 octets on UTF-8 boundaries with CRLF endings; fixtures include a title containing `\r\nATTENDEE:` and an embedded `END:VEVENT`. `tests/calendarFeeds.test.ts` | Done (Wave 12) |
 | T66 | **Recurrence or reminder exhaustion** | 1000 instances per request, 100-day ranges, 20k live events per calendar, reminder caps, 200 reminders per dispatcher tick, 60 notifications per user per hour | Required |
 | T67 | **A reminder fires after access is lost** | Access is re-checked at dispatch; titles are read live; a reminder whose event is no longer readable is deleted | Required |
 | T68 | **Open redirect from a notification click** | Notification hrefs are same-origin id paths built from ids (`safeNotificationPath` in the app, the same check in `public/sw.js`) | Required |
 | T69 | **Service worker persistence or hijack** | Same-origin, served `no-cache`, no fetch handler; sign-out forgets this device's subscription | Required |
+| T70 | **Feeds bypass TOTP** | As with MCP keys: a feed token can only be created from a signed-in session that passed the TOTP gate, is read-only, covers one calendar, and is revocable. Only `GET`/`HEAD` of the exact `/api/calendars/<uuid>/feed.ics` pattern (`isFeedRequest`) skips the session and TOTP middleware; other methods and paths still need a session. A subprocess test under `TOTP_POLICY=required` shows an unenrolled user cannot create a link and an enrolled user's link works without a session. | Accepted (Wave 12) |
 | T71 | **Timezone or date abuse** | Zones from the `Intl` list (and browser aliases), real-date checks for every date and wall time | Required |
 | T59 | **Event links disclose unreadable titles** | Links resolve per viewer through each module's own check (`readableNote`, `readableCard`, `readableRow`); only readable targets can be linked; restricted links show no title | Required |
+
+### MCP for Collections and Calendar (Waves 11–12)
+
+Rows T72, T73, and T75 of [WAVES_10-12.md](WAVES_10-12.md) §5 (T74 is under Today).
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T72 | **MCP scope escalation in the new modules** | `calendar:read`/`calendar:write` and `collections:read`/`collections:write` follow T33: tools are registered only for keys holding their scope, and `runTool` re-reads the key and re-checks the scope before every call (`SCOPE_REQUIRED`); write implies read and never the reverse; scopes are fixed at creation. The tools run the modules' own services as the key's owner, so reads follow the live readable predicates and every unreadable or binned id is `NOT_FOUND`. `tests/mcpCalendar.test.ts`, `tests/mcpCollections.test.ts`, `tests/mcpScopes.test.ts` | Done (Waves 11–12) |
+| T73 | **MCP overwrites or vandalizes rows and events** | Create and update only: no delete, exdate, share, feed, schema, view, attachment, or import tools. Writes need the editor role (`READ_ONLY` for viewers), updates need `baseRevision` (`EVENT_CHANGED`, `ROW_CHANGED` with `currentRevision`), and row updates merge instead of replacing. Every write keeps the previous values for one-step undo, sets `updated_via_key_id` (the event view and row panel say "Changed by the MCP key <name>" and offer Undo), and is audited with `{ via: "mcp", keyId }`. Reminders are always the key owner's own. Daily caps per key: 200 event writes, 100 reminders, 500 row writes (per user across keys: 400, 200, 1000), on top of 120 calls and 30 writes a minute. Revoking the key stops it at once. | Done (Waves 11–12) |
+| T75 | **Prompt injection through rows or events returned to agents** | As T35: rows and events are returned as data (event descriptions as stored plain text, rows keyed by field name, note links as titles or `restricted`, attachments as names only); writes are opt-in scopes, reversible, audited, and capped. The server cannot tell instructions from data. | Accepted (documented) |
 
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
@@ -162,6 +175,8 @@ T7, T16, T18, T19, T23, T24. Record any new acceptance here with a rationale and
 
 - 2026-09-25: T32 (search text duplicated in SQLite; cross-user BM25 statistics), the operator default in WAVES_7-9.md §7.
 - 2026-09-25: T35 (prompt injection through stored content reaching an MCP client). The server cannot tell instructions from data; the controls are opt-in write scopes, drafts only, human publishing, audit, and revocation.
+- 2026-09-26: T70 (calendar feeds are fetched without a session or TOTP), the D66 operator decision: tokens are created from a gated session, read-only, per calendar, rate-limited, and revocable, on the same footing as MCP keys.
+- 2026-09-26: T75 (prompt injection through collection rows and events returned to MCP clients), as T35.
 - 2026-09-25: T28 (note images follow folder sharing). It fails closed (broken image, no disclosure), and fixing it needs a note-attachments model. T18 and T23 are documented in the README.
 
 ## Review checklist (Waves 3, 4, 6)

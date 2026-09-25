@@ -40,7 +40,9 @@ Home shows what needs you today, in sections of up to ten items each. Every item
 | Unpublished drafts | Your notes whose draft differs from what is published |
 | Drafts from agents | Your notes with a draft written through an MCP key |
 | Recent files | Files you can see in Files |
+| Recently edited rows | Rows in collections you can open, most recently changed first (titles only) |
 | Leaving the Bin soon | Your Bin items that are deleted forever within three days |
+| Upcoming | Events on your calendars over the next seven days |
 | Storage | How much of your storage quota is used, and how much of it is in the Bin |
 
 **Refresh** reloads everything; coming back to the tab after a minute reloads too. If one section fails, it shows **Retry** and the others still load. **Customize** shows or hides sections; the choice is kept in this browser for your account only. On phones Today is a single column.
@@ -123,6 +125,21 @@ Collections are typed tables for anything you track: a home inventory, subscript
 - **CSV export.** **Export CSV** downloads the rows and fields of the current view as UTF-8 for spreadsheets. Text that a spreadsheet would run as a formula (starting with `=`, `+`, `-`, `@`, or a tab) is prefixed with `'`; importing the file again removes it.
 - **Bin.** Deleted rows and collections go to the Bin for 30 days. A row is listed for the collection owner and for whoever deleted it; either can restore it while they can still edit the collection, but only the owner deletes it forever. A row whose collection is itself in the Bin can be restored only after the collection.
 
+## Calendar feeds
+
+A feed link lets a phone or desktop calendar app (Apple Calendar, Google Calendar, Outlook, Thunderbird) subscribe to one of your Nook calendars, read-only. In Calendar, open **Calendars** and choose the subscribe button (the feed icon) next to a calendar; you can do this for your own calendars and for any calendar shared with you.
+
+1. Choose what the feed shows. **Busy only** sends just the times, each titled "Busy", and names the calendar "Busy". **Full details** sends titles, places, and descriptions. Repeats and skipped dates are included either way.
+2. **Create link**, then **Copy link** and paste it into your calendar app's "subscribe by URL" or "add calendar from the internet" option. The link is shown **only once**; Nook keeps only a fingerprint of it. If you lose it, create another.
+3. The dialog lists your links for that calendar with when each was last used. Revoke (the bin icon) stops a link at once; the subscribed app simply stops updating.
+
+Things to know:
+
+- **Anyone with the link can read the feed** until you revoke it, without signing in and without your two-factor code. Treat it like a password; prefer **Busy only** when you share it or are unsure.
+- **Cloud calendars fetch the feed from their own servers.** Google, Outlook, and iCloud (on the web) cannot reach an address that only works on your tailnet or home network; use a calendar app on the device itself, or a public HTTPS address.
+- A link follows your access: if the calendar is moved to the Bin, or the owner stops sharing it with you, the link stops working (and works again if that is undone). Links you create are yours alone; other people's links are not shown to you.
+- Up to 5 links per calendar per person, each fetched at most 60 times an hour (calendar apps typically refresh every 15 minutes to a few hours). At most 5000 events are sent. Timed events carry their time zone; the app shows them in yours.
+
 ## Bin
 
 Deleting a note, a file, a card, a board, a collection, or a row moves it to the shared **Bin** (the **Bin** button next to Settings on Home, the **Bin** entry in the Notes and Files sidebar footers, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists only your own deleted items, newest first, with the days left for each; filter by notes, files, tasks, or collections (collections and their rows; see [Collections](#collections) for who sees a binned row).
@@ -153,12 +170,18 @@ Permissions are fixed when the key is created; to change them, create a new key 
 | Read files | `files:read` | List files and folders, see file details, and read text files (such as `.txt`, `.md`, `.csv`, `.json`) up to 1 MiB. Images, PDFs, and other binary files cannot be read. |
 | Read tasks | `tasks:read` | List the boards you can open, their columns and cards, and read a card with its comments (`list_boards`, `list_cards`, `get_card`). Descriptions come back as plain text and attachments as file names only. |
 | Write tasks | `tasks:write` | Create cards (optionally with a due date), move them within a board, and comment on them as you (`create_card`, `move_card`, `comment_on_card`), on any board you can use. It never edits or deletes a card and cannot change columns, sharing, or boards. Includes Read tasks. |
-| Read Today | `today:read` | Read the Today summary (`get_today`, titles only). Each section also needs the matching permission above: notes sections need Read notes, Recent files needs Read files, and task sections need Read tasks; Bin and storage need only Read Today. |
+| Read Today | `today:read` | Read the Today summary (`get_today`, titles only). Each section also needs the matching permission: notes sections need Read notes, Recent files needs Read files, task sections need Read tasks, Recently edited rows needs Read collections, and Upcoming needs Read calendar; Bin and storage need only Read Today, and list only the kinds of items the key's other permissions cover. |
+| Read calendar | `calendar:read` | List your calendars and the events on them (`list_calendars`, `list_events` over up to 100 days, `get_event`). Links to notes, cards, and rows come back as titles, or as "restricted" when you cannot open them. |
+| Write calendar | `calendar:write` | Create and change events on calendars you own or may edit (`create_event`, `update_event`), and set reminders **for yourself** (`create_reminder`). It never deletes events, skips dates, shares calendars, or creates feed links. A change fails with `EVENT_CHANGED` if the event changed since the client read it. Includes Read calendar. |
+| Read collections | `collections:read` | List your collections with their fields (`list_collections`), query rows with filters, sorting, and search (`query_rows`, up to 50 a page), and read one row (`get_row`). Rows come back keyed by field name; note links as titles or "restricted"; attachments as file names only. |
+| Write collections | `collections:write` | Add rows and change values in collections you own or may edit (`create_row`, `update_row`, which keeps fields it does not name). It never deletes rows, changes fields, views, or sharing, attaches files, or imports. A change fails with `ROW_CHANGED` if the row changed since the client read it. Includes Read collections. |
 
-Keys created before this release keep exactly what they could do before: Read notes. Card changes made through a key appear on the board like your own and are recorded in the audit log with the key's id.
+There are ten permissions in all. Keys created before this release keep exactly what they could do before. Card changes made through a key appear on the board like your own and are recorded in the audit log with the key's id.
+
+**Reviewing an agent's events and rows.** An event or row last changed through a key says **Changed by the MCP key <name>**. The event view's **Undo last change**, and the **Undo** button next to that note in a row, put the previous values back; your own next edit clears the note.
 
 **Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Leaving such a note never publishes it, even after you edit it; only the Publish button does. (Your own drafts are published automatically when you leave a note only if you edited them in the current session.) If the draft changed after you last saw it, Publish reloads it and asks you to review it first. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
 
-**Limits.** Each key can make 120 tool calls and 30 writes a minute and create 200 notes and make 500 task changes a day, and all keys of one account together get 1000 calls and 60 writes a minute, 400 new notes, and 1000 task changes a day; beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
+**Limits.** Each key can make 120 tool calls and 30 writes a minute, and per day create 200 notes, make 500 task changes, 200 event changes, 100 reminders, and 500 row changes. All keys of one account together get 1000 calls and 60 writes a minute, and per day 400 new notes, 1000 task changes, 400 event changes, 200 reminders, and 1000 row changes. Beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
 
 Treat API keys like passwords, use a separate key per client, and give each only the permissions it needs. The text of your notes and files is passed to the client as data. A client that follows instructions hidden in that text is the client's risk, which is why writing is opt-in and publishing always stays with you.

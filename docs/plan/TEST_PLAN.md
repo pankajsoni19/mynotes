@@ -1,4 +1,4 @@
-# Test plan: Home, Files, Bin, Search, Tasks, MCP scopes, and Today
+# Test plan: Home, Files, Bin, Search, Tasks, MCP scopes, Today, Collections, and Calendar
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every automated case below must exist and pass before its wave's exit gate.
 
@@ -348,11 +348,17 @@ Migration ids are asserted against the registered list and pin 1–13.
 - [x] Today's launcher has a Collections entry (`/collections`); the list renders its loading state and New collection; values display and parse per type; viewers get read-only cells; multi-line text is never edited in a single-line cell; field drafts mirror the schema rules and build the `PUT /schema` body.
 - [x] Phone cards show the primary field plus up to three fields with values and a 44 px actions button; the row panel labels one editor per field (a textarea for text) and shows "View only" with no inputs to viewers; filters are sent only when complete.
 
+Stage E (MCP):
+
+- [x] `tests/mcpCollections.test.ts`: collection tools only for `collections:read`/`collections:write` (write implies read; direct handler calls without the scope are `SCOPE_REQUIRED`; no delete, schema, share, import, view, or attachment tools); a key with all ten scopes can be created. Role matrix: viewers and editors read, strangers and private or binned collections are `NOT_FOUND`, viewers get `READ_ONLY`, editors create. Rows keyed by field name, select labels, note links as titles or `{ restricted: true }` (never the hidden title or id), attachments as names only; filters and sorts by name or id and option label; cursor paging; unknown fields, mismatched operators, unknown options, over-long values, unsortable fields, `limit` 51, and bad cursors are `INVALID`. `create_row` stores ids from names and labels, marks `updated_via_key_id`, and audits `{ via, keyId }`; field errors are keyed by name, file fields and unreadable notes are refused. `update_row` merges, clears with `null`, keeps required fields, returns `ROW_CHANGED` with `currentRevision`, and shows "Changed by the MCP key <name>" with Undo in the row panel; undo and a person's edit clear the mark. 500 row writes per key per day and 1000 per user (T72, T73, T75).
+- [x] `tests/mcpCollections.test.ts` (Today): `collectionsRecent` lists recently edited rows in readable collections, titles and ids only, for sessions; `get_today` includes it only with `collections:read` (T74). `tests/mcpToday.test.ts`: binned collections and rows reach `get_today` only with `collections:read`.
+
 Manual QA (desktop and 390×844, two users; the scratch click-through for commits 4–5 covered the unchecked rows marked *):
 
 - [ ] Today → Collections → New collection (template) → table; edit cells (blur saves; an invalid link is flagged and not saved); a second session's change makes the next edit show Reload*, and Reload shows their value*.
 - [ ] 390×844: cards are ≥ 56 px with no horizontal scroll*; tap → full-screen row panel with ≥ 44 px editors*; the sort/filter sheet filters and sorts*; ⋯ → Undo / Copy link / Move to Bin.
 - [ ] Back: row → collection → list → Home*; with a picker open over the row panel, Back closes only the picker, and the next Back leaves the row*; Forward restores the row*.
+- [ ] An MCP client with `collections:write` adds and changes a row; the row panel shows "Changed by the MCP key <name>" with Undo (≥ 44 px at 390 px), and Undo restores the previous values.
 
 `tests/migrations.test.ts`:
 
@@ -370,13 +376,19 @@ Migration ids pin 1–13; `tests/calendarMigration.test.ts` applies 013 on a fre
 - [x] `tests/push.test.ts`: `PUSH_ENABLED=auto` on http, VAPID keys (0600, reused) and ES256 JWTs, the push-host allowlist and post-DNS private-address block (T62), subscription caps and IDOR, payload-less pushes (T63), 404/410 cleanup, the Send test limit.
 - [x] `tests/serviceWorker.test.ts`: no fetch handler, generic notices, same-origin clicks only, and the manifest (T69).
 - [x] `tests/notificationsUi.test.tsx` and `tests/calendarRoute.test.tsx`: routes, history hints, the stacked dialog guards, the bell inside the signed-in shell, and the Today launcher entry.
-- [x] `tests/today.test.ts` and `tests/mcpToday.test.ts`: `upcoming` for sessions only; `get_today` leaves it out and drops calendar items from `binSoon` (T74).
+- [x] `tests/today.test.ts` and `tests/mcpToday.test.ts`: `upcoming` for sessions, and in `get_today` only with `calendar:read` (write implies read); calendar items in `binSoon` need `calendar:read` too (T74).
+- [x] `tests/calendarFeeds.test.ts` (stage D, feeds): ICS escaping of `\ ; ,` and every line break, a title containing `\r\nATTENDEE:` and a description containing `END:VEVENT` never start a property, no bare CR or LF; 75-octet folding on UTF-8 boundaries; `UID <id>@nook`, `TZID` + `DURATION`, `VALUE=DATE`, `RRULE` (weekly `BYDAY`, `COUNT`, `UNTIL` as a date or UTC), and `EXDATE`; `busy` hides titles, places, descriptions, and the calendar name; 5000-event cap; only `GET`/`HEAD` of the exact feed pattern skips the session. API: readers (owner, editor, viewer) create links, strangers get 404, lists show only the caller's own links, nobody revokes someone else's, 5 per user per calendar; the token is stored only as its hash; `Content-Type`, `Cache-Control: private, no-store`, `nosniff`, and the global CSP; the same 404 body for a missing, malformed, unknown, revoked, or other-calendar token, a binned calendar (and 200 again after restore), an unshared creator, and a disabled creator; 60 fetches per hour per token then 429 with `Retry-After`; `last_used_at` written at most every 10 minutes; console output and the audit log never contain the token, and audit rows carry `feedId` and `calendarId` only (T61, T64, T65).
+- [x] `tests/support/feedTotpProbe.ts` (a subprocess under `TOTP_POLICY=required`): an unenrolled user cannot create a link (403), an enrolled user can, and the link works with no session while `/feeds` still needs one (T70).
+- [x] `tests/calendarFeedUi.test.tsx`: the Feed dialog's warning copy, Busy and Full choices, and a subscribe button on owned and shared calendars.
+- [x] `tests/mcpCalendar.test.ts` (MCP): calendar tools only for `calendar:read`/`calendar:write` (write implies read, handler re-check, no delete, share, feed, or exdate tools), and the keys API accepts the scopes; role matrix: `list_calendars` roles, `list_events` and `get_event` only on readable calendars, `READ_ONLY` for viewers, `NOT_FOUND` for strangers and binned calendars, editors create; timed events by end or duration across DST, validation errors, the 100-day range; `update_event` revision CAS (`EVENT_CHANGED` with `currentRevision`), `updated_via_key_id` and "Changed by <key>" in the app, undo; `create_reminder` only for the key owner (viewers too; strangers `NOT_FOUND`; `REMINDER_EXISTS`; standalone reminders); audit `{ via, keyId }` on writes and none on reads; 200 event writes and 100 reminders per key per day, and per user; links as titles or `restricted` (T72, T73, T75).
 
 Manual QA (desktop and 390×844):
 
 - [ ] Calendar opens on the agenda on a phone and the current month on desktop; Back from an event returns to where it was opened.
 - [ ] A reminder shows in the bell on Today, Tasks, Collections, Files, and Calendar; on an https origin with push enabled it also arrives as a system notification, and clicking it opens the event.
 - [ ] Sign-out removes this device's push subscription.
+- [ ] Calendars → Subscribe links: create a Busy link, copy it once (the dialog never shows it again), subscribe from a phone calendar on the tailnet HTTPS origin, and see times titled "Busy"; revoke it and the phone's next refresh fails. The dialog is usable at 390 px and Back closes it.
+- [ ] An MCP client with `calendar:write` creates and moves an event; the event view says "Changed by the MCP key <name>", and Undo last change restores it.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

@@ -423,6 +423,7 @@ type CardAttachment = {
 | `drafts` | `{ id, title, updated_at, neverPublished }`: the caller's notes whose draft differs from the published version, not written by an MCP key |
 | `agentDrafts` | `{ id, title, keyName, updated_at }`: the caller's drafts written by an MCP key |
 | `files` | `{ id, name, mime_type, preview_kind, size_bytes, owner_name, is_owner, updated_at }`: the Files list, newest first |
+| `collectionsRecent` | `{ rowId, collectionId, collectionName, title, updated_at, changedByKey }`: live rows in readable collections, most recently edited first; titles only (`listRecentRows` in `server/collections/service.ts`, which scans only the ten-plus-one most recently updated readable collections, since every row write touches its collection's `updated_at`) |
 | `binSoon` | `{ type, id, title, purge_after }`: the caller's Bin items purged within three days |
 | `upcoming` | `{ eventId, calendarId, title, start, end, allDay, date }`: occurrences on readable calendars over the next seven local days, not yet ended (Calendar, Wave 12; see § Calendar) |
 | `storage` | one item `{ usedBytes, binnedBytes, quotaBytes }`: bytes counted against the quota (live and binned), the binned part, and the quota (`null` = unlimited) |
@@ -440,11 +441,12 @@ Errors: 400 when `tz` is not an IANA zone `Intl` accepts (list entries and the a
 | `DELETE /api/mcp/keys/:id` | `{}` | 200 `{ ok: true }` | 404 |
 
 ```ts
-type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write";
+type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read"
+  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write";
 type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 ```
 
-- `scopes`: 1–5 unique values (one per defined scope), default `["notes:read"]`. A write scope adds its read scope (`notes:write-draft` → `notes:read`, `tasks:write` → `tasks:read`). Scopes are returned in the order above and cannot be changed later; create a new key instead.
+- `scopes`: 1–10 unique values (one per defined scope), default `["notes:read"]`. A write scope adds its read scope (`notes:write-draft` → `notes:read`, `tasks:write` → `tasks:read`, `calendar:write` → `calendar:read`, `collections:write` → `collections:read`). Scopes are returned in the order above and cannot be changed later; create a new key instead.
 - Keys created before migration 010 have `["notes:read"]`.
 - The audit row `mcp.key_created` records `{ keyId, name, scopes }`.
 
@@ -471,9 +473,36 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `create_card` | tasks:write | `{ boardId, columnId, title, description?, dueOn?, afterCardId? }` | `{ card: { id, board_id, column_id, title, due_on, revision } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards` |
 | `move_card` | tasks:write | `{ cardId, columnId, afterCardId? }` | `{ card: { id, column_id, position } }`. Same board only; `afterCardId` omitted = bottom, `null` = top |
 | `comment_on_card` | tasks:write | `{ cardId, body }` | `{ comment: { id, card_id, created_at } }`, authored by the key's owner |
-| `get_today` | today:read | `{ tz? }` (IANA, default UTC) | The `GET /api/today` body, titles and ids only, with only the sections the key may read: task sections need `tasks:read`, `notesRecent`/`drafts`/`agentDrafts` need `notes:read`, `files` needs `files:read`; `binSoon` and `storage` need `today:read` alone, and `binSoon` keeps only item types the key may read (notes: `notes:read`, documents: `files:read`, cards and boards: `tasks:read`; collection, calendar, and event items are left out; `upcoming` is left out too, as there is no calendar scope yet). It shares the 30-a-minute per-user Today limit (`RATE_LIMITED` with `retryAfterSeconds`). `list_cards` and `get_card` also return `due_on` and `assignee_name` |
+| `get_today` | today:read | `{ tz? }` (IANA, default UTC) | The `GET /api/today` body, titles and ids only, with only the sections the key may read (T74): task sections need `tasks:read`, `notesRecent`/`drafts`/`agentDrafts` need `notes:read`, `files` needs `files:read`, `collectionsRecent` needs `collections:read`, `upcoming` needs `calendar:read`; `binSoon` and `storage` need `today:read` alone, and `binSoon` keeps only item types the key may read (notes: `notes:read`, documents: `files:read`, cards and boards: `tasks:read`, collections and rows: `collections:read`, calendars and events: `calendar:read`). It shares the 30-a-minute per-user Today limit (`RATE_LIMITED` with `retryAfterSeconds`). `list_cards` and `get_card` also return `due_on` and `assignee_name` |
+| `list_calendars` | calendar:read | `{}` | `{ calendars: { id, name, role, color, ownerName }[] }` as `GET /api/calendars` (a first call creates "Personal", as there) |
+| `list_events` | calendar:read | `{ from, to, calendarIds? (≤ 50), tz? }` (dates, `to` exclusive, at most 100 days) | `{ occurrences: { eventId, calendarId, title, location, start, end, allDay, recurring, date }[], truncated }` as `GET /api/events` |
+| `get_event` | calendar:read | `{ eventId }` | `{ event: { id, calendarId, calendarName, title, description, location, allDay, start, end, tz, durationMinutes, repeat, exdates, updatedAt }, revision, role, links, url }`. `description` is plain text; `links` are `{ targetType, targetId, title }` or `{ targetType, restricted: true }` |
+| `create_event` | calendar:write | `{ calendarId, title, allDay, start, end?, durationMinutes?, tz?, repeat?, description?, location? }` | `{ eventId, revision: 1, url }`. All-day: `start`/`end` are dates (`end` exclusive, default the next day). Timed: `start` is local `yyyy-mm-ddTHH:MM` in `tz`, with `durationMinutes` or a local `end`. Editor role; validated by the `POST /api/calendars/:k/events` schema |
+| `update_event` | calendar:write | `{ eventId, baseRevision, title?, allDay?, start?, end?, durationMinutes?, tz?, repeat?, description?, location? }` | `{ eventId, revision, url }` or `EVENT_CHANGED` with `currentRevision`. Undoable in the app |
+| `create_reminder` | calendar:write | `{ eventId, offsetMinutes, tz? }` or `{ title, fireAt, tz? }` (`tz` default UTC) | `{ reminderId, nextFireAt, eventId }`, always for the key's owner; viewers may set reminders on events they can read |
+| `list_collections` | collections:read | `{}` | `{ collections: { id, name, role, rowCount, ownerName, fields: { id, name, type, required?, unit?, decimals?, options?: { id, label }[] }[] }[] }` |
+| `query_rows` | collections:read | `{ collectionId, filters?: { field, op, value? }[] (≤ 10), sort?: { field, direction? }[] (≤ 3), q?, limit? (1–50, default 20), cursor? }` | `{ rows: McpRow[], total, nextCursor }`. `field` is a field name or id; select values may be labels. Operators and cursors as `POST /api/collections/:c/query` |
+| `get_row` | collections:read | `{ rowId }` | `{ row: McpRow, revision, role, collectionName }` |
+| `create_row` | collections:write | `{ collectionId, values }` | `{ rowId, revision: 1, url }`. Editor role; the row goes at the bottom |
+| `update_row` | collections:write | `{ rowId, values, baseRevision }` | `{ rowId, revision, url }` or `ROW_CHANGED` with `currentRevision`. Values merge; `null` clears a field |
 
 Task tools call the `/api/tasks` services as the key's owner, so the W9 rules apply unchanged: any board reader (owner, member, everyone on an `all_users` board) may create, move, and comment; a board the user cannot read, and every id on it, is `NOT_FOUND`, identical to a missing id. There are no tools that edit, delete, or bin cards, or that change columns, sharing, or boards. A stale `afterCardId` returns `STALE_POSITION` with `columnId` and the column's current `order`; `LIMIT_REACHED` passes through the board caps. Task writes are audited through the usual `task.card_create`, `task.card_move`, and `task.comment_create` events with `{ via: "mcp", keyId }` added.
+
+Calendar tools call the `/api/calendars`, `/api/events`, and `/api/reminders` services, and collection tools the `/api/collections` services, as the key's owner (D70, T72–T75). Readers read; only the owner and editors write (a viewer gets `READ_ONLY`); anything the user cannot read, including binned items, is `NOT_FOUND`. Writes are create and update only: there are no delete, exdate, share, feed, schema, view, attachment, or import tools. Every write sets `updated_via_key_id` (the event view's and row panel's "Changed by <key>", with Undo), is audited through the usual `event.create`, `event.update`, `reminder.create`, `collection.row_create`, and `collection.row_update` events with `{ via: "mcp", keyId }` added, and counts against the daily buckets below. A person's own edit or undo clears the key mark.
+
+```ts
+// Rows as agents see them: keyed by field name.
+type McpRow = {
+  id: string; collectionId: string; title: string;
+  values: Record<string, string | number | boolean | string[]   // select → label, multi_select → labels, file → attachment names
+    | { noteId: string; title: string } | { restricted: true }>;  // note fields
+  revision: number; updatedAt: string; updatedBy: string | null;
+  changedByKey: string | null;   // the key's name when the last change came through MCP
+  url: string;                   // <origin>/collections/<c>/row/<r>
+};
+```
+
+Collection `values` are keyed by field name (or id), with select options as labels (case-insensitive) or ids; unknown fields and file fields are `INVALID` with `fieldErrors` keyed by name, and the service's strict validation (types, required fields, readable note links, 16 KiB) applies unchanged.
 
 Errors are tool results with `isError: true` whose text is `{ error, code, ...details }`:
 
@@ -482,10 +511,15 @@ Errors are tool results with `isError: true` whose text is `{ error, code, ...de
 | `NOT_FOUND` | Missing, not readable, not owned (draft tools), binned, or not a Files document; all look the same |
 | `INVALID` | Arguments fail validation (the transport may also reject them before the tool runs) |
 | `SCOPE_REQUIRED` | The key lacks the tool's scope, or was revoked meanwhile |
-| `RATE_LIMITED` | Per key: 120 calls and 30 writes per minute, 200 `create_note` and 500 task writes per day; per user across keys: 1000 calls and 60 writes per minute, 400 `create_note` and 1000 task writes per day. Includes `retryAfterSeconds` |
+| `RATE_LIMITED` | Per key: 120 calls and 30 writes per minute; per day 200 `create_note`, 500 task writes, 200 event writes (`create_event`, `update_event`), 100 `create_reminder`, and 500 row writes (`create_row`, `update_row`). Per user across keys: 1000 calls and 60 writes per minute; per day 400 `create_note`, 1000 task writes, 400 event writes, 200 reminders, and 1000 row writes. Includes `retryAfterSeconds` |
 | `DRAFT_CHANGED` | `baseRevision` is not the current draft revision. Includes `currentRevision` |
 | `STALE_POSITION` | `afterCardId` is not a live card in the target column. Includes `columnId` and the column's current `order` |
-| `LIMIT_REACHED` | A board cap (cards per board, comments per card) |
+| `LIMIT_REACHED` | A module cap (cards per board, comments per card, events per calendar, reminders per event, rows per collection) |
+| `READ_ONLY` | A viewer called a write tool on a calendar or collection shared read-only |
+| `EVENT_CHANGED` | `update_event`'s `baseRevision` is not the event's revision. Includes `currentRevision` |
+| `ROW_CHANGED` | `update_row`'s `baseRevision` is not the row's revision. Includes `currentRevision` |
+| `REMINDER_EXISTS` | The key's owner already has a reminder at that offset on the event |
+| `SCHEMA_CHANGED` | A `query_rows` cursor was issued before the collection's fields changed; start again without it |
 | `NOT_TEXT` | Not a text file, or not valid UTF-8 |
 | `TOO_LARGE` | Text file over 1 MiB, or Markdown over `MAX_MARKDOWN_BYTES` |
 | `INTERNAL` | Integrity or server failure |
@@ -565,7 +599,8 @@ type RowSummary = {
   links: Record<string, NoteLink>;        // note fields, resolved for the caller (never an unreadable title)
   revision: number; can_undo: boolean;
   created_by: string | null; created_by_name: string | null; updated_by_name: string | null;
-  updated_via_key_id: string | null;      // set by MCP writes (Stage E)
+  updated_via_key_id: string | null;      // set by MCP writes (Stage E); cleared by a person's edit or undo
+  updated_via_key_name: string | null;    // that key's name while it exists ("Changed by <key>")
   created_at: string; updated_at: string;
 };
 ```
@@ -654,7 +689,7 @@ Same rules as board sharing: the owner cannot be a recipient (400), `selected` n
 **Audit** (ids and counts only, never values or names): `collection.create { collectionId, fieldCount, templateId? }`, `collection.update`, `collection.delete`, `collection.schema_update { collectionId, fieldCount }`, `collection.row_create`, `collection.row_update { collectionId, rowId, fieldCount }`, `collection.row_undo`, `collection.row_delete`.
 ## Calendar (Wave 12)
 
-Calendars, events, links, reminders, notifications, and Web Push ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D65). JSON only. Feeds arrive in stage D.
+Calendars, events, links, reminders, notifications, Web Push, and iCalendar feeds ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D66). JSON only, except the feed itself.
 
 **Roles (D54).** The owner does everything. Everyone the calendar is shared with (`visibility` `selected` with a member row, or `all_users`) gets the calendar's single audience role `share_role`: `viewer` reads, `editor` also creates, edits, undoes, skips dates on, links, and bins events. Only the owner renames, recolours, shares, or bins the calendar.
 
@@ -685,7 +720,7 @@ type EventDetail = {
   start_date: string | null; end_date: string | null;          // all-day: yyyy-mm-dd, end exclusive
   start_local: string | null; tz: string | null; duration_minutes: number | null;  // timed: yyyy-mm-ddTHH:MM, IANA zone, 1–10080
   repeat: RepeatRule | null; exdates: string[];                // skipped local start dates, ≤ 200
-  revision: number; canUndo: boolean; changedByKey: boolean;
+  revision: number; canUndo: boolean; changedByKey: boolean; changedByKeyName: string | null;  // MCP key behind the last change
   created_by_name: string | null; updated_by_name: string | null; created_at: string; updated_at: string;
 };
 type EventLink = { targetType: "note" | "card" | "collection_row"; targetId: string; title: string | null; restricted: boolean };
@@ -751,7 +786,7 @@ type NotificationItem = { id: string; title: string; href: string; late: boolean
 - **Titles and links.** Titles are resolved when listed: the event's current title while the caller can read it, otherwise "An event you can no longer open"; a standalone reminder's own title. `href` is `/calendar/event/<id>` built from a validated event id, or `/notifications` (T68).
 - **Retention.** The hourly sweeper deletes notifications after 30 days, and fired standalone reminders 30 days after they fired.
 - **Audit.** `reminder.create { reminderId, eventId? }`, `reminder.delete { reminderId }`: ids only.
-- **Today.** `listUpcoming(userId, tz, days)` in `server/calendar/service.ts` backs the `upcoming` section (registered in `server/today/providers.ts`, between `binSoon` and `storage`): unfinished occurrences through the next 7 local days, at most 10 with `more`, as `{ eventId, calendarId, title, start, end, allDay, date }`. There is no calendar MCP scope yet, so `get_today` leaves the section out, and `binSoon` drops calendar and event items for MCP callers.
+- **Today.** `listUpcoming(userId, tz, days)` in `server/calendar/service.ts` backs the `upcoming` section (registered in `server/today/providers.ts`, between `binSoon` and `storage`): unfinished occurrences through the next 7 local days, at most 10 with `more`, as `{ eventId, calendarId, title, start, end, allDay, date }`. `get_today` includes it, and calendar and event items in `binSoon`, only for keys that also hold `calendar:read` (T74).
 
 ### Web Push (Wave 12 stage C)
 
@@ -769,6 +804,28 @@ Payload-less Web Push (D65, T62, T63). A push has an empty body: it only wakes t
 - **Endpoints.** `https:` on port 443, no credentials, not an IP literal, and a host on the allowlist (`*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`, plus `PUSH_ENDPOINT_HOSTS`). Every address the host resolves to must be public (no private, loopback, link-local, CGNAT, or multicast ranges); this is checked when subscribing and again before each delivery. An endpoint is owned by one account: subscribing it from another account moves it.
 - **Delivery.** After each dispatcher tick commits, every user who got a notification gets one push per device: `POST` with no body, `TTL: 3600`, `Urgency: normal`, and `Authorization: vapid t=<JWT>, k=<publicKey>` (claims `aud` = the endpoint's origin, `exp` = 12 h, `sub` = `PUSH_SUBJECT`). Redirects are not followed and requests time out after 5 s. 404 or 410 deletes the subscription; any other failure (including a redirect) counts, and 5 consecutive failures disable it until the device subscribes again.
 - **Audit.** `push.subscribe { subscriptionId }`, `push.unsubscribe`. Endpoints and keys are never logged or audited.
+
+<a id="calendar-feeds"></a>
+### iCalendar feeds (Wave 12 stage D)
+
+Read-only subscription links for phone and desktop calendars (D66, T64, T65, T70). A reader of a calendar (owner, editor, or viewer) creates up to **5** live links per calendar, each `busy` (times only, every event titled "Busy", and the calendar named "Busy") or `full` (titles, locations, and descriptions). The token is returned once and stored only as its SHA-256 hash plus a 13-character display prefix (`nookfeed_` and four characters).
+
+```ts
+type CalendarFeed = { id: string; calendarId: string; prefix: string; detail: "busy" | "full"; createdAt: string; lastUsedAt: string | null };
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/calendars/:k/feeds` | reader | 200 `{ feeds: CalendarFeed[] }`: the caller's own live links for this calendar, newest first | 404 |
+| `POST /api/calendars/:k/feeds {detail}` | reader | 201 `{ feed, token, url }`; `url` is `<origin>/api/calendars/:k/feed.ics?token=<token>` on the request's origin when it is one of `APP_ORIGINS`, else `APP_ORIGIN` | 400; 404; 409 `LIMIT_REACHED` (5 live links per user per calendar) |
+| `DELETE /api/feeds/:f` | the link's creator | 200 `{ ok }`; the link stops working at once | 404 (unknown, revoked, or someone else's) |
+| `GET /api/calendars/:k/feed.ics?token=` | the token | 200 `text/calendar; charset=utf-8` | 404 for every failure; 429 with `Retry-After` above 60 fetches per hour per token |
+
+- **Authentication.** The feed route is the only `/api` path outside the session and TOTP middleware. `isFeedRequest` in `server/calendar/feeds.ts` exempts exactly `GET` or `HEAD` of `/api/calendars/<uuid>/feed.ics`; every other method, and any other path, still needs a session. Tokens are created from a signed-in (and, under `TOTP_POLICY=required`, gated) session.
+- **Live access.** Every fetch re-checks that the token's creator is enabled, still allowed by `ALLOWED_EMAILS`, and can still read the calendar. A malformed, unknown, or revoked token, a token for another calendar, a binned calendar, and a creator who lost access all return the same `404 {"error":"Not found"}`.
+- **Output (RFC 5545).** `VERSION:2.0`, `PRODID:-//Nook//Calendar feed//EN`, `METHOD:PUBLISH`, `X-WR-CALNAME`; one `VEVENT` per live event with `UID:<event id>@nook`, `DTSTAMP`, timed `DTSTART;TZID=<zone>:<local>` plus `DURATION:PT<n>M` or all-day `DTSTART;VALUE=DATE`/`DTEND;VALUE=DATE`, `RRULE` (`FREQ`, `INTERVAL`, `WKST=MO` and `BYDAY` for weekly, `COUNT`, or `UNTIL` as a date for all-day events and as the last second of the until day in UTC for timed ones), and `EXDATE` in the same form as the start. No `VTIMEZONE` blocks. `SUMMARY`, `LOCATION`, and `DESCRIPTION` are escaped (`\\`, `\;`, `\,`, and every CR, LF, CRLF, U+2028, or U+2029 as `\n`; other control characters dropped); lines are folded at 75 octets without splitting a UTF-8 sequence, with CRLF endings. At most 5000 events, most recent series first.
+- **Headers.** `Cache-Control: private, no-store`, `X-Content-Type-Options: nosniff`, and the global CSP unchanged. No cookie is set.
+- **Bookkeeping.** `last_used_at` is written at most every 10 minutes. The token is never logged or audited; `calendar.feed_created` and `calendar.feed_revoked` record `{ feedId, calendarId }` only. Purging a calendar deletes its links.
 
 <a id="calendar-items-in-the-bin"></a>
 ### Calendar items in the Bin (D68)
