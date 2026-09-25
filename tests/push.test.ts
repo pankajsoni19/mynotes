@@ -279,6 +279,27 @@ describe("subscriptions and delivery", () => {
     expect(sent.filter((item) => item.url === endpoint("slow-5")).length).toBe(1);
   });
 
+  test("disabled users and users whose email is no longer allowed lose their subscriptions (L5)", async () => {
+    await push.initPush({ setting: "true", keys: await push.createVapidKeys() });
+    const subscriptions = (userId: string) => (db.query("SELECT COUNT(*) AS count FROM push_subscriptions WHERE user_id = ?").get(userId) as { count: number }).count;
+    const revoked = (userId: string) => db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'push.subscriptions_revoked'").all(userId) as Array<{ metadata_json: string }>;
+
+    const disabled = await createUser("Push disabled");
+    expect((await send(disabled, "POST", "/push/subscriptions", subscription(endpoint("disabled")))).status).toBe(201);
+    db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), disabled.userId);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: disabled.userId }]);
+    expect(sent).toEqual([]);
+    expect(subscriptions(disabled.userId)).toBe(0);
+    expect(revoked(disabled.userId).map((row) => JSON.parse(row.metadata_json))).toEqual([{ reason: "user_disabled", count: 1 }]);
+
+    const removed = await createUser("Push removed email");
+    expect((await send(removed, "POST", "/push/subscriptions", subscription(endpoint("removed")))).status).toBe(201);
+    db.query("UPDATE users SET email = ? WHERE id = ?").run(`removed-${crypto.randomUUID()}@elsewhere.test`, removed.userId);
+    expect((await send(removed, "GET", "/push/subscriptions")).status).toBe(401);
+    expect(subscriptions(removed.userId)).toBe(0);
+    expect(revoked(removed.userId).map((row) => JSON.parse(row.metadata_json))).toEqual([{ reason: "email_not_allowed", count: 1 }]);
+  });
+
   test("Send test is limited to 5 per hour", async () => {
     await push.initPush({ setting: "true", keys: await push.createVapidKeys() });
     const user = await createUser("Push test limit");

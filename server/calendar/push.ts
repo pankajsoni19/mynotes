@@ -301,7 +301,21 @@ export async function sendPush(row: SubscriptionRow, nowMs = Date.now()): Promis
   return "failed";
 }
 
+/**
+ * L5: removes every push subscription of a user whose sessions were all revoked, who was
+ * disabled, or whose email is no longer allowed, so their devices stop being woken.
+ */
+export function revokeUserPushSubscriptions(userId: string, reason: string) {
+  const removed = db.query("DELETE FROM push_subscriptions WHERE user_id = ?").run(userId).changes;
+  if (removed) audit(userId, null, "push.subscriptions_revoked", { reason, count: removed });
+  return removed;
+}
+
 async function sendToUser(userId: string, parallel = true) {
+  if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) {
+    revokeUserPushSubscriptions(userId, "user_disabled");
+    return { sent: 0, failed: 0 };
+  }
   const rows = db.query("SELECT * FROM push_subscriptions WHERE user_id = ? AND failure_count < ?").all(userId, MAX_FAILURES) as SubscriptionRow[];
   const outcomes: DeliveryOutcome[] = [];
   if (parallel) outcomes.push(...await Promise.all(rows.map((row) => sendPush(row))));

@@ -1,4 +1,5 @@
 import { audit, db } from "./db";
+import { revokeUserPushSubscriptions } from "./calendar/push";
 
 const email = process.argv[2]?.trim().toLowerCase();
 if (!email) {
@@ -15,6 +16,7 @@ if (!user) {
 db.transaction(() => {
   db.query("UPDATE users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_counter = NULL, totp_recovery_codes = NULL WHERE id = ?").run(user.id);
   db.query("DELETE FROM sessions WHERE user_id = ?").run(user.id);
+  revokeUserPushSubscriptions(user.id, "sessions_revoked");
   audit(user.id, null, "auth.totp_admin_reset");
 })();
 
