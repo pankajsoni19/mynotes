@@ -38,3 +38,20 @@ export type Version = {
   created_at: string;
   author_name: string;
 };
+export type Visibility = "private" | "selected" | "all_users";
+export type PreviewKind = "image" | "pdf" | "text" | "audio" | "video" | "none";
+export type DocumentSummary = {
+  id: string;
+  owner_id: string;
+  owner_name: string;
+  is_owner: 0 | 1;
+  folder_id: string | null;
+  name: string;
+  mime_type: string;
+  preview_kind: PreviewKind;
+  size_bytes: number;
+  visibility: Visibility;
+  sharing_override: 0 | 1;
+  created_at: string;
+  updated_at: string;
+};

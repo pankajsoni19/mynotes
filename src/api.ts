@@ -4,6 +4,10 @@ export function setCsrfToken(token: string) {
   csrfToken = token;
 }
 
+export function getCsrfToken() {
+  return csrfToken;
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status: number, public payload?: unknown) {
     super(message);
