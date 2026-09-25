@@ -102,10 +102,14 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 
 ### Wave 5 — Files UI (v0.4.0)
 
-- [ ] Files API client and upload queue with progress, cancel, and retry
-- [ ] Desktop Files workspace: folders, list, preview/details, rename, download, move, share, delete with Undo
-- [ ] Drag and drop upload from OS and drag-to-folder move
-- [ ] Mobile panels, action sheet, Move sheet, and browser history
+- [x] Implemented in `0d48272` (rename/move/share/delete with Undo), `72313ae` (New folder, sort, filter), `a374264` (OS drop upload, drag-to-folder), `e5cbb0d` (mobile action sheet, Move sheet, upload bottom sheet, Back closes dialogs via `src/historyDialogs.ts`), `2b1a5d3` (Home copy, empty/error states, live region, labels). 189 tests; Docker verify passes.
+- [x] Director QA on isolated data: action sheet → Delete → Bin confirm copy → "Moved to the Bin" toast → Undo → "Restored to Default" and the row returns; Rename preselects the base name, shows "Will be saved as “report- final”" for a colon, and saves; New folder dialog creates and opens the folder; Move sheet disables the current folder, confirm reads "Move to Projects", toast "Moved to Projects · private", folder updated; 390 px: ⋯ opens a sheet with 44–48 px rows, browser Back closes it and stays on Files.
+- [ ] Independent review, then release v0.4.0
+
+- [x] Files API client and upload queue with progress, cancel, and retry
+- [x] Desktop Files workspace: folders, list, preview/details, rename, download, move, share, delete with Undo
+- [x] Drag and drop upload from OS and drag-to-folder move
+- [x] Mobile panels, action sheet, Move sheet, and browser history
 - [ ] Home Files card live; desktop/mobile manual QA and accessibility check; release v0.4.0
 
 ### Wave 6 — Documentation and final audit
