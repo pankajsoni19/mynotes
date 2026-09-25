@@ -1,30 +1,83 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import type { ChainedCommands, Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
-import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import Link from "@tiptap/extension-link";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
 import { Markdown } from "@tiptap/markdown";
-import { Bold, Code2, Italic, Link2, Strikethrough } from "lucide-react";
+import {
+  BetweenHorizontalEnd, BetweenHorizontalStart, BetweenVerticalEnd, BetweenVerticalStart, Bold, Code2, Grid2x2X, Italic, Link2,
+  Strikethrough, TableColumnsSplit, TableRowsSplit, type LucideIcon
+} from "lucide-react";
 import { SlashCommands } from "./slash";
+import { markdownOptions, noteContentExtensions } from "./extensions";
+import { ImageInsert } from "./imageInsert";
+import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
+import "./editor.css";
+
+const tableActions: { label: string; Icon: LucideIcon; run: (chain: ChainedCommands) => ChainedCommands }[] = [
+  { label: "Add row above", Icon: BetweenHorizontalStart, run: (chain) => chain.addRowBefore() },
+  { label: "Add row below", Icon: BetweenHorizontalEnd, run: (chain) => chain.addRowAfter() },
+  { label: "Add column before", Icon: BetweenVerticalStart, run: (chain) => chain.addColumnBefore() },
+  { label: "Add column after", Icon: BetweenVerticalEnd, run: (chain) => chain.addColumnAfter() },
+  { label: "Delete row", Icon: TableRowsSplit, run: (chain) => chain.deleteRow() },
+  { label: "Delete column", Icon: TableColumnsSplit, run: (chain) => chain.deleteColumn() },
+  { label: "Delete table", Icon: Grid2x2X, run: (chain) => chain.deleteTable() }
+];
+
+// The table (or its scroll wrapper) around the cursor, used to anchor the table toolbar.
+function currentTableElement(editor: Editor): HTMLElement | null {
+  const { $from } = editor.state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if ($from.node(depth).type.name !== "table") continue;
+    const dom = editor.view.nodeDOM($from.before(depth));
+    return dom instanceof HTMLElement ? dom : null;
+  }
+  return null;
+}
 
 type Props = {
   markdown: string;
   editable: boolean;
   onChange: (markdown: string) => void;
+  /** Folder that uploaded images are stored in; null uploads to the Default folder. */
+  folderId?: string | null;
+  /** Shows a short status message (the app toast). */
+  onNotice?: (message: string) => void;
 };
 
-export function NoteEditor({ markdown, editable, onChange }: Props) {
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice }: Props) {
+  // The editor is created once, so the upload handler reads the latest props through a ref.
+  const latest = useRef({ folderId, onNotice });
+  latest.current = { folderId, onNotice };
+
+  const insertImages = async (activeEditor: Editor, files: File[]) => {
+    const notice = (message: string) => latest.current.onNotice?.(message);
+    for (const file of files) {
+      if (!isInsertableImageType(file.type)) {
+        notice(IMAGE_REJECTED_MESSAGE);
+        continue;
+      }
+      notice(`Uploading ${file.name || "image"}…`);
+      try {
+        const image = await uploadNoteImage(file, latest.current.folderId);
+        if (activeEditor.isDestroyed || !activeEditor.isEditable) {
+          notice("Image saved to Files, but the note is no longer open for editing");
+          continue;
+        }
+        activeEditor.chain().focus().setImage(image).run();
+        notice("Image added");
+      } catch (reason) {
+        notice(reason instanceof Error ? reason.message : "Image upload failed");
+      }
+    }
+  };
+
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ link: false }),
-      Link.configure({ openOnClick: false, autolink: true }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
+      ...noteContentExtensions(),
       Placeholder.configure({ placeholder: "Start writing… Type / for commands" }),
-      Markdown.configure({ markedOptions: { gfm: true, breaks: false } }),
+      Markdown.configure({ markedOptions: markdownOptions }),
+      ImageInsert.configure({ onFiles: (activeEditor, files) => { void insertImages(activeEditor, files); } }),
       SlashCommands
     ],
     content: markdown,
@@ -63,6 +116,23 @@ export function NoteEditor({ markdown, editable, onChange }: Props) {
             if (!href) editor.chain().focus().unsetLink().run();
             else editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
           }} aria-label="Add link"><Link2 /></button>
+        </BubbleMenu>
+      )}
+      {editable && (
+        <BubbleMenu
+          editor={editor}
+          pluginKey="tableMenu"
+          className="bubble-menu table-menu"
+          shouldShow={({ editor: activeEditor, view }) => activeEditor.isEditable && view.hasFocus() && activeEditor.isActive("table")}
+          getReferencedVirtualElement={() => {
+            const element = currentTableElement(editor);
+            return element ? { getBoundingClientRect: () => element.getBoundingClientRect() } : null;
+          }}
+          options={{ placement: "top-start", offset: 8 }}
+        >
+          {tableActions.map(({ label, Icon, run }) => (
+            <button key={label} type="button" onClick={() => run(editor.chain().focus()).run()} aria-label={label} title={label}><Icon /></button>
+          ))}
         </BubbleMenu>
       )}
       <EditorContent editor={editor} />

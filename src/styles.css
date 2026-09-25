@@ -407,3 +407,32 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* "Download as PDF" prints only the open note: its first line (the title) and body, black on white. */
+@media print {
+  @page { margin: 18mm 16mm; }
+  html, body, #root { height: auto !important; min-height: 0 !important; overflow: visible !important; background: #fff !important; color: #000 !important; }
+  body { min-width: 0; }
+  body > :not(#root), .workspace > :not(.editor-pane), .editor-pane > :not(.document-shell), .document-meta, .bubble-menu, .slash-menu { display: none !important; }
+  .workspace, .workspace.nav-collapsed, .editor-pane, .document-shell { display: block !important; position: static !important; height: auto !important; overflow: visible !important; padding: 0 !important; margin: 0 !important; border: 0 !important; background: #fff !important; visibility: visible !important; opacity: 1 !important; transform: none !important; }
+  .document-shell > * { max-width: none; }
+  .editor-surface, .note-prose { min-height: 0 !important; }
+  .note-prose { color: #000 !important; font-size: 11.5pt; line-height: 1.55; }
+  .note-prose * { color: #000 !important; background: transparent !important; box-shadow: none !important; }
+  .note-prose h1, .note-prose h2, .note-prose h3 { break-after: avoid; page-break-after: avoid; }
+  .note-prose h1:first-child { margin-top: 0; }
+  .note-prose p, .note-prose li, .note-prose blockquote { orphans: 3; widows: 3; }
+  .note-prose pre, .note-prose blockquote, .note-prose img, .note-prose tr { break-inside: avoid; page-break-inside: avoid; }
+  .note-prose pre { border: 1px solid #999 !important; white-space: pre-wrap; overflow: visible; }
+  .note-prose code:not(pre code) { border: 1px solid #ccc; }
+  .note-prose a { text-decoration-color: #000; }
+  .note-prose blockquote { border-left-color: #999 !important; }
+  .note-prose hr { border-top-color: #999 !important; }
+  .note-prose img { max-width: 100% !important; max-height: 240mm; height: auto; object-fit: contain; outline: none !important; }
+  .note-prose .tableWrapper { overflow: visible !important; }
+  .note-prose table { width: 100% !important; min-width: 0 !important; }
+  .note-prose th, .note-prose td { min-width: 0 !important; border: 1px solid #555 !important; }
+  .note-prose th { font-weight: 700; }
+  .note-prose .selectedCell::after, .note-prose p.is-editor-empty:first-child::before { display: none !important; content: none !important; }
+  .note-prose ul[data-type="taskList"] input { accent-color: #000; }
+}

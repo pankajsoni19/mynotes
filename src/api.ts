@@ -27,3 +27,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return payload as T;
 }
 
+
+export function getCsrfToken() {
+  return csrfToken;
+}

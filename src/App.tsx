@@ -10,6 +10,7 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  FileDown,
   FilePlus2,
   Folder as FolderIcon,
   FolderPlus,
@@ -1001,6 +1002,16 @@ export function App() {
     }
   }
 
+  // The print stylesheet (styles.css, @media print) keeps only the note; the title names the PDF.
+  function downloadPdf() {
+    if (!note) return;
+    const previousTitle = document.title;
+    const restoreTitle = () => { document.title = previousTitle; };
+    document.title = note.title.trim() || "Untitled note";
+    window.addEventListener("afterprint", restoreTitle, { once: true });
+    window.print();
+  }
+
   async function discard() {
     if (!note || !window.confirm("Discard this draft and return to the published version?")) return;
     const removesNote = note.current_version === 0;
@@ -1322,6 +1333,7 @@ export function App() {
             <div className={`save-indicator ${saveState}`}><span />{saveState === "saving" ? "Saving…" : saveState === "conflict" ? "Save conflict" : saveState === "error" ? "Not saved" : note.hasDraft ? "Draft saved" : `Version ${note.current_version}`}</div>
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
+              <button className="icon-button" onClick={downloadPdf} aria-label="Download as PDF" title="Download as PDF"><FileDown /></button>
               {note.isOwner && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
               {note.isOwner && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={discard}>Discard</button>}
               {hasPublishableDelta && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
@@ -1329,6 +1341,7 @@ export function App() {
             </div>
             {mobileActions && <div className="mobile-actions-menu">
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
+              <button onClick={() => { setMobileActions(false); downloadPdf(); }}><FileDown />Download as PDF</button>
               {note.isOwner && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
               {note.isOwner && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
               {hasPublishableDelta && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
@@ -1336,7 +1349,7 @@ export function App() {
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={setMarkdown} />
+            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={setMarkdown} folderId={note.folder_id} onNotice={flash} />
           </article>
         </>}
       </section>
