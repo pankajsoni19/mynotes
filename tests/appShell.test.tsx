@@ -89,3 +89,33 @@ test("account buttons have 44px hit areas on phones without growing the icon", a
   expect(phone).toMatch(/\.app-account-button \{[^}]*width: 44px;[^}]*height: 44px;/);
   expect(css).toMatch(/\.app-account-button svg \{ width: 16px;/);
 });
+
+test("hidden Today sections are kept per user and survive bad storage", async () => {
+  const { hiddenSectionsKey, readHiddenSections, toggleHidden, writeHiddenSections } = await import("../src/today/todayPreferences");
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+  expect(readHiddenSections("u1", storage)).toEqual([]);
+  writeHiddenSections("u1", toggleHidden([], "files", false), storage);
+  expect(values.get(hiddenSectionsKey("u1"))).toBe('["files"]');
+  expect(readHiddenSections("u1", storage)).toEqual(["files"]);
+  expect(readHiddenSections("u2", storage)).toEqual([]);
+  expect(toggleHidden(["files", "drafts"], "files", true)).toEqual(["drafts"]);
+  values.set(hiddenSectionsKey("u1"), "{not json");
+  expect(readHiddenSections("u1", storage)).toEqual([]);
+  values.set(hiddenSectionsKey("u1"), JSON.stringify(["drafts", 5, "<script>", "drafts"]));
+  expect(readHiddenSections("u1", storage)).toEqual(["drafts"]);
+  const throwing = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+  expect(readHiddenSections("u1", throwing)).toEqual([]);
+  expect(() => writeHiddenSections("u1", ["files"], throwing)).not.toThrow();
+});
+
+test("Today is one column with 44px rows and targets on phones", async () => {
+  const css = await Bun.file(new URL("../src/today/today.css", import.meta.url)).text();
+  const phone = css.slice(css.indexOf("@media (max-width: 760px)"));
+  expect(phone).toMatch(/\.today-grid \{ grid-template-columns: minmax\(0, 1fr\);/);
+  expect(phone).toMatch(/\.today-row \{ min-height: 44px;/);
+  expect(phone).toMatch(/\.today-view-all \{ min-height: 44px;/);
+  expect(phone).toMatch(/\.today-refresh, \.today-retry, \.today-customize[^{]*\{ min-height: 44px; \}/);
+  expect(css).toMatch(/\.today-customize-option \{ min-height: 44px;/);
+  expect(css).toMatch(/\.today-grid \{ display: grid; grid-template-columns: repeat\(auto-fill, minmax\(320px, 1fr\)\);/);
+});

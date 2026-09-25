@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { ArrowRight, RotateCcw, RotateCw, Sparkles } from "lucide-react";
+import { ArrowRight, RotateCcw, RotateCw, SlidersHorizontal, Sparkles } from "lucide-react";
 import { AccountActions, useBinCount } from "../AppShell";
 import type { AppSection } from "../appShellNavigation";
 import { formatRoute, type Route } from "../router";
+import { CustomizeSections } from "./CustomizeSections";
 import { getToday, type TodayResponse, type TodaySection } from "./todayApi";
 import { TODAY_APPS } from "./todayApps";
+import { readHiddenSections, toggleHidden, writeHiddenSections } from "./todayPreferences";
 import { DEFAULT_SECTION_ORDER, storageText, TODAY_SECTIONS, viewAllRoute, type StorageUsage } from "./todaySections";
 import "./today.css";
 
@@ -95,6 +97,9 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
   const [refreshing, setRefreshing] = useState(false);
   const [retrying, setRetrying] = useState<ReadonlySet<string>>(new Set());
   const [announcement, setAnnouncement] = useState("");
+  const [hidden, setHidden] = useState<string[]>(() => readHiddenSections(userId));
+  const [customizing, setCustomizing] = useState(false);
+  const customizeButtonRef = useRef<HTMLButtonElement>(null);
   const fetchedAtRef = useRef(0);
   const generationRef = useRef(0);
 
@@ -133,6 +138,17 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [load]);
 
+  useEffect(() => setHidden(readHiddenSections(userId)), [userId]);
+  function changeHidden(next: string[]) {
+    setHidden(next);
+    writeHiddenSections(userId, next);
+  }
+  const closeCustomize = useCallback(() => {
+    setCustomizing(false);
+    // Return focus to the button that opened the dialog.
+    window.requestAnimationFrame(() => customizeButtonRef.current?.focus());
+  }, []);
+
   async function retrySection(name: string) {
     setRetrying((current) => new Set(current).add(name));
     try {
@@ -149,7 +165,8 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
 
   const initialLoading = data === null && loadError === null;
   // The sections the server returned, in its order, that this client knows how to show.
-  const names = data ? Object.keys(data.sections).filter((name) => TODAY_SECTIONS[name]) : DEFAULT_SECTION_ORDER.filter((name) => name !== "agentDrafts");
+  const available = data ? Object.keys(data.sections).filter((name) => TODAY_SECTIONS[name]) : DEFAULT_SECTION_ORDER.filter((name) => name !== "agentDrafts");
+  const names = available.filter((name) => !hidden.includes(name));
   const firstName = displayName.split(" ")[0] || displayName;
 
   return <main className="app-home today-home">
@@ -177,6 +194,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
       <div className="today-toolbar">
         <h2 className="today-toolbar-title">{data ? new Date(`${data.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "Today"}</h2>
         <button className="secondary-button today-refresh" onClick={() => { void load(true); }} disabled={refreshing} aria-describedby="today-status"><RotateCw className={refreshing ? "spinning" : undefined} />{refreshing ? "Refreshing…" : "Refresh"}</button>
+        <button ref={customizeButtonRef} className="secondary-button today-customize" onClick={() => setCustomizing(true)} aria-haspopup="dialog" disabled={!data}><SlidersHorizontal /><span>Customize<span className="today-customize-extra"> sections</span></span></button>
         <p id="today-status" className="sr-only" role="status" aria-live="polite">{announcement}</p>
       </div>
 
@@ -186,9 +204,12 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
           <p>{loadError}</p>
           <button className="primary-button" onClick={() => { void load(true); }} disabled={refreshing}><RotateCcw />Try again</button>
         </div>
-        : <div className="today-grid" aria-busy={initialLoading || undefined}>
-          {names.map((name) => <SectionView key={name} name={name} section={data?.sections[name]} date={data?.date ?? ""} busy={initialLoading} retrying={retrying.has(name)} onRetry={() => { void retrySection(name); }} onOpenRoute={onOpenRoute} />)}
-        </div>}
+        : names.length === 0
+          ? <p className="today-all-hidden">Every section is hidden. Use Customize sections to show them again.</p>
+          : <div className="today-grid" aria-busy={initialLoading || undefined}>
+            {names.map((name) => <SectionView key={name} name={name} section={data?.sections[name]} date={data?.date ?? ""} busy={initialLoading} retrying={retrying.has(name)} onRetry={() => { void retrySection(name); }} onOpenRoute={onOpenRoute} />)}
+          </div>}
+      {customizing && <CustomizeSections names={available} hidden={hidden} onChange={(name, visible) => changeHidden(toggleHidden(hidden, name, visible))} onShowAll={() => changeHidden([])} onClose={closeCustomize} />}
     </div>
   </main>;
 }

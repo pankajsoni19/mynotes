@@ -48,3 +48,26 @@
 .today-meter.high span { background: #ff8c7a; }
 .today-storage-detail { margin: 0; color: #85858c; font-size: .78rem; }
 @media (prefers-reduced-motion: reduce) { .today-app { transition: none; } .today-skeleton li, .today-refresh .spinning { animation: none; } }
+.today-all-hidden { margin: 0; border: 1px dashed #303035; border-radius: 16px; padding: 20px; color: #9b9ba2; }
+.today-customize-list { margin: 0; border: 0; padding: 4px 12px 0; display: grid; }
+.today-customize-option { min-height: 44px; display: flex; align-items: center; gap: 12px; border-radius: 9px; padding: 0 8px; color: #e4e4e6; font-size: .92rem; cursor: pointer; }
+.today-customize-option:hover { background: #1c1c1f; }
+.today-customize-option input { width: 18px; height: 18px; margin: 0; accent-color: var(--yellow); }
+
+/* Phones (390 px first): one column, 44 px rows and targets. */
+@media (max-width: 760px) {
+  .today-content { width: calc(100% - 32px); padding: 26px 0 calc(40px + env(safe-area-inset-bottom)); }
+  .today-intro h1 { margin-bottom: 18px; font-size: 2.1rem; }
+  .today-launcher ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+  .today-app { width: 100%; min-height: 52px; padding-right: 10px; }
+  .today-toolbar { flex-wrap: wrap; margin: 26px 0 12px; }
+  .today-toolbar-title { flex-basis: 100%; }
+  .today-refresh, .today-retry, .today-customize, .today-load-error .primary-button { min-height: 44px; }
+  .today-customize-extra { display: none; }
+  .today-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .today-section { padding: 14px 12px 10px; }
+  .today-view-all { min-height: 44px; margin-right: -4px; padding: 0 10px; }
+  .today-list { margin: 0 -4px; }
+  .today-row { min-height: 44px; padding: 6px; }
+  .today-row-label { font-size: .95rem; }
+}
