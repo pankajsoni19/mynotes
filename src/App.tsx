@@ -36,6 +36,9 @@ import {
 import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
 import { AppHome, AppPlaceholder } from "./AppShell";
+import { FilesApp } from "./files/FilesApp";
+import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
+import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
@@ -567,25 +570,36 @@ function FolderSharePanel({ folder, onClose, onChanged }: { folder: Folder; onCl
   );
 }
 
-function historyStateFor(userId: string, route: Route, panel: MobilePanel) {
-  const notesState = route.app === "notes" ? createHistoryState(userId, { panel, folder: route.folder, noteId: route.noteId }, null) : null;
-  return createAppHistoryState(userId, route.app, notesState);
+// Files entries carry their own panel hint. Without an explicit one, a matching hint on the current
+// entry is kept (reloads, URL normalisation), otherwise the panel follows the selection.
+function filesSnapshotFor(userId: string, route: Extract<Route, { app: "files" }>, filesPanel?: FilesPanel) {
+  const selection = { folder: route.folder, documentId: route.documentId };
+  return { ...selection, panel: filesPanel ?? resolveFilesPanel(selection, readFilesHistorySnapshot(window.history.state, userId)) };
+}
+
+function historyStateFor(userId: string, route: Route, panel: MobilePanel, filesPanel?: FilesPanel) {
+  const appState = route.app === "notes" ? createHistoryState(userId, { panel, folder: route.folder, noteId: route.noteId }, null)
+    : route.app === "files" ? createFilesHistoryState(userId, filesSnapshotFor(userId, route, filesPanel), null) : null;
+  return createAppHistoryState(userId, route.app, appState);
 }
 
 // The URL carries the app, folder, and item; the state payload adds the phone panel hint (and the
 // folder a note was opened from). A change that keeps the URL is a pure panel step: phones get a Back
 // entry for it, desktops just update the current entry.
-function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push") {
+function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push", filesPanel?: FilesPanel) {
   const url = formatRoute(route);
   const current: unknown = window.history.state;
   const samePath = url === window.location.pathname;
   const currentSnapshot = readHistorySnapshot(current, userId);
+  const currentFilesSnapshot = readFilesHistorySnapshot(current, userId);
   const sameEntry = samePath && resolveAppHistorySection(current, userId) === route.app
-    && (route.app !== "notes" || (currentSnapshot !== null && sameSnapshot(currentSnapshot, { panel, folder: route.folder, noteId: route.noteId })));
+    && (route.app !== "notes" || (currentSnapshot !== null && sameSnapshot(currentSnapshot, { panel, folder: route.folder, noteId: route.noteId })))
+    && (route.app !== "files" || (currentFilesSnapshot !== null && sameFilesSnapshot(currentFilesSnapshot, filesSnapshotFor(userId, route, filesPanel))));
   if (sameEntry && mode === "push") return;
   const depth = readHistoryDepth(current);
-  if (mode === "push" && !(samePath && !isMobileViewport())) window.history.pushState(withHistoryDepth(historyStateFor(userId, route, panel), depth + 1), "", url);
-  else window.history.replaceState(withHistoryDepth(historyStateFor(userId, route, panel), depth), "", url);
+  const state = historyStateFor(userId, route, panel, filesPanel);
+  if (mode === "push" && !(samePath && !isMobileViewport())) window.history.pushState(withHistoryDepth(state, depth + 1), "", url);
+  else window.history.replaceState(withHistoryDepth(state, depth), "", url);
 }
 
 export function App() {
@@ -815,9 +829,11 @@ export function App() {
     autosaveTimerRef.current = null;
   }
 
-  function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel } = {}) {
+  function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
     if (!session) return;
-    writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push");
+    writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel);
+    // While the first load is in flight, the newest URL is the one to apply once it lands.
+    if (pendingRouteRef.current) pendingRouteRef.current = route;
     if (startupRouteState(session.user.id, routeAppliedUserRef.current, startupFailedUserRef.current) === "retry") retryStartup(route);
   }
 
@@ -1207,7 +1223,9 @@ export function App() {
   const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
 
   if (activeApp !== "notes" && !session.totp.setupRequired) return <>
-    {activeApp === "home" ? <AppHome {...account} onOpen={openApp} /> : <AppPlaceholder {...account} section={activeApp} onHome={() => { void openHome(); }} onOpenNotes={() => openApp("notes")} />}
+    {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
+      : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
+      : <AppPlaceholder {...account} section={activeApp} onHome={() => { void openHome(); }} onOpenNotes={() => openApp("notes")} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}

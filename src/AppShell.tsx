@@ -22,7 +22,7 @@ function AccountActions({ displayName, onSettings, onSignOut }: AccountProps) {
 
 const cards: Array<{ section: Exclude<AppSection, "home">; icon: typeof Archive; eyebrow: string; title: string; copy: string; status: string }> = [
   { section: "notes", icon: Archive, eyebrow: "Your workspace", title: "Notes", copy: "Write fluid Markdown notes, keep versions, and share with the people you choose.", status: "Open Notes" },
-  { section: "files", icon: FileText, eyebrow: "Coming next", title: "Files", copy: "Store supporting documents next to your note folders with secure previews and downloads.", status: "Preview" },
+  { section: "files", icon: FileText, eyebrow: "Your workspace", title: "Files", copy: "Upload, preview, and organize documents next to your notes.", status: "Open Files" },
   { section: "bin", icon: Trash2, eyebrow: "Coming next", title: "Bin", copy: "Restore deleted notes and documents during their 30-day recovery window.", status: "Preview" }
 ];
 

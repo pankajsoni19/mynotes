@@ -30,3 +30,13 @@ test("placeholders keep a Home button and an Open Notes shortcut", () => {
   expect(markup).toContain("Home");
   expect(markup).toContain("Open Notes");
 });
+
+test("Home opens Files as a live app while Bin stays a preview", () => {
+  const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
+  const files = markup.match(/<button class="app-card app-card-files">(.*?)<\/button>/)?.[1] ?? "";
+  expect(files).toContain("Your workspace");
+  expect(files).toContain("Upload, preview, and organize documents next to your notes.");
+  expect(files).toContain("Open Files");
+  const bin = markup.match(/<button class="app-card app-card-bin">(.*?)<\/button>/)?.[1] ?? "";
+  expect(bin).toContain("Coming next");
+});
