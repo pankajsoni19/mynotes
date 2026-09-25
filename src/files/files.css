@@ -64,8 +64,49 @@
 .file-details dd { margin: 0; color: #d6d6d9; font-size: .84rem; overflow-wrap: anywhere; }
 .file-details code { color: #a7a7ad; font-size: .76rem; }
 
+.file-owner-actions { display: flex; gap: 6px; }
+.file-action.danger { color: #f3a3ae; border-color: #3d2529; }
+.file-action.danger:hover { background: #2b181c; border-color: #6a3039; }
+.file-row:focus-visible { outline: 2px solid #8a7133; outline-offset: -2px; }
+
+.file-dialog { position: fixed; z-index: 41; top: 50%; left: 50%; width: min(460px, calc(100vw - 32px)); max-height: min(640px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: hidden; transform: translate(-50%, -50%); border: 1px solid #36363b; border-radius: 16px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
+.file-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 16px 10px 20px; }
+.file-dialog-header > div { min-width: 0; }
+.file-dialog-header h2 { margin: 4px 0 0; overflow: hidden; color: #f2f2f3; font-size: 1.1rem; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.file-dialog-copy { margin: 0; padding: 4px 20px 8px; color: #b7b7bd; font-size: .88rem; line-height: 1.55; overflow-wrap: anywhere; }
+.file-dialog-form { display: grid; gap: 8px; padding: 4px 20px 0; }
+.file-dialog-form label { color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.file-dialog-form input { min-height: 42px; border: 1px solid #333338; border-radius: 10px; padding: 0 12px; background: #0b0b0d; color: #ededee; font-size: .92rem; outline: 0; }
+.file-dialog-form input:focus { border-color: #6b582f; }
+.file-dialog-form input[aria-invalid="true"] { border-color: #6a3039; }
+.file-dialog-hint, .file-dialog-error { margin: 0; font-size: .76rem; line-height: 1.45; overflow-wrap: anywhere; }
+.file-dialog-hint { color: #77777e; }
+.file-dialog-error { color: #fda4af; }
+.file-dialog > .file-dialog-error { padding: 0 20px; }
+.file-share-error { padding: 0 14px; }
+.file-dialog-form .file-dialog-actions { padding: 12px 0 18px; }
+.file-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px 18px; }
+.file-dialog-actions button { min-height: 40px; margin: 0; padding: 0 16px; font-size: .84rem; font-weight: 650; }
+.file-dialog-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.danger-button { border: 1px solid #6a3039; border-radius: 10px; background: #3a1d22; color: #ffc2ca; cursor: pointer; }
+.danger-button:hover:not(:disabled) { background: #4a2229; }
+.move-list { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 4px; padding: 6px 12px; }
+.move-option { min-height: 46px; display: grid; grid-template-columns: 20px minmax(0, 1fr) 18px; align-items: center; gap: 12px; border: 1px solid transparent; border-radius: 10px; padding: 0 12px; background: transparent; color: #d6d6d9; font-size: .9rem; text-align: left; cursor: pointer; }
+.move-option:hover:not(:disabled) { background: #1f1f23; }
+.move-option.active { border-color: #6b572c; background: #2b261b; color: #ffe19a; }
+.move-option:disabled { opacity: .5; cursor: not-allowed; }
+.move-option svg { width: 17px; height: 17px; color: #b99b59; }
+.move-option span { min-width: 0; display: grid; gap: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.move-option small { color: #77777e; font-size: .72rem; }
+.file-toast { display: flex; align-items: center; gap: 14px; }
+.file-toast span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.file-toast-action { flex: none; min-height: 30px; border: 0; border-radius: 7px; padding: 0 10px; background: #2c2922; color: #f5cf79; font-weight: 700; cursor: pointer; }
+.file-toast-action:hover { background: #3a3323; }
+
 @media (max-width: 1180px) and (min-width: 761px) {
   .file-preview-body { grid-template-columns: minmax(0, 1fr); }
+  .file-owner-actions .file-action { width: 38px; padding: 0; }
+  .file-owner-actions .file-action span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 @media (max-width: 1020px) and (min-width: 761px) {
   .files-workspace { grid-template-columns: 205px 300px minmax(0, 1fr); }

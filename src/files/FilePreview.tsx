@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Download, ExternalLink } from "lucide-react";
+import { ChevronLeft, Download, ExternalLink, FolderInput, Pencil, Share2, Trash2 } from "lucide-react";
 import type { DocumentSummary } from "../types";
 import { contentUrl, fetchTextPreview, formatBytes, TEXT_PREVIEW_BYTES } from "./filesApi";
 import { formatDateTime, kindIcon, kindLabel, visibilityLabels } from "./format";
@@ -48,14 +48,30 @@ function PreviewBody({ document }: { document: DocumentSummary }) {
   }
 }
 
-export function FilePreview({ document, folderName, onBack }: { document: DocumentSummary; folderName: string; onBack: () => void }) {
+export type FilePreviewActions = { rename: () => void; move: () => void; share: () => void; remove: () => void };
+
+type FilePreviewProps = {
+  document: DocumentSummary;
+  folderName: string;
+  onBack: () => void;
+  /** Owner-only actions; null for files other people shared, which get Download (and Open preview) only. */
+  actions?: FilePreviewActions | null;
+};
+
+export function FilePreview({ document, folderName, onBack, actions = null }: FilePreviewProps) {
   const Icon = kindIcon(document.preview_kind);
   return <>
     <header className="editor-toolbar file-preview-toolbar">
       <div className="mobile-editor-nav"><button className="icon-button" onClick={onBack} aria-label="Back to files"><ChevronLeft /></button></div>
       <span className="file-preview-kind"><Icon aria-hidden="true" /></span>
       <h2 className="file-preview-title" title={document.name}>{document.name}</h2>
-      <a className="secondary-button file-action file-download" href={contentUrl(document.id, "attachment")} download><Download />Download</a>
+      <a className="secondary-button file-action file-download" href={contentUrl(document.id, "attachment")} download aria-label={`Download ${document.name}`}><Download /><span>Download</span></a>
+      {actions && <div className="file-owner-actions" role="group" aria-label="File actions">
+        <button className="secondary-button file-action" onClick={actions.rename} aria-label={`Rename ${document.name}`} aria-keyshortcuts="F2" title="Rename (F2)"><Pencil /><span>Rename</span></button>
+        <button className="secondary-button file-action" onClick={actions.move} aria-label={`Move ${document.name}`} title="Move"><FolderInput /><span>Move</span></button>
+        <button className="secondary-button file-action" onClick={actions.share} aria-label={`Share ${document.name}`} title="Share"><Share2 /><span>Share</span></button>
+        <button className="secondary-button file-action danger" onClick={actions.remove} aria-label={`Delete ${document.name}`} aria-keyshortcuts="Delete" title="Delete"><Trash2 /><span>Delete</span></button>
+      </div>}
     </header>
     <div className="file-preview-body">
       <section className="file-preview-stage" aria-label="Preview"><PreviewBody key={document.id} document={document} /></section>

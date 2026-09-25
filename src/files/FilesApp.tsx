@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ChevronDown, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Settings, Sparkles, Upload, Users, X } from "lucide-react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
+import { restoreBinItem } from "../bin/binApi";
+import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
-import { formatBytes, getFile, listFiles, uploadFile, UploadRequestError } from "./filesApi";
+import { ConfirmDialog } from "./Dialog";
+import { canManage, deleteConfirmMessage, emptyToastState, fileToastReducer, movedMessage, toastDuration } from "./fileActions";
+import { deleteFile, formatBytes, getFile, listFiles, moveFile, renameFile, uploadFile, UploadRequestError } from "./filesApi";
 import { FilePreview } from "./FilePreview";
+import { FileSharePanel } from "./FileSharePanel";
+import { MoveSheet } from "./MoveSheet";
+import { RenameDialog } from "./RenameDialog";
 import { kindIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
@@ -38,6 +45,17 @@ function mergeDocument(documents: DocumentSummary[], document: DocumentSummary) 
   return [document, ...documents.filter((item) => item.id !== document.id)].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
 }
 
+function replaceDocument(documents: DocumentSummary[], document: DocumentSummary) {
+  return documents.map((item) => item.id === document.id ? document : item);
+}
+
+const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
+  ? (reason.payload as { code?: unknown }).code
+  : undefined;
+const errorMessage = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
+
+type FilesDialog = { kind: "rename" | "move" | "share" | "delete"; documentId: string };
+
 const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", uploading: "Uploading", done: "Uploaded", failed: "Failed", canceled: "Canceled" };
 
 export function FilesApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut }: FilesAppProps) {
@@ -59,6 +77,19 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const folderRef = useRef(folder);
   folderRef.current = folder;
   const routeGenerationRef = useRef(0);
+  const [dialog, setDialog] = useState<FilesDialog | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [toastState, toastDispatch] = useReducer(fileToastReducer, emptyToastState);
+  // The row that opened the current dialog, so focus can go back to it.
+  const returnFocusRef = useRef<string | null>(null);
+  const notify = useCallback((message: string, undoDocumentId: string | null = null) => toastDispatch({ type: "show", message, undoDocumentId }), []);
+
+  const toast = toastState.toast;
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => toastDispatch({ type: "dismiss", id: toast.id }), toastDuration(toast));
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   // Applies a Files URL (first load or Back/Forward) to the loaded data.
   const applyRoute = useCallback(async (route: FilesRoute, snapshot: FilesNavigationSnapshot | null, loaded: LoadedData) => {
@@ -128,6 +159,139 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const folderTitle = folder === "all" ? "All files" : folder === "shared" ? "Shared with me" : currentFolder?.name ?? "Folder";
   const pendingUploads = queue.items.filter((item) => item.status === "queued" || item.status === "uploading").length;
   const summary = uploadQueueSummary(queue);
+
+  const findDocument = (id: string) => documents.find((item) => item.id === id) ?? (extraDocument?.id === id ? extraDocument : null);
+  const dialogDocument = dialog ? findDocument(dialog.documentId) : null;
+
+  const setDocuments = (change: (documents: DocumentSummary[]) => DocumentSummary[]) =>
+    setData((current) => current ? { ...current, documents: change(current.documents) } : current);
+  const storeDocument = (document: DocumentSummary) => {
+    setDocuments((items) => items.some((item) => item.id === document.id) ? replaceDocument(items, document) : mergeDocument(items, document));
+    setExtraDocument((current) => current?.id === document.id ? document : current);
+  };
+
+  function focusRow(id: string | null) {
+    if (!id) return;
+    window.requestAnimationFrame(() => {
+      const row = window.document.querySelector<HTMLElement>(`[data-document-id="${CSS.escape(id)}"]`);
+      row?.focus();
+    });
+  }
+
+  function openDialog(kind: FilesDialog["kind"], document: DocumentSummary) {
+    if (!canManage(document)) return;
+    returnFocusRef.current = document.id;
+    setDialog({ kind, documentId: document.id });
+  }
+
+  const closeDialog = useCallback(() => {
+    setDialog(null);
+    focusRow(returnFocusRef.current);
+  }, []);
+
+  // Optimistic: the list shows the new name at once and goes back to the old one if the server refuses.
+  function renameDocument(document: DocumentSummary, name: string) {
+    closeDialog();
+    const previous = document.name;
+    storeDocument({ ...document, name });
+    renameFile(document.id, name).then(({ document: saved }) => {
+      storeDocument(saved);
+      notify(`Renamed to “${saved.name}”`);
+    }).catch((reason) => {
+      setDocuments((items) => items.map((item) => item.id === document.id && item.name === name ? { ...item, name: previous } : item));
+      setExtraDocument((current) => current?.id === document.id && current.name === name ? { ...current, name: previous } : current);
+      notify(errorMessage(reason, "Could not rename the file"));
+    });
+  }
+
+  async function moveDocument(document: DocumentSummary, target: Folder) {
+    const { document: moved } = await moveFile(document.id, target.id);
+    storeDocument(moved);
+    // An open file follows the move, like Notes; otherwise the list stays where it is.
+    if (documentId === moved.id && folder !== "all" && folder !== "shared") {
+      setFolder(target.id);
+      navigate(filesRoute(target.id, moved.id), { replace: true, filesPanel: panel });
+    }
+    notify(movedMessage(target.name, moved.visibility));
+  }
+
+  async function refreshDocument(id: string) {
+    const { document } = await getFile(id);
+    storeDocument(document);
+  }
+
+  async function deleteDocument(document: DocumentSummary) {
+    setDeleting(true);
+    // Focus moves to the neighbouring row once the deleted one is gone.
+    const index = visible.findIndex((item) => item.id === document.id);
+    const neighbour = index >= 0 ? visible[index + 1] ?? visible[index - 1] ?? null : null;
+    try {
+      await deleteFile(document.id);
+      setDocuments((items) => items.filter((item) => item.id !== document.id));
+      setExtraDocument((current) => current?.id === document.id ? null : current);
+      if (documentId === document.id) {
+        setDocumentId(null);
+        setPanel("files");
+        navigate(filesRoute(folder, null), { replace: true, filesPanel: "files" });
+      }
+      setDialog(null);
+      returnFocusRef.current = null;
+      focusRow(neighbour?.id ?? null);
+      notify(`Moved “${document.name}” to the Bin`, document.id);
+    } catch (reason) {
+      setDialog(null);
+      if (reason instanceof ApiError && reason.status === 404) {
+        setDocuments((items) => items.filter((item) => item.id !== document.id));
+        notify("This file no longer exists");
+      } else {
+        focusRow(returnFocusRef.current);
+        notify(errorMessage(reason, "Could not delete the file"));
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function undoDelete(id: string) {
+    toastDispatch({ type: "clear" });
+    try {
+      const result = await restoreBinItem({ type: "document", id });
+      await refreshDocument(id).catch(() => undefined);
+      notify(result.alreadyRestored ? `Already restored to ${result.folderName ?? "Default"}` : restoredMessage(result.folderName ?? "Default", result.visibility));
+      focusRow(id);
+    } catch (reason) {
+      if (errorCode(reason) === "PURGING") notify("This file is being deleted forever and can't be restored");
+      else if (reason instanceof ApiError && reason.status === 404) notify("This file is no longer in the Bin");
+      else notify(errorMessage(reason, "Could not restore the file"));
+    }
+  }
+
+  // ↑/↓ move the selection, Enter opens the preview (the row's own click), F2 renames, Delete/Backspace deletes.
+  function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const rowId = (event.target as HTMLElement).closest<HTMLElement>("[data-document-id]")?.dataset.documentId ?? documentId;
+    const index = rowId ? visible.findIndex((item) => item.id === rowId) : -1;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (!visible.length) return;
+      event.preventDefault();
+      const next = visible[index < 0 ? 0 : Math.min(visible.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))];
+      if (next.id !== documentId) {
+        setDocumentId(next.id);
+        navigate(filesRoute(folder, next.id), { replace: true, filesPanel: panel });
+      }
+      focusRow(next.id);
+      return;
+    }
+    const current = index >= 0 ? visible[index] : null;
+    if (!current || !canManage(current)) return;
+    if (event.key === "F2") {
+      event.preventDefault();
+      openDialog("rename", current);
+    } else if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      openDialog("delete", current);
+    }
+  }
 
   function folderLabel(document: DocumentSummary) {
     if (!document.folder_id) return "No folder";
@@ -258,11 +422,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { chooseFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
       </header>
-      <div className="note-list file-list" role="list" aria-label={folderTitle}>
+      <div className="note-list file-list" role="list" aria-label={folderTitle} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
           const Icon = kindIcon(item.preview_kind);
           return <div role="listitem" key={item.id}>
-            <button className={`file-row${documentId === item.id ? " selected" : ""}`} aria-current={documentId === item.id ? "true" : undefined} onClick={() => openDocument(item)}>
+            <button className={`file-row${documentId === item.id ? " selected" : ""}`} data-document-id={item.id} aria-current={documentId === item.id ? "true" : undefined} aria-keyshortcuts={canManage(item) ? "F2 Delete" : undefined} onClick={() => openDocument(item)}>
               <span className="file-row-icon"><Icon aria-hidden="true" /></span>
               <span className="file-row-copy">
                 <span className="file-row-name" title={item.name}>{item.name}</span>
@@ -298,9 +462,41 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
     <section className="editor-pane file-preview-pane">
       {selected
-        ? <FilePreview key={selected.id} document={selected} folderName={folderLabel(selected)} onBack={() => back("files")} />
+        ? <FilePreview
+          key={selected.id}
+          document={selected}
+          folderName={folderLabel(selected)}
+          onBack={() => back("files")}
+          actions={canManage(selected) ? {
+            rename: () => openDialog("rename", selected),
+            move: () => openDialog("move", selected),
+            share: () => openDialog("share", selected),
+            remove: () => openDialog("delete", selected)
+          } : null}
+        />
         : <div className="editor-empty"><div className="empty-glyph"><Files /></div><h2>Select a file</h2><p>Choose one from the list to preview it and see its details.</p></div>}
     </section>
+
+    {dialog?.kind === "rename" && dialogDocument && <RenameDialog document={dialogDocument} onSubmit={(name) => renameDocument(dialogDocument, name)} onCancel={closeDialog} />}
+    {dialog?.kind === "move" && dialogDocument && <MoveSheet document={dialogDocument} folders={folders} onMove={async (target) => { await moveDocument(dialogDocument, target); closeDialog(); }} onCancel={closeDialog} />}
+    {dialog?.kind === "share" && dialogDocument && <FileSharePanel document={dialogDocument} onClose={closeDialog} onChanged={() => {
+      closeDialog();
+      notify("Sharing updated");
+      refreshDocument(dialogDocument.id).catch(() => undefined);
+    }} />}
+    {dialog?.kind === "delete" && dialogDocument && <ConfirmDialog
+      title="Move to the Bin?"
+      message={deleteConfirmMessage(dialogDocument.name)}
+      confirmLabel="Move to Bin"
+      danger
+      busy={deleting}
+      onConfirm={() => { void deleteDocument(dialogDocument); }}
+      onCancel={closeDialog}
+    />}
+    {toast && <div className="toast file-toast" role="status">
+      <span>{toast.message}</span>
+      {toast.undoDocumentId && <button className="file-toast-action" onClick={() => { void undoDelete(toast.undoDocumentId!); }}>Undo</button>}
+    </div>}
 
     <nav className="mobile-tabbar" aria-label="Files panels">
       <button className={panel === "folders" ? "active" : ""} onClick={() => showPanel("folders")}><Menu />Folders</button>

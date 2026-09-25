@@ -33,3 +33,12 @@ test("details list owner, folder, and effective access", () => {
   expect(markup).toContain("Shared with selected people");
   expect(markup).toContain("2 KB");
 });
+
+test("owners get Rename, Move, Share, and Delete; other people's files only Download", () => {
+  const actions = { rename: () => undefined, move: () => undefined, share: () => undefined, remove: () => undefined };
+  const owned = renderToStaticMarkup(<FilePreview document={base} folderName="Default" onBack={() => undefined} actions={actions} />);
+  for (const label of ["Rename report.bin", "Move report.bin", "Share report.bin", "Delete report.bin"]) expect(owned).toContain(`aria-label="${label}"`);
+  const shared = renderToStaticMarkup(<FilePreview document={{ ...base, is_owner: 0 }} folderName="Default" onBack={() => undefined} actions={null} />);
+  expect(shared).toContain("Download report.bin");
+  for (const label of ["Rename", "Move", "Share", "Delete"]) expect(shared).not.toContain(`aria-label="${label} report.bin"`);
+});
