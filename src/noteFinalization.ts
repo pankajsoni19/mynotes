@@ -13,3 +13,33 @@ export async function finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta
   if (hasPublishableDelta && await publish()) return "published";
   return "unchanged";
 }
+
+export type AutoPublishInput = {
+  isOwner: boolean;
+  /** The user typed in this note's editor since it was opened (editor onChange). */
+  sessionEdited: boolean;
+  /** The server reports the saved draft differs from the published version. */
+  serverHasDelta: boolean;
+  /** The editor holds text that is not saved yet. */
+  hasUnsavedChanges: boolean;
+};
+
+/**
+ * Whether leaving a note publishes its draft. Only a draft edited in this
+ * session is published on the way out. A draft that was already waiting when
+ * the note was opened (from another session, or written by an MCP key) stays
+ * a draft until the owner presses Publish.
+ */
+export function shouldAutoPublish({ isOwner, sessionEdited, serverHasDelta, hasUnsavedChanges }: AutoPublishInput) {
+  return isOwner && sessionEdited && (serverHasDelta || hasUnsavedChanges);
+}
+
+/** Whether the explicit Publish button is offered: any owner draft that differs from the published version. */
+export function canPublish({ isOwner, serverHasDelta, hasUnsavedChanges }: Omit<AutoPublishInput, "sessionEdited">) {
+  return isOwner && (serverHasDelta || hasUnsavedChanges);
+}
+
+/** The "Draft by <key>" badge text for an owner's draft written by an MCP key, or null. */
+export function mcpDraftBadge(keyName: string | null | undefined) {
+  return keyName ? `Draft by ${keyName}` : null;
+}

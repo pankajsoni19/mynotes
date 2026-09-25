@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  Bot,
   ArrowUpDown,
   Check,
   Copy,
@@ -45,7 +46,7 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
-import { finalizeOpenNote } from "./noteFinalization";
+import { canPublish, finalizeOpenNote, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
@@ -662,6 +663,9 @@ export function App() {
   const startupFailedUserRef = useRef<string | null>(null);
   const [startupRetry, setStartupRetry] = useState(0);
   const newlyCreatedNoteIdRef = useRef<string | null>(null);
+  // The note the user typed in since it was opened. Only such a draft is published on the way out;
+  // a draft that was already waiting (another session, or an MCP key) needs an explicit Publish.
+  const sessionEditedRef = useRef<string | null>(null);
 
   const flash = useCallback((message: string) => {
     setToast(message);
@@ -684,6 +688,7 @@ export function App() {
     const generation = ++noteLoadGenerationRef.current;
     const { note: detail } = await api<{ note: NoteDetail }>(`/notes/${id}`);
     if (!expectedUserId || sessionUserRef.current !== expectedUserId || generation !== noteLoadGenerationRef.current) return;
+    if (sessionEditedRef.current !== detail.id) sessionEditedRef.current = null;
     setNote(detail);
     setMarkdown(detail.markdown);
     revisionRef.current = detail.draft_revision;
@@ -854,7 +859,9 @@ export function App() {
 
   // Also locked while the previous note is still shown but a different note is loading.
   const editorLocked = leavingNotes || switchingNote || (note !== null && note.id !== selectedNoteId);
-  const hasPublishableDelta = Boolean(note?.isOwner && (note.hasDelta || markdown !== loadedRef.current));
+  const publishInput = { isOwner: Boolean(note?.isOwner), serverHasDelta: Boolean(note?.hasDelta), hasUnsavedChanges: markdown !== loadedRef.current };
+  const hasPublishableDelta = canPublish(publishInput);
+  const draftBadge = note?.isOwner && note.hasDraft ? mcpDraftBadge(note.draftMcpKeyName) : null;
 
   function cancelPendingAutosave() {
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
@@ -907,7 +914,8 @@ export function App() {
   }
 
   function finalizeCurrentNote(reloadCurrent = false) {
-    return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta, publish: () => publish(reloadCurrent) });
+    const sessionEdited = note !== null && sessionEditedRef.current === note.id;
+    return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta: shouldAutoPublish({ ...publishInput, sessionEdited }), publish: () => publish(reloadCurrent) });
   }
 
   async function createFolder() {
@@ -992,6 +1000,7 @@ export function App() {
     const hasDelta = await saveDraft();
     if (!hasDelta) return false;
     await api(`/notes/${note.id}/publish`, { method: "POST", body: "{}" });
+    if (sessionEditedRef.current === note.id) sessionEditedRef.current = null;
     if (reloadCurrent) await Promise.all([loadNote(note.id), loadNavigation()]);
     else await loadNavigation();
     flash("New version published");
@@ -1100,6 +1109,7 @@ export function App() {
         await loadNavigation();
         flash(result.binned ? "Moved to the Bin" : "Empty note removed");
       } else {
+        if (sessionEditedRef.current === noteId) sessionEditedRef.current = null;
         await Promise.all([loadNote(noteId), loadNavigation()]);
         flash("Draft discarded");
       }
@@ -1529,7 +1539,7 @@ export function App() {
           >
             <button className="note-card-select" onClick={() => { void selectNote(item.id); }}>
               <span className="note-title">{item.title}</span>
-              <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? <em>Draft</em> : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
+              <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? (item.draft_mcp_key_name ? <em className="mcp-draft-badge"><Bot aria-hidden="true" />{mcpDraftBadge(item.draft_mcp_key_name)}</em> : <em>Draft</em>) : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
               {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
             </button>
             {item.is_owner === 1 && <button className="note-delete-button" disabled={editorLocked} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
@@ -1543,6 +1553,7 @@ export function App() {
           <header className="editor-toolbar">
             <div className="mobile-editor-nav"><button className="icon-button" onClick={() => mobileBack("notes")} aria-label="Back to notes"><ChevronLeft /></button></div>
             <div className={`save-indicator ${saveState}`}><span />{saveState === "saving" ? "Saving…" : saveState === "conflict" ? "Save conflict" : saveState === "error" ? "Not saved" : note.hasDraft ? "Draft saved" : `Version ${note.current_version}`}</div>
+            {draftBadge && <span className="mcp-draft-badge" title="Written through an MCP API key. It stays a draft until you publish it."><Bot aria-hidden="true" />{draftBadge}</span>}
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               <button className="icon-button" onClick={downloadPdf} aria-label="Download as PDF" title="Download as PDF"><FileDown /></button>
@@ -1561,7 +1572,7 @@ export function App() {
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={setMarkdown} folderId={note.folder_id} onNotice={flash} />
+            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} onNotice={flash} />
           </article>
         </>}
       </section>

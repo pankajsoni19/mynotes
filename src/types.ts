@@ -23,8 +23,11 @@ export type NoteSummary = {
   updated_at: string;
   owner_name: string;
   is_owner: number;
+  /** Owner only: the MCP key that wrote the current draft, until it is published or discarded. */
+  draft_mcp_key_name?: string | null;
 };
 export type NoteDetail = NoteSummary & {
+  draftMcpKeyName: string | null;
   isOwner: boolean;
   hasDraft: boolean;
   hasDelta: boolean;

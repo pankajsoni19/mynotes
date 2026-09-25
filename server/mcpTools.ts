@@ -1,12 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { listReadableFolders, readableNote } from "./access";
-import { db } from "./db";
+import { listReadableFolders, ownedNote, readableNote } from "./access";
+import { config } from "./config";
+import { audit, db, type NoteRow } from "./db";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
 import { hasAnyScope, parseStoredScopes, type McpScope } from "./mcpScopes";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
-import { checksum, storage } from "./storage";
+import { createDraftNote, writeDraftLocked } from "./noteDrafts";
+import { checksum, storage, withNoteLock } from "./storage";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -187,6 +189,104 @@ const noteReadTools: McpToolSpec[] = [
   })
 ];
 
+// --------------------------------------------------------- notes:write-draft
+
+const noteUrl = (noteId: string) => `${config.appOrigin}/notes/${noteId}`;
+
+function assertMarkdownSize(markdown: string) {
+  if (Buffer.byteLength(markdown, "utf8") > config.maxMarkdownBytes) {
+    throw new McpToolError("TOO_LARGE", `Notes are limited to ${config.maxMarkdownBytes} bytes of Markdown`);
+  }
+}
+
+/** The owner's draft if one exists, otherwise the published text (or "" for a never-published note), checksum-verified. */
+async function currentOwnerText(note: NoteRow) {
+  if (note.draft_revision !== null) {
+    const markdown = await storage.readDraft(note.id);
+    if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new McpToolError("INTERNAL", "Draft content failed integrity verification");
+    return markdown;
+  }
+  if (note.current_version < 1) return "";
+  return (await readPublishedMarkdown(note.id, note.current_version)).markdown;
+}
+
+/** Appends as a new paragraph block. */
+export function appendMarkdown(base: string, addition: string) {
+  if (base.trim() === "") return addition;
+  return `${base.replace(/\s+$/, "")}\n\n${addition}`;
+}
+
+const nonBlankMarkdown = z.string().refine((value) => value.trim() !== "", "markdown must not be blank");
+
+const noteWriteTools: McpToolSpec[] = [
+  defineTool({
+    name: "create_note",
+    title: "Create a draft note",
+    description: "Create a new note whose content is an unpublished draft. A person must open it in Nook and publish it. Returns the note id, draft revision, and a link.",
+    scopes: ["notes:write-draft"],
+    write: true,
+    dailyBucket: "create_note",
+    inputSchema: z.object({
+      markdown: nonBlankMarkdown.describe("The note's Markdown; the first line becomes its title"),
+      folderId: z.string().uuid().optional().describe("A folder the user owns; defaults to their Default folder")
+    }),
+    handler: async ({ markdown, folderId }, key) => {
+      assertMarkdownSize(markdown);
+      if (folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, key.userId)) throw notFound("Folder");
+      const created = await createDraftNote(key.userId, folderId ?? null, markdown, { keyId: key.keyId });
+      return { noteId: created.id, revision: created.revision, title: created.title, folderId: created.folderId, url: noteUrl(created.id) };
+    }
+  }),
+  defineTool({
+    name: "get_note_draft",
+    title: "Get a note's draft",
+    description: "Read the current draft of a note the user owns, with the revision to pass to update_note_draft. When there is no draft, returns the published text and a null revision.",
+    scopes: ["notes:write-draft"],
+    write: false,
+    inputSchema: z.object({ noteId: z.string().uuid() }),
+    handler: async ({ noteId }, key) => withNoteLock(noteId, async () => {
+      const note = ownedNote(noteId, key.userId);
+      if (!note) throw notFound();
+      return {
+        noteId,
+        revision: note.draft_revision,
+        hasDraft: note.draft_revision !== null,
+        markdown: await currentOwnerText(note),
+        publishedVersion: note.current_version,
+        url: noteUrl(noteId)
+      };
+    })
+  }),
+  defineTool({
+    name: "update_note_draft",
+    title: "Update a note's draft",
+    description: "Replace or append to the draft of a note the user owns. Never publishes and never creates a version. baseRevision must be the revision from get_note_draft (null when there was no draft); if the draft changed since, the call fails with DRAFT_CHANGED.",
+    scopes: ["notes:write-draft"],
+    write: true,
+    inputSchema: z.object({
+      noteId: z.string().uuid(),
+      markdown: z.string().describe("Markdown to write, or to append as a new paragraph"),
+      baseRevision: z.number().int().nonnegative().nullable(),
+      mode: z.enum(["replace", "append"]).default("replace")
+    }),
+    handler: async ({ noteId, markdown, baseRevision, mode }, key) => {
+      assertMarkdownSize(markdown);
+      return withNoteLock(noteId, async () => {
+        const note = ownedNote(noteId, key.userId);
+        if (!note) throw notFound();
+        const changed = () => new McpToolError("DRAFT_CHANGED", "The draft changed since baseRevision. Read it again with get_note_draft.", { currentRevision: note.draft_revision });
+        if (baseRevision !== note.draft_revision) throw changed();
+        const next = mode === "append" ? appendMarkdown(await currentOwnerText(note), markdown) : markdown;
+        assertMarkdownSize(next);
+        const saved = await writeDraftLocked(note, key.userId, next, key.keyId);
+        if (!saved) throw changed();
+        audit(key.userId, noteId, "mcp.note_draft_update", { via: "mcp", keyId: key.keyId, mode, revision: saved.revision });
+        return { noteId, revision: saved.revision, title: saved.title, hasDelta: saved.hasDelta, url: noteUrl(noteId) };
+      });
+    }
+  })
+];
+
 /**
  * Every tool group. Task tools (docs/plan/WAVES_7-9.md §4.2: list_boards,
  * list_cards, get_card under tasks:read; create_card, move_card,
@@ -194,7 +294,8 @@ const noteReadTools: McpToolSpec[] = [
  * here once Task Boards land, as `...taskTools` from server/tasks.
  */
 export const mcpToolSpecs: readonly McpToolSpec[] = [
-  ...noteReadTools
+  ...noteReadTools,
+  ...noteWriteTools
   // EXTENSION POINT (tasks:read | tasks:write): ...taskTools
 ];
 

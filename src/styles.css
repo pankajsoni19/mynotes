@@ -145,6 +145,9 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .save-indicator span { width: 6px; height: 6px; border-radius: 50%; background: #5f906a; }
 .save-indicator.saving span { background: #d8aa42; animation: pulse 1s infinite; }
 .save-indicator.error span, .save-indicator.conflict span { background: var(--red); }
+.mcp-draft-badge { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 220px; overflow: hidden; padding: 3px 9px; border: 1px solid #4a3f24; border-radius: 999px; color: #d7b86a; background: #1d1a12; font-size: .72rem; font-style: normal; white-space: nowrap; text-overflow: ellipsis; }
+.mcp-draft-badge svg { flex: none; width: 13px; height: 13px; }
+.note-meta .mcp-draft-badge { max-width: 60%; padding: 1px 7px; font-size: .7rem; }
 @keyframes pulse { 50% { opacity: .35; } }
 .toolbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .text-action { border: 0; background: transparent; color: #88888f; padding: 8px; cursor: pointer; font-size: .8rem; }
@@ -365,6 +368,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .mobile-editor-nav { display: block; }
   .collapsed-trigger, .desktop-only { display: none !important; }
   .save-indicator { margin-left: 3px; font-size: .7rem; }
+  .editor-toolbar .mcp-draft-badge { max-width: 120px; margin-left: 6px; }
   .toolbar-actions .icon-button, .toolbar-actions .text-action { display: none; }
   .toolbar-actions .mobile-more { display: grid; }
   .mobile-actions-menu { position: absolute; z-index: 20; top: 52px; right: 9px; width: 190px; display: grid; padding: 6px; border: 1px solid #35353a; border-radius: 11px; background: #1b1b1f; box-shadow: 0 16px 42px rgb(0 0 0 / 55%); }

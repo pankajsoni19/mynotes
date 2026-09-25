@@ -202,3 +202,142 @@ describe("MCP rate limits", () => {
     expect(consumeMcpLimits("k", ["call", "write"], start + 60_000)).toBe(0);
   });
 });
+
+type NoteDetailBody = { note: Record<string, unknown> & { markdown: string; draftMcpKeyName: string | null; current_version: number; draft_revision: number | null } };
+const versionCount = (noteId: string) => (db.query("SELECT COUNT(*) AS count FROM note_versions WHERE note_id = ?").get(noteId) as { count: number }).count;
+const auditRows = (noteId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE note_id = ? AND event_type = ?").all(noteId, eventType) as Array<{ metadata_json: string }>)
+  .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
+
+describe("MCP draft-only note writes", () => {
+  test("write tools need notes:write-draft, which also grants the read tools", async () => {
+    const owner = await createUser("Writer scopes");
+    const writer = makeKey(owner, ["notes:read", "notes:write-draft"]);
+    expect(await toolNames(writer)).toEqual([...NOTES_READ_TOOLS, "create_note", "get_note_draft", "update_note_draft"].sort());
+    // Stored without its read scope, the write scope still implies it.
+    const writeOnly = makeKey(owner, ["notes:write-draft"]);
+    expect(await toolNames(writeOnly)).toContain("list_notes");
+    const reader = makeKey(owner, ["notes:read"]);
+    expect(await toolNames(reader)).not.toContain("create_note");
+    expect((await callTool(reader, "create_note", { markdown: "# Nope" })).isError).toBe(true);
+    const direct = await invokeMcpToolForTests("create_note", { markdown: "# Nope" }, reader.id);
+    expect(JSON.parse(direct.content[0]!.text)).toMatchObject({ code: "SCOPE_REQUIRED" });
+    expect((db.query("SELECT COUNT(*) AS count FROM notes WHERE owner_id = ?").get(owner.userId) as { count: number }).count).toBe(0);
+  });
+
+  test("create_note makes an indexed, badged, draft-only note in an owned folder", async () => {
+    const owner = await createUser("Creator");
+    const other = await createUser("Creator other");
+    const key = makeKey(owner, ["notes:write-draft"], "Laptop agent");
+    const created = await callTool(key, "create_note", { markdown: "# Agent plan\n\nFeed the axolotl." });
+    expect(created.isError).toBe(false);
+    const noteId = created.value.noteId as string;
+    expect(created.value).toMatchObject({ revision: 1, title: "Agent plan", url: `${origin}/notes/${noteId}` });
+    expect(versionCount(noteId)).toBe(0);
+    expect(db.query("SELECT current_version, draft_mcp_key_id FROM notes WHERE id = ?").get(noteId)).toEqual({ current_version: 0, draft_mcp_key_id: key.id });
+    expect(auditRows(noteId, "mcp.note_create")).toEqual([{ via: "mcp", keyId: key.id }]);
+
+    const detail = await json<NoteDetailBody>(await request(`/notes/${noteId}`, {}, owner));
+    expect(detail.note.markdown).toBe("# Agent plan\n\nFeed the axolotl.");
+    expect(detail.note.draftMcpKeyName).toBe("Laptop agent");
+    expect(detail.note).not.toHaveProperty("draft_mcp_key_id");
+    const list = await json<{ notes: Array<{ id: string; draft_mcp_key_name: string | null }> }>(await request("/notes", {}, owner));
+    expect(list.notes.find((item) => item.id === noteId)?.draft_mcp_key_name).toBe("Laptop agent");
+    // The owner's search finds the draft; MCP search never sees drafts.
+    const search = await json<{ results: Array<{ id: string; source: string }> }>(await request("/search?q=axolotl", {}, owner));
+    expect(search.results).toEqual([expect.objectContaining({ id: noteId, source: "draft" })]);
+    expect((await callTool(key, "search_notes", { query: "axolotl" })).value.results).toEqual([]);
+
+    const { folder } = await json<{ folder: { id: string } }>(await request("/folders", { method: "POST", body: JSON.stringify({ name: "Agent inbox", parentId: null }) }, owner));
+    const inFolder = await callTool(key, "create_note", { markdown: "Inbox item", folderId: folder.id });
+    expect(inFolder.value.folderId).toBe(folder.id);
+    const { folder: foreign } = await json<{ folder: { id: string } }>(await request("/folders", { method: "POST", body: JSON.stringify({ name: "Not yours", parentId: null }) }, other));
+    await request(`/folders/${foreign.id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [owner.userId] }) }, other);
+    expect((await callTool(key, "create_note", { markdown: "Sneaky", folderId: foreign.id })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(key, "create_note", { markdown: "   " })).isError).toBe(true);
+
+    // Opening and publishing is the human step; publishing clears the badge.
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
+    expect((db.query("SELECT draft_mcp_key_id FROM notes WHERE id = ?").get(noteId) as { draft_mcp_key_id: string | null }).draft_mcp_key_id).toBeNull();
+    expect((await json<NoteDetailBody>(await request(`/notes/${noteId}`, {}, owner))).note.draftMcpKeyName).toBeNull();
+  });
+
+  test("update_note_draft replaces or appends with revision CAS and never creates a version", async () => {
+    const owner = await createUser("Updater");
+    const key = makeKey(owner, ["notes:write-draft"], "Editor agent");
+    const noteId = await publishedNote(owner, "# Garden\n\nPlant tomatoes.");
+
+    const fresh = await callTool(key, "get_note_draft", { noteId });
+    expect(fresh.value).toMatchObject({ noteId, revision: null, hasDraft: false, markdown: "# Garden\n\nPlant tomatoes.", publishedVersion: 1 });
+
+    const appended = await callTool(key, "update_note_draft", { noteId, markdown: "Water the basil.", baseRevision: null, mode: "append" });
+    expect(appended.isError).toBe(false);
+    expect(appended.value).toMatchObject({ revision: 1, hasDelta: true });
+    expect((await callTool(key, "get_note_draft", { noteId })).value).toMatchObject({ revision: 1, markdown: "# Garden\n\nPlant tomatoes.\n\nWater the basil." });
+    expect(versionCount(noteId)).toBe(1);
+    expect(auditRows(noteId, "mcp.note_draft_update")).toEqual([{ via: "mcp", keyId: key.id, mode: "append", revision: 1 }]);
+
+    // The draft text is indexed in the same write; published search still shows the published text.
+    const ownerSearch = await json<{ results: Array<{ id: string; source: string }> }>(await request("/search?q=basil", {}, owner));
+    expect(ownerSearch.results).toEqual([expect.objectContaining({ id: noteId, source: "draft" })]);
+    expect((await callTool(key, "search_notes", { query: "basil" })).value.results).toEqual([]);
+
+    // A stale revision is refused and nothing changes.
+    const stale = await callTool(key, "update_note_draft", { noteId, markdown: "Overwrite", baseRevision: null, mode: "replace" });
+    expect(stale.value).toMatchObject({ code: "DRAFT_CHANGED", currentRevision: 1 });
+
+    // The human autosaves; the agent's older revision now loses (T38).
+    expect((await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ markdown: "# Garden\n\nHuman edit", revision: 1 }) }, owner)).status).toBe(200);
+    expect((await callTool(key, "update_note_draft", { noteId, markdown: "Agent edit", baseRevision: 1, mode: "replace" })).value).toMatchObject({ code: "DRAFT_CHANGED", currentRevision: 2 });
+    expect((await json<NoteDetailBody>(await request(`/notes/${noteId}`, {}, owner))).note.markdown).toBe("# Garden\n\nHuman edit");
+
+    const replaced = await callTool(key, "update_note_draft", { noteId, markdown: "# Garden v2\n\nAll new", baseRevision: 2, mode: "replace" });
+    expect(replaced.value).toMatchObject({ revision: 3, title: "Garden v2" });
+    expect(versionCount(noteId)).toBe(1);
+    const detail = await json<NoteDetailBody>(await request(`/notes/${noteId}`, {}, owner));
+    expect(detail.note.current_version).toBe(1);
+    expect(detail.note.draftMcpKeyName).toBe("Editor agent");
+
+    // Discarding clears the badge.
+    expect((await request(`/notes/${noteId}/draft`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    expect((db.query("SELECT draft_mcp_key_id FROM notes WHERE id = ?").get(noteId) as { draft_mcp_key_id: string | null }).draft_mcp_key_id).toBeNull();
+
+    const tooLarge = await callTool(key, "update_note_draft", { noteId, markdown: "x".repeat(2_000_001), baseRevision: null, mode: "replace" });
+    expect(tooLarge.isError).toBe(true);
+  }, 20_000);
+
+  test("shared, binned, and other users' notes are reported as not found", async () => {
+    const owner = await createUser("Draft owner");
+    const reader = await createUser("Draft reader");
+    const sharedId = await publishedNote(owner, "# Shared\n\nfor everyone");
+    await request(`/notes/${sharedId}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [reader.userId] }) }, owner);
+    const readerKey = makeKey(reader, ["notes:write-draft"]);
+    // Readable, but not owned: writes and draft reads look exactly like a missing note.
+    expect((await callTool(readerKey, "read_note", { noteId: sharedId })).isError).toBe(false);
+    const missing = await callTool(readerKey, "get_note_draft", { noteId: crypto.randomUUID() });
+    const shared = await callTool(readerKey, "get_note_draft", { noteId: sharedId });
+    expect(shared.value).toEqual(missing.value);
+    expect(shared.value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(readerKey, "update_note_draft", { noteId: sharedId, markdown: "vandal", baseRevision: null, mode: "replace" })).value).toMatchObject({ code: "NOT_FOUND" });
+
+    const ownerKey = makeKey(owner, ["notes:write-draft"]);
+    const binned = await publishedNote(owner, "# Binned\n\ngone");
+    expect((await request(`/notes/${binned}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    expect((await callTool(ownerKey, "get_note_draft", { noteId: binned })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(ownerKey, "update_note_draft", { noteId: binned, markdown: "back", baseRevision: null, mode: "append" })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((db.query("SELECT draft_revision FROM notes WHERE id = ?").get(sharedId) as { draft_revision: number | null }).draft_revision).toBeNull();
+  });
+
+  test("writes are limited to 30 a minute per key, and create_note also counts per day", async () => {
+    const owner = await createUser("Write limit");
+    const key = makeKey(owner, ["notes:write-draft"]);
+    const noteId = await publishedNote(owner, "# Limited");
+    for (let index = 0; index < MCP_LIMITS.write.limit; index += 1) {
+      // A refused CAS is still a write attempt.
+      await invokeMcpToolForTests("update_note_draft", { noteId, markdown: "x", baseRevision: 99, mode: "replace" }, key.id);
+    }
+    expect((await callTool(key, "update_note_draft", { noteId, markdown: "x", baseRevision: null, mode: "replace" })).value).toMatchObject({ code: "RATE_LIMITED" });
+    expect((await callTool(key, "create_note", { markdown: "x" })).value).toMatchObject({ code: "RATE_LIMITED" });
+    // Reads still work within the call limit.
+    expect((await callTool(key, "get_note_draft", { noteId })).isError).toBe(false);
+  });
+});
