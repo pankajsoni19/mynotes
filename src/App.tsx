@@ -612,6 +612,8 @@ export function App() {
   const [toast, setToast] = useState("");
   const [selectionOwner, setSelectionOwner] = useState<string | null>(null);
   const [leavingNotes, setLeavingNotes] = useState(false);
+  // Set while a note/folder switch finalizes the open note, so late keystrokes cannot be dropped.
+  const [switchingNote, setSwitchingNote] = useState(false);
   const sessionUserRef = useRef<string | null>(null);
   const noteLoadGenerationRef = useRef(0);
   const revisionRef = useRef<number | null>(null);
@@ -788,6 +790,8 @@ export function App() {
     return noteSort.endsWith("desc") ? -delta : delta;
   }), [noteSort, notes, query, selectedFolder]);
 
+  // Also locked while the previous note is still shown but a different note is loading.
+  const editorLocked = leavingNotes || switchingNote || (note !== null && note.id !== selectedNoteId);
   const hasPublishableDelta = Boolean(note?.isOwner && (note.hasDelta || markdown !== loadedRef.current));
 
   function cancelPendingAutosave() {
@@ -852,6 +856,7 @@ export function App() {
   async function createNote() {
     if (switchingRef.current) return;
     switchingRef.current = true;
+    setSwitchingNote(true);
     try {
       const finalized = await finalizeCurrentNote();
       const selected = folders.find((folder) => folder.id === selectedFolder);
@@ -867,6 +872,7 @@ export function App() {
       flash(reason instanceof Error ? reason.message : "Could not create note");
     } finally {
       switchingRef.current = false;
+      setSwitchingNote(false);
     }
   }
 
@@ -921,6 +927,7 @@ export function App() {
     }
     if (switchingRef.current) return;
     switchingRef.current = true;
+    setSwitchingNote(true);
     try {
       const finalized = await finalizeCurrentNote();
       setSelectedNoteId(nextId);
@@ -930,6 +937,7 @@ export function App() {
       flash(reason instanceof Error ? reason.message : "Could not switch notes");
     } finally {
       switchingRef.current = false;
+      setSwitchingNote(false);
     }
   }
 
@@ -942,6 +950,7 @@ export function App() {
     }
     if (switchingRef.current) return;
     switchingRef.current = true;
+    setSwitchingNote(true);
     try {
       const finalized = await finalizeCurrentNote();
       setSelectedFolder(nextFolder);
@@ -956,6 +965,7 @@ export function App() {
       flash(reason instanceof Error ? reason.message : "Could not switch folders");
     } finally {
       switchingRef.current = false;
+      setSwitchingNote(false);
     }
   }
 
@@ -992,6 +1002,7 @@ export function App() {
     const targetPanel = resolveNotesPanel(resolved, snapshot);
     const selectionChanged = resolved.folder !== selectedFolder || resolved.noteId !== selectedNoteId;
     switchingRef.current = true;
+    setSwitchingNote(true);
     try {
       if (selectionChanged) {
         await finalizeCurrentNote();
@@ -1015,6 +1026,7 @@ export function App() {
       navigate(routeForApp(activeApp), { replace: true });
     } finally {
       switchingRef.current = false;
+      setSwitchingNote(false);
     }
   }
 
@@ -1262,7 +1274,7 @@ export function App() {
               <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? <em>Draft</em> : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
               {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
             </button>
-            {item.is_owner === 1 && <button className="note-delete-button" disabled={leavingNotes} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
+            {item.is_owner === 1 && <button className="note-delete-button" disabled={editorLocked} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
           </article>)}
           {!visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? "Try another search." : selectedFolder === "shared" ? "Notes shared with you will appear here." : "Create a note and start writing."}</p>{!query && selectedFolder !== "shared" && <button onClick={createNote}>New note</button>}</div>}
         </div>
@@ -1276,20 +1288,20 @@ export function App() {
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               {note.isOwner && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
-              {note.isOwner && note.hasDraft && <button className="text-action" disabled={leavingNotes} onClick={discard}>Discard</button>}
-              {hasPublishableDelta && <button className="publish-button" disabled={leavingNotes} onClick={() => { void publish(); }}>Publish version</button>}
-              <button className="icon-button mobile-more" disabled={leavingNotes} onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
+              {note.isOwner && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={discard}>Discard</button>}
+              {hasPublishableDelta && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
+              <button className="icon-button mobile-more" disabled={editorLocked} onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
             </div>
             {mobileActions && <div className="mobile-actions-menu">
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
               {note.isOwner && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
-              {note.isOwner && note.hasDraft && <button disabled={leavingNotes} onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
-              {hasPublishableDelta && <button disabled={leavingNotes} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
+              {note.isOwner && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
+              {hasPublishableDelta && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
             </div>}
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !leavingNotes} onChange={setMarkdown} />
+            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={setMarkdown} />
           </article>
         </>}
       </section>
