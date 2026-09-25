@@ -843,7 +843,10 @@ export function App() {
   }), [noteSort, notes, query, selectedFolder]);
 
   const searchFolder: FolderSelection = searchAll ? "all" : selectedFolder;
-  const search = useNoteSearch(query, searchFolder, notes);
+  // Re-run a search when notes are added, removed, or moved, not on every autosave refresh
+  // (which only changes titles and times).
+  const searchRefreshKey = useMemo(() => notes.map((item) => `${item.id}:${item.folder_id ?? ""}`).join(","), [notes]);
+  const search = useNoteSearch(query, searchFolder, searchRefreshKey);
   const showingSearchResults = search.active && search.status === "ready";
   searchHintRef.current = search.active ? { query, all: searchAll } : null;
   const activeSearchHit = showingSearchResults ? search.results[activeSearchIndex] ?? null : null;

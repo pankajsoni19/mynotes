@@ -10,10 +10,10 @@ export type NoteSearchState = {
   error: string;
 };
 
-// Debounced full-text search. A newer query (or scope, or data refresh) aborts the request in
-// flight. Results for the current query and scope stay on screen while a refresh for changed data
+// Full-text search once typing pauses. A newer query (or scope, or `refresh` key) aborts the
+// request in flight. Results for the current query and scope stay on screen while a refresh
 // runs; a new query shows "loading" so the caller can fall back to its instant title filter.
-export function useNoteSearch(query: string, folder: string, refresh: unknown): NoteSearchState {
+export function useNoteSearch(query: string, folder: string, refresh: string): NoteSearchState {
   const active = isSearchable(query);
   const key = active ? `${folder}\n${query}` : "";
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -36,7 +36,7 @@ export function useNoteSearch(query: string, folder: string, refresh: unknown): 
       window.clearTimeout(timer);
       controller.abort();
     };
-    // `key` covers query and folder; `refresh` re-runs the search after the notes list changes.
+    // `key` covers query and folder; `refresh` is a string, so only a real change re-runs it.
   }, [active, key, refresh]);
 
   const current = loaded && loaded.key === key ? loaded : null;

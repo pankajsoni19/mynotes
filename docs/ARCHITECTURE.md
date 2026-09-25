@@ -140,7 +140,7 @@ Full-text search over notes (WAVES_7-9.md §2) uses an SQLite FTS5 table that st
 
 **API.** `GET /api/search` (`server/searchRoutes.ts`) joins `note_fts MATCH` to `notes` and applies the live access rule before `LIMIT`: the draft row only for its owner, and the published row only when `current_version > 0`, the caller is not the owner with a draft (who gets the draft, as `GET /api/notes/:id` does), and `readableNotePredicate` from `server/access.ts` holds. Binned notes never match. Results are ordered by `bm25(note_fts, 8.0, 1.0)` then `updated_at`, `folder_id` is masked as in `GET /api/notes`, highlights return as `{text, hit}` segments (never HTML), and scores are never returned. A per-user in-memory limiter allows 20 searches per 10 seconds. BM25 statistics are computed across every user's rows; only the order they produce is exposed.
 
-**UI.** `src/search/` provides `useNoteSearch` (200 ms debounce, starts at 2 characters, aborts the previous request, keeps results on screen while a data refresh re-runs) and `SearchResults` (a listbox driven from the search input with `aria-activedescendant`). While a request is in flight or failed, the note list falls back to the instant title filter.
+**UI.** `src/search/` provides `useNoteSearch` (300 ms debounce, starts at 2 characters, aborts the previous request, re-runs only when notes are added, removed, or moved, not on autosave refreshes, and keeps results on screen meanwhile) and `SearchResults` (a listbox driven from the search input with `aria-activedescendant`). While a request is in flight or failed, the note list falls back to the instant title filter.
 
 ## API surface
 

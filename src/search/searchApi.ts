@@ -18,7 +18,7 @@ export type NoteSearchResponse = { results: NoteSearchHit[]; truncated: boolean 
 
 export const SEARCH_MIN_CHARS = 2;
 export const SEARCH_MAX_CHARS = 200;
-export const SEARCH_DEBOUNCE_MS = 200;
+export const SEARCH_DEBOUNCE_MS = 300;
 
 // Full-text search starts once the trimmed query has two characters (code points, not UTF-16 units).
 export function isSearchable(query: string) {
