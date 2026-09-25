@@ -123,7 +123,7 @@ Deleting a note or a file moves it to the shared **Bin** (Home → Bin) for exac
 - **Delete forever** and **Empty Bin** remove items permanently. After 30 days an hourly sweeper (which also runs at boot) deletes expired items for you, in batches of 100 per run. A purge first marks the item so it can never be read or restored again, then removes its files, then its database row; if the process stops half way, the next sweep finishes the job.
 - Documents in the Bin still count towards `USER_STORAGE_QUOTA_BYTES` until they are deleted forever.
 
-**Upgrading from 0.3.1 or earlier:** notes deleted before this version (which the old interface described as permanent) reappear in the Bin for 30 days after the upgrade, then are deleted automatically. Never-published notes deleted before the upgrade are removed on the first sweep. Empty the Bin, or delete those items forever, if you do not want to keep them for that window.
+**Upgrading from 0.3.0 or earlier:** notes deleted before this version (which the old interface described as permanent) reappear in the Bin for 30 days after the upgrade, then are deleted automatically. Never-published notes deleted before the upgrade are removed on the first sweep. Empty the Bin, or delete those items forever, if you do not want to keep them for that window.
 
 ## Database migrations
 

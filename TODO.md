@@ -80,13 +80,18 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Independent review (fresh session): one high (unescaped `|` in table cells corrupted rows on reload) and three mediums (multi-paragraph cells reloaded as literal `<br>`, Retry offered for final 409/413/415 upload errors, note-level shares cannot see folder-private images). Fixes for the first three are being applied before release. Accepted and documented: images embedded in a note inherit the **folder's** sharing, so a note shared more widely than its folder shows broken images to those readers (no data leaks); a fix belongs to a later note-attachments design. Low items (data: image sources rendering, print title fallback, silent upload cancel on browser Back, cancel/finish race, unknown preview_kind icon, image inserted at the cursor on completion) are fixed where cheap or accepted.
 - [x] Released in v0.3.0 (see Wave 3 release line)
 
-### Wave 4 — Shared 30-day Bin (v0.3.0)
+### Wave 4 — Shared 30-day Bin (released v0.3.1, deployed at `2e3825e`)
 
-- [ ] Migration `007_bin` with legacy soft-deleted note backfill
-- [ ] Notes and documents move to Bin; blank unpublished notes purge immediately
-- [ ] Idempotent, crash-safe restore/purge and hourly retention sweeper
-- [ ] Bin API and Bin app (desktop + mobile), Home Bin card live, updated delete copy
-- [ ] Wave tests, security review, pre-deploy backup, release v0.3.0
+- [x] Implemented in `4706eca`, `4efb1d8`, `7f7e9ac`, `0b90ff5`, `aa6ce25`, `f2c76e9`; independent review (fresh session): releasable, no high/critical; medium (sweeper could purge an item restored and re-deleted mid-run) fixed in `0bbd139`; lows fixed in `1d1a1b7` (bounded resume budget), `78470d5` (resumed purges audited as `resumed`), `8aa9f5e` (sharing updates under the note lock, 404 for binned), `6b184b2` (editor locked during delete/discard), `f99d0aa` (Bin retry/Empty Bin copy). 170 tests.
+- [x] Director QA on isolated data: note and file deletions land in the Bin with 30 days, confirm copy correct, Restore toast names the folder, Empty Bin confirms with the count and purges only the caller's items, empty state and disabled button, 390 px layout without undersized targets or horizontal scroll.
+- [x] **Released v0.3.1 (2026-09-25):** bump `2e3825e`, pushed; forced backup taken; deployed on Bun 1.4.2; healthy; `/api/about` reports `0.3.1` / `2e3825e4eaada36f5e4a73fc578204587fbcdf5a`; `schema_migrations` = 1–7; legacy deleted published note backfilled with `purge_after`; first sweep purged 5 legacy blank unpublished notes, 0 pending.
+- Accepted low: repeatedly failing purges are bounded per run (50 resumes + 100 due per table); Back with the mobile action sheet open closes the sheet and leaves the Bin (no sub-panels by design).
+
+- [x] Migration `007_bin` with legacy soft-deleted note backfill
+- [x] Notes and documents move to Bin; blank unpublished notes purge immediately
+- [x] Idempotent, crash-safe restore/purge and hourly retention sweeper
+- [x] Bin API and Bin app (desktop + mobile), Home Bin card live, updated delete copy
+- [x] Wave tests, security review, pre-deploy backup, released as v0.3.1
 
 ### Wave 3b — Minimal Files app (ships in v0.3.0)
 
