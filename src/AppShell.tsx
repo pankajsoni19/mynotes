@@ -29,7 +29,7 @@ const cards: Array<{ section: Exclude<AppSection, "home">; icon: typeof Archive;
 export function AppHome({ displayName, onOpen, onSettings, onSignOut }: ShellProps) {
   return <main className="app-home">
     <header className="app-home-header">
-      <div className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>Home</strong></span></div>
+      <div className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Home</strong></span></div>
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
     <section className="app-home-content" aria-labelledby="app-home-title">
