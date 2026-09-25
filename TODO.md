@@ -48,6 +48,11 @@ Operator request (2026-09-25): every module, page, note, file, and view gets its
 - [x] Director QA on isolated data, desktop and 390 px: Home ⇄ Notes ⇄ folder ⇄ note with Back/Forward; reload on `/files/folder/:id` and `/bin`; unknown path → `/`; logged-out deep link → login → note; blank new note removed on Back with no dead target; edits published on click and history switches with the editor locked meanwhile.
 - [x] Released v0.2.4: bump `4b8bf3e`, pushed to `origin/main`, deployed with Docker Compose; container healthy on port 2026, `/api/about` reports `0.2.4` / `4b8bf3e98421e3f6d4cbecc062352dc1cfad69f0`, `/notes/<id>` and `/bin` serve the SPA, `/api/*` unchanged (2026-09-25)
 
+### Hotfix v0.2.5 — Clear way back to Home (released, deployed at `1f86d83`)
+
+- [x] Operator feedback (2026-09-25): the MyNotes wordmark was the only way back from Notes and the Home header read "MyNotes". Added a labelled Home row to the Notes folder nav (desktop + mobile), a wordmark tooltip, per-app header labels (MyNotes eyebrow over Home/Notes/Files/Bin), and route-aware browser tab titles (`ce58a40`, cherry-picked as `9c76d32` onto the v0.2.4 line so the unreviewed Wave 3 backend stayed out of the deploy)
+- [x] Released from branch `release/0.2.5` (`1f86d83`), merged back into main (`f9aa328`); container healthy, `/api/about` reports `0.2.5` / `1f86d83053cb48ca8494b5e89792ee40a131d582`
+
 ### Wave 3 — Secure documents backend (released with Wave 4 as v0.3.0)
 
 Operator direction (2026-09-25): build backend and frontend together so each stage is visible. Wave 3 therefore also ships a **minimal Files slice** in the Files app (upload with progress, list, preview/download, routed through `/files` and `/files/folder/:id`). Rename, move, share, and delete UI wait for Wave 5 so nothing can be deleted before the Bin exists (D19).
