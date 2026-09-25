@@ -116,7 +116,8 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 ### Wave 6 — Documentation and final audit
 
 - [x] README, ARCHITECTURE, and site docs for Files/Bin, editor features, URLs, env vars, backup sizing (`8259794`, `8e1aa18`, `42d5300`, `eff0971`); the `app-dev` reference was already removed in Wave 4
-- [ ] Final independent security audit across Waves 3–5 (in progress, fresh session probing a scratch server)
+- [x] Final independent security audit across Waves 3–5 (fresh session, live probing of a scratch server, 2026-09-25): every Required threat row confirmed except **T10/T12 GAP (high)**: a streamed `POST /api/files` with no `Content-Length` past Bun's body cap left the handler waiting with an open staging handle; the later GC close crashed the process. Hotfix in progress (411 without Content-Length, inactivity watchdog, explicit handle close, regression tests). Lows: error logs include `error.message` (fix in the same batch); Compose has no mem/pids limits and publishes 2026 on all interfaces (documented, accepted for LAN use); files may be moved to no folder (accepted, narrows access only). PDF-without-sandbox added to the threat model's residual risks.
+- [ ] Hotfix release v0.4.1 after the fix commits pass review gates
 
 ## Backlog — candidate modules and enhancements (for later picking)
 

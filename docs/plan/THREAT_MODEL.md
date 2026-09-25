@@ -77,6 +77,9 @@ Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The
 
 ## Residual risks the operator accepts
 
+- **Inline PDF without `sandbox` (2026-09-25):** PDF content responses use `default-src 'none'; frame-ancestors 'none'` without `sandbox`, because Chromium's viewer does not render inside sandboxed documents (DEVELOPMENT_PLAN §7.2). Mitigated by `nosniff`, `X-Frame-Options: DENY`, CORP, top-level navigation only, and the magic-byte check that only `%PDF-` files get this treatment.
+- **Files can be moved out of every folder (`folderId: null`, 2026-09-25):** this only narrows the audience to the owner; accepted as an integrity quirk (D15 parity with notes).
+
 T7, T16, T18, T19, T23, T24. Record any new acceptance here with a rationale and a date.
 
 - 2026-09-25: T28 (note images follow folder sharing). It fails closed (broken image, no disclosure), and fixing it needs a note-attachments model. T18 and T23 are documented in the README.
