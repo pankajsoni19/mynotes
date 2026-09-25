@@ -115,7 +115,7 @@ export function verifyTotp(secret: string, suppliedCode: string, lastCounter: nu
 }
 
 export function totpUri(secret: string, email: string) {
-  const issuer = "MyNotes";
+  const issuer = "Nook";
   const label = encodeURIComponent(`${issuer}:${email}`);
   return `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=${periodSeconds}`;
 }

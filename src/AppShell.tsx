@@ -33,7 +33,7 @@ export function AppHome({ displayName, onOpen, onSettings, onSignOut }: ShellPro
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
     <section className="app-home-content" aria-labelledby="app-home-title">
-      <span className="eyebrow">Workspace home</span>
+      <span className="eyebrow">Nook home</span>
       <h1 id="app-home-title">Good to see you, {displayName.split(" ")[0] || displayName}.</h1>
       <p>Choose an app to continue. Everything stays private to your signed-in workspace.</p>
       <div className="app-card-grid">

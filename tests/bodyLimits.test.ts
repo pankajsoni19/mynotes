@@ -91,6 +91,6 @@ describe("bounded JSON and MCP request bodies", () => {
       duplex: "half"
     } as RequestInit);
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("mynotes");
+    expect(await response.text()).toContain("\"nook\"");
   });
 });

@@ -79,18 +79,18 @@ function notesForUser(userId: string, query?: string) {
 
 const mcpHandler = createMcpHandler(({ authInfo }) => {
   const userId = authInfo?.clientId;
-  const server = new McpServer({ name: "mynotes", version: config.appVersion });
+  const server = new McpServer({ name: "nook", version: config.appVersion });
 
   server.registerTool("list_notes", {
     title: "List notes",
-    description: "List the published notes the authenticated MyNotes user can read. Draft content is never returned.",
+    description: "List the published notes the authenticated Nook user can read. Draft content is never returned.",
     inputSchema: z.object({ query: z.string().max(120).optional().describe("Optional case-insensitive title filter") }),
     annotations: { readOnlyHint: true, destructiveHint: false }
   }, async ({ query }) => textResult({ notes: notesForUser(userId!, query) }));
 
   server.registerTool("read_note", {
     title: "Read a note",
-    description: "Read the latest published Markdown for a note visible to the authenticated MyNotes user.",
+    description: "Read the latest published Markdown for a note visible to the authenticated Nook user.",
     inputSchema: z.object({ noteId: z.string().uuid() }),
     annotations: { readOnlyHint: true, destructiveHint: false }
   }, async ({ noteId }) => {

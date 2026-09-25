@@ -121,7 +121,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
       <section className="auth-card">
         <div className="brand-mark"><Sparkles aria-hidden="true" /></div>
         <div className="auth-heading">
-          <span className="eyebrow">MyNotes</span>
+          <span className="eyebrow">Nook</span>
           <h1>{registering ? "Create your account" : "Welcome back"}</h1>
           <p>Your private workspace for ideas, passwords, and configuration notes.</p>
         </div>
@@ -151,7 +151,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
         <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
-          {registering ? "Already have an account? Sign in" : "Setting up MyNotes? Create the first account"}
+          {registering ? "Already have an account? Sign in" : "Setting up Nook? Create the first account"}
         </button>
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>
       </section>
@@ -169,7 +169,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   const displayToken = newToken || "<YOUR_API_KEY>";
   const configText = JSON.stringify({
     mcpServers: {
-      mynotes: {
+      nook: {
         type: "streamable-http",
         url: endpoint,
         headers: { Authorization: `Bearer ${displayToken}` }
@@ -229,7 +229,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   }
 
   return <section className="settings-content mcp-settings" aria-labelledby="mcp-heading">
-    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. MyNotes exposes only published notes you can already read; drafts and write operations are not available.</p></div></div>
+    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. Nook exposes only published notes you can already read; drafts and write operations are not available.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
     <div className="mcp-card">
@@ -400,12 +400,12 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
             <button className="primary-button" disabled={busy}>{busy ? "Preparing…" : "Set up authenticator"}</button>
           </form> : <div className="security-card enrollment-card">
             <div className="enrollment-grid">
-              <div className="qr-frame"><img src={qrCode} alt="QR code for MyNotes two-factor authentication" /></div>
-              <div><span className="step-label">1 · Scan the code</span><h4>Add MyNotes to Google Authenticator</h4><p>If you cannot scan it, enter the entire setup key manually in Google Authenticator. The groups of four are only for readability; copying removes all spaces. This key is not entered when signing in.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy setup key without spaces"}</span></button></div>
+              <div className="qr-frame"><img src={qrCode} alt="QR code for Nook two-factor authentication" /></div>
+              <div><span className="step-label">1 · Scan the code</span><h4>Add Nook to Google Authenticator</h4><p>If you cannot scan it, enter the entire setup key manually in Google Authenticator. The groups of four are only for readability; copying removes all spaces. This key is not entered when signing in.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy setup key without spaces"}</span></button></div>
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About MyNotes</h3><p>A private, self-hosted place for notes, configuration, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>MyNotes</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );
@@ -750,7 +750,7 @@ export function App() {
   useEffect(() => {
     const sectionName = { home: "Home", notes: "Notes", files: "Files", bin: "Bin" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
-    document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · MyNotes` : "Sign in · MyNotes";
+    document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session]);
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
@@ -1289,7 +1289,7 @@ export function App() {
   });
 
   function mobileBack(fallback: MobilePanel) {
-    // Only step back through entries this visit pushed, so the in-app Back never leaves MyNotes.
+    // Only step back through entries this visit pushed, so the in-app Back never leaves Nook.
     if (session && isMobileViewport() && readHistoryDepth(window.history.state) > 0 && readHistorySnapshot(window.history.state, session.user.id)) {
       window.history.back();
       return;
@@ -1372,7 +1372,7 @@ export function App() {
     setSession(null);
   }
 
-  if (checking) return <main className="loading-page"><div className="brand-mark"><Sparkles /></div><span>Opening MyNotes…</span></main>;
+  if (checking) return <main className="loading-page"><div className="brand-mark"><Sparkles /></div><span>Opening Nook…</span></main>;
   if (!session) return <AuthScreen onAuthenticated={(result) => {
     sessionUserRef.current = result.user.id;
     noteLoadGenerationRef.current += 1;
@@ -1414,7 +1414,7 @@ export function App() {
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
         <header className="sidebar-header">
-          <button className="sidebar-brand sidebar-home-button" onClick={() => { void openHome(); }} aria-label="Open MyNotes home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Notes</strong></span></button>
+          <button className="sidebar-brand sidebar-home-button" onClick={() => { void openHome(); }} aria-label="Open Nook home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Notes</strong></span></button>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
