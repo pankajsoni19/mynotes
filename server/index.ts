@@ -10,6 +10,7 @@ import { ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
+import { initPush } from "./calendar/push";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
@@ -872,6 +873,11 @@ try {
   console.error("Search index reconcile failed", errorClass(error));
 }
 startSweeper();
+try {
+  await initPush();
+} catch (error) {
+  console.error("Web Push setup failed; reminders still appear in the app", errorClass(error));
+}
 startDispatcher();
 
 export default {

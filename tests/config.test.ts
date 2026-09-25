@@ -42,3 +42,35 @@ describe("upload limit configuration", () => {
     }
   });
 });
+
+describe("push configuration", () => {
+  function loadPush(env: Record<string, string>) {
+    const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ pushEnabled: config.pushEnabled, pushSubject: config.pushSubject, pushEndpointHosts: config.pushEndpointHosts }));`], {
+      cwd: tmpdir(),
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), ...env },
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    return { ok: result.exitCode === 0, stdout: result.stdout.toString().trim(), stderr: result.stderr.toString() };
+  }
+
+  test("defaults to auto with APP_ORIGIN as the subject", () => {
+    expect(JSON.parse(loadPush({ APP_ORIGIN: "https://notes.example.test" }).stdout)).toEqual({ pushEnabled: "auto", pushSubject: "https://notes.example.test", pushEndpointHosts: [] });
+    expect(JSON.parse(loadPush({ PUSH_ENABLED: "false", PUSH_SUBJECT: "mailto:ops@example.test", PUSH_ENDPOINT_HOSTS: "push.example.test, *.Push.Example.org" }).stdout))
+      .toEqual({ pushEnabled: "false", pushSubject: "mailto:ops@example.test", pushEndpointHosts: ["push.example.test", "*.push.example.org"] });
+  });
+
+  test("rejects invalid values", () => {
+    for (const [env, message] of [
+      [{ PUSH_ENABLED: "yes" }, "PUSH_ENABLED"],
+      [{ PUSH_SUBJECT: "ops@example.test" }, "PUSH_SUBJECT"],
+      [{ PUSH_ENDPOINT_HOSTS: "10.0.0.1" }, "PUSH_ENDPOINT_HOSTS"],
+      [{ PUSH_ENDPOINT_HOSTS: "https://push.example.test" }, "PUSH_ENDPOINT_HOSTS"],
+      [{ PUSH_ENDPOINT_HOSTS: "*" }, "PUSH_ENDPOINT_HOSTS"]
+    ] as const) {
+      const result = loadPush(env);
+      expect(result.ok).toBe(false);
+      expect(result.stderr).toContain(message);
+    }
+  });
+});

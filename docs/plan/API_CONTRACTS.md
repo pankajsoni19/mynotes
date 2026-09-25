@@ -256,7 +256,7 @@ Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT
 
 ## Calendar (Wave 12)
 
-Calendars, events, links, reminders, and notifications ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D64). JSON only. Push and feeds arrive in stages C–D.
+Calendars, events, links, reminders, notifications, and Web Push ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D65). JSON only. Feeds arrive in stage D.
 
 **Roles (D54).** The owner does everything. Everyone the calendar is shared with (`visibility` `selected` with a member row, or `all_users`) gets the calendar's single audience role `share_role`: `viewer` reads, `editor` also creates, edits, undoes, skips dates on, links, and bins events. Only the owner renames, recolours, shares, or bins the calendar.
 
@@ -354,6 +354,23 @@ type NotificationItem = { id: string; title: string; href: string; late: boolean
 - **Retention.** The hourly sweeper deletes notifications after 30 days, and fired standalone reminders 30 days after they fired.
 - **Audit.** `reminder.create { reminderId, eventId? }`, `reminder.delete { reminderId }`: ids only.
 - **Today (Wave 10).** `listUpcoming(userId, tz, days)` in `server/calendar/service.ts` is the provider for the `upcoming` section: unfinished occurrences through the next `days` local days, at most 10 with `more`.
+
+### Web Push (Wave 12 stage C)
+
+Payload-less Web Push (D65, T62, T63). A push has an empty body: it only wakes the device, and the service worker fetches `GET /api/notifications?unread=1` with the session cookie, so push services see timing only.
+
+| Endpoint | Success | Errors |
+| --- | --- | --- |
+| `GET /api/push/config` | 200 `{ enabled: true, publicKey }` (base64url P-256 point) or `{ enabled: false, reason: "insecure_origin" \| "disabled" }` | — |
+| `GET /api/push/subscriptions` | 200 `{ subscriptions: [{ id, label, createdAt, lastSuccessAt, disabled }] }` (endpoints are never returned) | — |
+| `POST /api/push/subscriptions {endpoint, expirationTime?, keys: {p256dh, auth}, label?}` | 201 `{ subscription }`; 200 when the caller already has this endpoint (keys refreshed, failures cleared) | 400 `ENDPOINT_NOT_ALLOWED`; 409 `PUSH_DISABLED` or `LIMIT_REACHED` (10 per user) |
+| `DELETE /api/push/subscriptions {id} \| {endpoint}` | 200 `{ ok }` | 404 (missing or someone else's) |
+| `POST /api/push/test` | 200 `{ ok, sent, failed }` | 409 `PUSH_DISABLED`; 429 `RATE_LIMITED` with `Retry-After` (5 per hour per user) |
+
+- **Enabled.** `PUSH_ENABLED=auto` turns push on only when `APP_ORIGIN` is `https:`; `true` forces it on and `false` off. When on, a VAPID ES256 key pair is created at first boot in `DATA_DIR/push/vapid.json` (0600, written atomically).
+- **Endpoints.** `https:` on port 443, no credentials, not an IP literal, and a host on the allowlist (`*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`, plus `PUSH_ENDPOINT_HOSTS`). Every address the host resolves to must be public (no private, loopback, link-local, CGNAT, or multicast ranges); this is checked when subscribing and again before each delivery. An endpoint is owned by one account: subscribing it from another account moves it.
+- **Delivery.** After each dispatcher tick commits, every user who got a notification gets one push per device: `POST` with no body, `TTL: 3600`, `Urgency: normal`, and `Authorization: vapid t=<JWT>, k=<publicKey>` (claims `aud` = the endpoint's origin, `exp` = 12 h, `sub` = `PUSH_SUBJECT`). Redirects are not followed and requests time out after 5 s. 404 or 410 deletes the subscription; any other failure (including a redirect) counts, and 5 consecutive failures disable it until the device subscribes again.
+- **Audit.** `push.subscribe { subscriptionId }`, `push.unsubscribe`. Endpoints and keys are never logged or audited.
 
 <a id="calendar-items-in-the-bin"></a>
 ### Calendar items in the Bin (D68)

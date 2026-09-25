@@ -23,6 +23,7 @@ import {
   undoEvent
 } from "./service";
 import { listDueTasks, type DueTask } from "./tasksOverlay";
+import { registerPushRoutes } from "./pushRoutes";
 import { registerReminderRoutes } from "./reminderRoutes";
 
 // C0/C1 controls and bidi overrides never belong in a name, title, or location.
@@ -111,6 +112,7 @@ function parseEventsQuery(c: Context<AppEnv>): EventsQuery | string {
 /** docs/plan/API_CONTRACTS.md § Calendar. JSON only; the global session, Origin, CSRF, and TOTP middleware apply. */
 export function registerCalendarRoutes(app: Hono<AppEnv>) {
   registerReminderRoutes(app);
+  registerPushRoutes(app);
   app.get("/api/calendars", (c) => c.json(listCalendars(c.get("user").id)));
 
   app.post("/api/calendars", async (c) => {

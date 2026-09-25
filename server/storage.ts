@@ -73,6 +73,16 @@ async function atomicWrite(path: string, content: string) {
   await syncDirectory(dirname(path));
 }
 
+/** Writes a 0600 file under the data root atomically (temp file, fsync, rename, directory fsync). */
+export function writePrivateFileAtomic(path: string, content: string) {
+  return atomicWrite(withinDataRoot(path), content);
+}
+
+/** Reads a regular file under the data root without following symlinks. */
+export function readPrivateFile(path: string) {
+  return secureRead(withinDataRoot(path));
+}
+
 export async function syncDirectory(path: string) {
   try {
     const handle = await open(path, constants.O_RDONLY);

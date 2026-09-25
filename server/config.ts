@@ -45,6 +45,22 @@ const totpEncryptionKey = totpEncryptionKeyValue ? Buffer.from(totpEncryptionKey
 if (totpEncryptionKey && totpEncryptionKey.length !== 32) throw new Error("TOTP_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
 if (totpPolicy === "required" && !totpEncryptionKey) throw new Error("TOTP_ENCRYPTION_KEY is required when TOTP_POLICY=required");
 
+// Web Push (WAVES_10-12.md D65). auto: on only when APP_ORIGIN is https (browsers need a secure origin).
+const pushEnabledValue = process.env.PUSH_ENABLED?.trim() || "auto";
+if (!(["auto", "true", "false"] as const).includes(pushEnabledValue as "auto")) throw new Error("PUSH_ENABLED must be auto, true, or false");
+const pushSubject = process.env.PUSH_SUBJECT?.trim() || appOrigin;
+if (!/^mailto:[^\s@]+@[^\s@]+$/.test(pushSubject) && !/^https?:\/\/[^\s/]+/.test(pushSubject)) throw new Error("PUSH_SUBJECT must be a mailto: address or an http(s) URL");
+const pushEndpointHosts = (process.env.PUSH_ENDPOINT_HOSTS ?? "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean)
+  .map((value) => {
+    if (!/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(value) || /^(\*\.)?[\d.]+$/.test(value)) {
+      throw new Error("PUSH_ENDPOINT_HOSTS entries must be host names such as push.example.com or *.push.example.com");
+    }
+    return value;
+  });
+
 export const config = {
   port,
   dataDir,
@@ -63,7 +79,11 @@ export const config = {
   userStorageQuotaBytes: integerEnv("USER_STORAGE_QUOTA_BYTES", 10_737_418_240, 0, Number.MAX_SAFE_INTEGER),
   minFreeDiskBytes: integerEnv("MIN_FREE_DISK_BYTES", 1_073_741_824, 0, Number.MAX_SAFE_INTEGER),
   appVersion: process.env.APP_VERSION ?? "0.5.0",
-  gitSha: (process.env.GIT_SHA ?? "development").slice(0, 40)
+  gitSha: (process.env.GIT_SHA ?? "development").slice(0, 40),
+  pushEnabled: pushEnabledValue as "auto" | "true" | "false",
+  pushSubject,
+  /** Push service hosts allowed besides the built-in list; "*.example.com" matches subdomains. */
+  pushEndpointHosts
 };
 
 export function isEmailAllowed(email: string) {

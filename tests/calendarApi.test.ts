@@ -123,7 +123,7 @@ describe("calendars", () => {
     expect(sharing).toMatchObject({ visibility: "selected", shareRole: "editor", users: [{ id: friend.userId }] });
     expect((await put({ visibility: "all_users", shareRole: "viewer" })).status).toBe(200);
     expect((await calendars(friend)).find((item) => item.id === calendar.id)?.role).toBe("viewer");
-    const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'calendar.sharing_changed' AND actor_id = ? ORDER BY created_at DESC LIMIT 1").get(owner.userId) as { metadata_json: string };
+    const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'calendar.sharing_changed' AND actor_id = ? ORDER BY rowid DESC LIMIT 1").get(owner.userId) as { metadata_json: string };
     expect(JSON.parse(audit.metadata_json)).toEqual({ calendarId: calendar.id, visibility: "all_users", shareRole: "viewer", recipientCount: 0 });
   });
 });
