@@ -2,6 +2,12 @@ import { expect, test } from "bun:test";
 import { sanitizeDisplayName } from "../server/validation";
 import {
   baseNameRange,
+  canDropOnFolder,
+  DOCUMENT_DRAG_TYPE,
+  isDocumentDrag,
+  isOsFileDrag,
+  readDocumentDragPayload,
+  uploadDropMessage,
   compareDocuments,
   DEFAULT_FILE_SORT,
   fileCountLabel,
@@ -140,4 +146,36 @@ test("folder names follow the server rules", () => {
   expect(validateFolderName("default").ok).toBe(false);
   expect(validateFolderName("x".repeat(120)).ok).toBe(true);
   expect(validateFolderName("x".repeat(121)).ok).toBe(false);
+});
+
+test("drag type checks tell OS files, our rows, and notes apart", () => {
+  expect(DOCUMENT_DRAG_TYPE).toBe("application/x-mynotes-document");
+  expect(isOsFileDrag(["Files"])).toBe(true);
+  expect(isOsFileDrag(["text/plain"])).toBe(false);
+  expect(isOsFileDrag(["Files", DOCUMENT_DRAG_TYPE])).toBe(false);
+  expect(isOsFileDrag(["Files", "application/x-mynotes-note"])).toBe(false);
+  expect(isOsFileDrag(null)).toBe(false);
+  expect(isDocumentDrag([DOCUMENT_DRAG_TYPE])).toBe(true);
+  expect(isDocumentDrag({ length: 1, 0: DOCUMENT_DRAG_TYPE })).toBe(true);
+  expect(isDocumentDrag(["application/x-mynotes-note"])).toBe(false);
+});
+
+test("row drag payloads must be document ids", () => {
+  expect(readDocumentDragPayload("A1B2C3D4-E5F6-4A7B-9C8D-0E1F2A3B4C5D")).toBe("a1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d");
+  expect(readDocumentDragPayload("")).toBeNull();
+  expect(readDocumentDragPayload("../etc/passwd")).toBeNull();
+  expect(readDocumentDragPayload(null)).toBeNull();
+});
+
+test("rows drop only on other folders the caller owns", () => {
+  const mine = folder("f1", "Mine");
+  const theirs = folder("f2", "Theirs", { is_owner: 0 });
+  expect(canDropOnFolder(mine, { is_owner: 1, folder_id: "f9" })).toBe(true);
+  expect(canDropOnFolder(mine, { is_owner: 1, folder_id: null })).toBe(true);
+  expect(canDropOnFolder(mine, { is_owner: 1, folder_id: "f1" })).toBe(false);
+  expect(canDropOnFolder(mine, { is_owner: 0, folder_id: "f9" })).toBe(false);
+  expect(canDropOnFolder(theirs, { is_owner: 1, folder_id: "f9" })).toBe(false);
+  expect(canDropOnFolder(mine, null)).toBe(true);
+  expect(uploadDropMessage("Projects")).toBe("Drop to upload to Projects");
+  expect(uploadDropMessage(null)).toBe("You can only upload to your own folders");
 });

@@ -129,3 +129,10 @@
   .file-preview-body { grid-template-columns: minmax(0, 1fr); padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
   .files-workspace .mobile-tabbar button:disabled { opacity: .4; }
 }
+
+.file-drop-overlay { position: absolute; z-index: 20; inset: 8px; display: grid; place-content: center; justify-items: center; gap: 10px; border: 2px dashed #8a7133; border-radius: 16px; background: rgb(20 18 12 / 88%); color: #ffe19a; text-align: center; pointer-events: none; }
+.file-drop-overlay svg { width: 26px; height: 26px; }
+.file-drop-overlay strong { max-width: 260px; font-size: .95rem; line-height: 1.4; overflow-wrap: anywhere; }
+.file-drop-overlay.refused { border-color: #6a3039; background: rgb(24 14 16 / 90%); color: #fda4af; }
+.folder-link.drop-candidate { box-shadow: inset 0 0 0 1px #4a3d20; }
+.file-row.dragging { opacity: .5; }

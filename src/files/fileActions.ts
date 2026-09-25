@@ -178,3 +178,37 @@ export function validateFolderName(input: string): FolderNameCheck {
   if (name.toLowerCase() === "default") return { ok: false, error: "The Default folder already exists." };
   return { ok: true, name, changed: true };
 }
+
+/** Drag type for moving a document onto a folder; Notes uses application/x-mynotes-note. */
+export const DOCUMENT_DRAG_TYPE = "application/x-mynotes-document";
+
+type DragTypes = ArrayLike<string> | readonly string[];
+const hasType = (types: DragTypes | null | undefined, type: string) => Boolean(types) && Array.from(types as ArrayLike<string>).includes(type);
+
+/** Files dragged in from the operating system (not one of our own rows, and not a note). */
+export function isOsFileDrag(types: DragTypes | null | undefined) {
+  return hasType(types, "Files") && !hasType(types, DOCUMENT_DRAG_TYPE) && !hasType(types, "application/x-mynotes-note");
+}
+
+export function isDocumentDrag(types: DragTypes | null | undefined) {
+  return hasType(types, DOCUMENT_DRAG_TYPE);
+}
+
+const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** The document id carried by a row drag, or null when the payload is not one. */
+export function readDocumentDragPayload(value: string | null | undefined) {
+  const id = value?.trim() ?? "";
+  return idPattern.test(id) ? id.toLowerCase() : null;
+}
+
+/** A row can be dropped on a folder the caller owns, other than the one it is already in. */
+export function canDropOnFolder(folder: Pick<Folder, "id" | "is_owner">, document: Pick<DocumentSummary, "is_owner" | "folder_id"> | null) {
+  if (folder.is_owner !== 1) return false;
+  return !document || (document.is_owner === 1 && document.folder_id !== folder.id);
+}
+
+/** Overlay copy while OS files are dragged over the list. */
+export function uploadDropMessage(destination: string | null) {
+  return destination === null ? "You can only upload to your own folders" : `Drop to upload to ${destination}`;
+}

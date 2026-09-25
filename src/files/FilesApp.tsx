@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
@@ -11,17 +11,23 @@ import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
 import { ConfirmDialog } from "./Dialog";
 import {
+  canDropOnFolder,
   canManage,
   deleteConfirmMessage,
+  DOCUMENT_DRAG_TYPE,
   emptyToastState,
   fileCountLabel,
   fileSortOptions,
   fileToastReducer,
   filterDocuments,
+  isDocumentDrag,
+  isOsFileDrag,
   movedMessage,
+  readDocumentDragPayload,
   readFileSort,
   sortDocuments,
   toastDuration,
+  uploadDropMessage,
   validateFolderName,
   writeFileSort,
   type FileSort
@@ -105,6 +111,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const [sort, setSort] = useState<FileSort>(() => readFileSort(browserStorage(), userId));
   const [sortOpen, setSortOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Row drag (move onto a folder) and OS file drag (upload) state.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropFolderId, setDropFolderId] = useState<string | null>(null);
+  const [fileDragOver, setFileDragOver] = useState(false);
+  const fileDragDepthRef = useRef(0);
   const notify = useCallback((message: string, undoDocumentId: string | null = null) => toastDispatch({ type: "show", message, undoDocumentId }), []);
 
   useEffect(() => {
@@ -118,6 +129,18 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     window.addEventListener("keydown", closeSort);
     return () => { window.removeEventListener("click", closeSort); window.removeEventListener("keydown", closeSort); };
   }, [sortOpen]);
+
+  // Files dropped outside the list would make the browser navigate to them; swallow those drops.
+  useEffect(() => {
+    const guard = (event: DragEvent) => {
+      if (!isOsFileDrag(event.dataTransfer?.types)) return;
+      event.preventDefault();
+      if (event.type === "dragover" && event.dataTransfer) event.dataTransfer.dropEffect = "none";
+    };
+    window.addEventListener("dragover", guard);
+    window.addEventListener("drop", guard);
+    return () => { window.removeEventListener("dragover", guard); window.removeEventListener("drop", guard); };
+  }, []);
 
   const toast = toastState.toast;
   useEffect(() => {
@@ -350,6 +373,78 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     }
   }
 
+  function endRowDrag() {
+    setDraggingId(null);
+    setDropFolderId(null);
+  }
+
+  function startRowDrag(event: ReactDragEvent<HTMLElement>, document: DocumentSummary) {
+    if (!canManage(document)) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.setData(DOCUMENT_DRAG_TYPE, document.id);
+    event.dataTransfer.effectAllowed = "move";
+    setDraggingId(document.id);
+  }
+
+  function folderDragOver(event: ReactDragEvent<HTMLElement>, target: Folder) {
+    if (!isDocumentDrag(event.dataTransfer.types)) return;
+    const dragged = draggingId ? findDocument(draggingId) : null;
+    // Not calling preventDefault leaves the drop refused (non-owned folders, or the file's own folder).
+    if (!canDropOnFolder(target, dragged)) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (dropFolderId !== target.id) setDropFolderId(target.id);
+  }
+
+  function folderDrop(event: ReactDragEvent<HTMLElement>, target: Folder) {
+    event.preventDefault();
+    const id = readDocumentDragPayload(event.dataTransfer.getData(DOCUMENT_DRAG_TYPE)) ?? draggingId;
+    endRowDrag();
+    const dragged = id ? findDocument(id) : null;
+    if (!dragged || !canDropOnFolder(target, dragged)) return;
+    moveDocument(dragged, target).catch((reason) => notify(errorMessage(reason, "Could not move the file")));
+  }
+
+  const uploadTarget = canUpload ? (folder === "all" ? defaultFolder?.name ?? "Default" : currentFolder?.name ?? "") : null;
+
+  function paneDragEnter(event: ReactDragEvent<HTMLElement>) {
+    if (!isOsFileDrag(event.dataTransfer.types)) return;
+    event.preventDefault();
+    fileDragDepthRef.current += 1;
+    setFileDragOver(true);
+  }
+
+  function paneDragOver(event: ReactDragEvent<HTMLElement>) {
+    if (!isOsFileDrag(event.dataTransfer.types)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = canUpload ? "copy" : "none";
+  }
+
+  function paneDragLeave(event: ReactDragEvent<HTMLElement>) {
+    if (!isOsFileDrag(event.dataTransfer.types)) return;
+    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+    if (!fileDragDepthRef.current) setFileDragOver(false);
+  }
+
+  function paneDrop(event: ReactDragEvent<HTMLElement>) {
+    if (!isOsFileDrag(event.dataTransfer.types)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fileDragDepthRef.current = 0;
+    setFileDragOver(false);
+    if (!canUpload) {
+      notify(uploadDropMessage(null));
+      return;
+    }
+    chooseFiles(event.dataTransfer.files);
+  }
+
   function folderLabel(document: DocumentSummary) {
     if (!document.folder_id) return "No folder";
     return folders.find((item) => item.id === document.folder_id)?.name ?? "A folder you cannot see";
@@ -451,7 +546,16 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
         <button className={folder === "shared" ? "active" : ""} aria-current={folder === "shared" ? "page" : undefined} onClick={() => selectFolder("shared")}><Users /><span>Shared with me</span><b>{documents.filter((item) => item.is_owner === 0).length}</b></button>
         <div className="nav-label"><span>Folders</span><button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button></div>
-        {owned.map((item) => <button key={item.id} className={`folder-link${folder === item.id ? " active" : ""}`} aria-current={folder === item.id ? "page" : undefined} onClick={() => selectFolder(item.id)}>
+        {owned.map((item) => <button
+          key={item.id}
+          className={`folder-link${folder === item.id ? " active" : ""}${draggingId && canDropOnFolder(item, findDocument(draggingId)) ? " drop-candidate" : ""}${dropFolderId === item.id ? " drop-target" : ""}`}
+          aria-current={folder === item.id ? "page" : undefined}
+          onClick={() => selectFolder(item.id)}
+          onDragEnter={(event) => folderDragOver(event, item)}
+          onDragOver={(event) => folderDragOver(event, item)}
+          onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === item.id ? null : current); }}
+          onDrop={(event) => folderDrop(event, item)}
+        >
           <FolderIcon /><span className="folder-copy">{item.name}</span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
         </button>)}
         {shared.length > 0 && <div className="nav-label"><span>Shared folders</span></div>}
@@ -468,7 +572,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       </footer>
     </aside>
 
-    <section className="note-pane file-pane">
+    <section className={`note-pane file-pane${fileDragOver ? " file-drag-over" : ""}`} onDragEnter={paneDragEnter} onDragOver={paneDragOver} onDragLeave={paneDragLeave} onDrop={paneDrop}>
+      {fileDragOver && <div className={`file-drop-overlay${canUpload ? "" : " refused"}`} aria-hidden="true"><Upload /><strong>{uploadDropMessage(uploadTarget)}</strong></div>}
       <header className="note-pane-header">
         <button className="icon-button collapsed-trigger collapsed-sidebar-toggle" onClick={() => setCollapsed(false)} aria-label="Open folders sidebar" aria-controls="file-folders" aria-expanded={!collapsed} title="Open folders"><PanelLeftOpen /><span>Folders</span></button>
         <div className="mobile-header"><button className="icon-button" onClick={() => back("folders")} aria-label="Back to folders"><ChevronLeft /></button><strong>{folderTitle}</strong></div>
@@ -490,7 +595,12 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         {visible.map((item) => {
           const Icon = kindIcon(item.preview_kind);
           return <div role="listitem" key={item.id}>
-            <button className={`file-row${documentId === item.id ? " selected" : ""}`} data-document-id={item.id} aria-current={documentId === item.id ? "true" : undefined} aria-keyshortcuts={canManage(item) ? "F2 Delete" : undefined} onClick={() => openDocument(item)}>
+            <button
+              className={`file-row${documentId === item.id ? " selected" : ""}${draggingId === item.id ? " dragging" : ""}`}
+              draggable={canManage(item)}
+              onDragStart={(event) => startRowDrag(event, item)}
+              onDragEnd={endRowDrag}
+              data-document-id={item.id} aria-current={documentId === item.id ? "true" : undefined} aria-keyshortcuts={canManage(item) ? "F2 Delete" : undefined} onClick={() => openDocument(item)}>
               <span className="file-row-icon"><Icon aria-hidden="true" /></span>
               <span className="file-row-copy">
                 <span className="file-row-name" title={item.name}>{item.name}</span>
