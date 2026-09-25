@@ -1,0 +1,3 @@
+/* Editor content that the base prose styles in styles.css do not cover. */
+.note-prose img.note-image { display: block; max-width: 100%; height: auto; margin: 1.1em 0; border-radius: 8px; }
+.note-prose img.note-image.ProseMirror-selectednode { outline: 2px solid var(--yellow); outline-offset: 2px; }

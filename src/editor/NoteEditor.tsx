@@ -1,30 +1,59 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import type { Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
-import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import Link from "@tiptap/extension-link";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
 import { Markdown } from "@tiptap/markdown";
 import { Bold, Code2, Italic, Link2, Strikethrough } from "lucide-react";
 import { SlashCommands } from "./slash";
+import { markdownOptions, noteContentExtensions } from "./extensions";
+import { ImageInsert } from "./imageInsert";
+import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
+import "./editor.css";
 
 type Props = {
   markdown: string;
   editable: boolean;
   onChange: (markdown: string) => void;
+  /** Folder that uploaded images are stored in; null uploads to the Default folder. */
+  folderId?: string | null;
+  /** Shows a short status message (the app toast). */
+  onNotice?: (message: string) => void;
 };
 
-export function NoteEditor({ markdown, editable, onChange }: Props) {
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice }: Props) {
+  // The editor is created once, so the upload handler reads the latest props through a ref.
+  const latest = useRef({ folderId, onNotice });
+  latest.current = { folderId, onNotice };
+
+  const insertImages = async (activeEditor: Editor, files: File[]) => {
+    const notice = (message: string) => latest.current.onNotice?.(message);
+    for (const file of files) {
+      if (!isInsertableImageType(file.type)) {
+        notice(IMAGE_REJECTED_MESSAGE);
+        continue;
+      }
+      notice(`Uploading ${file.name || "image"}…`);
+      try {
+        const image = await uploadNoteImage(file, latest.current.folderId);
+        if (activeEditor.isDestroyed || !activeEditor.isEditable) {
+          notice("Image saved to Files, but the note is no longer open for editing");
+          continue;
+        }
+        activeEditor.chain().focus().setImage(image).run();
+        notice("Image added");
+      } catch (reason) {
+        notice(reason instanceof Error ? reason.message : "Image upload failed");
+      }
+    }
+  };
+
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ link: false }),
-      Link.configure({ openOnClick: false, autolink: true }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
+      ...noteContentExtensions(),
       Placeholder.configure({ placeholder: "Start writing… Type / for commands" }),
-      Markdown.configure({ markedOptions: { gfm: true, breaks: false } }),
+      Markdown.configure({ markedOptions: markdownOptions }),
+      ImageInsert.configure({ onFiles: (activeEditor, files) => { void insertImages(activeEditor, files); } }),
       SlashCommands
     ],
     content: markdown,

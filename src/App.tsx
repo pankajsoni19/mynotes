@@ -1318,7 +1318,7 @@ export function App() {
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={setMarkdown} />
+            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={setMarkdown} folderId={note.folder_id} onNotice={flash} />
           </article>
         </>}
       </section>

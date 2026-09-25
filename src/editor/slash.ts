@@ -19,6 +19,7 @@ const commands: Command[] = [
   { label: "Checklist", hint: "Track tasks", keywords: "todo task check", run: (editor, range) => editor.chain().focus().deleteRange(range).toggleTaskList().run() },
   { label: "Quote", hint: "Capture a quotation", keywords: "blockquote quote", run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBlockquote().run() },
   { label: "Code block", hint: "Monospace code", keywords: "code pre", run: (editor, range) => editor.chain().focus().deleteRange(range).toggleCodeBlock().run() },
+  { label: "Image", hint: "Upload a picture", keywords: "image picture photo upload img", run: (editor, range) => editor.chain().focus().deleteRange(range).openImagePicker().run() },
   { label: "Divider", hint: "Separate sections", keywords: "rule divider hr", run: (editor, range) => editor.chain().focus().deleteRange(range).setHorizontalRule().run() },
   { label: "Today", hint: "Insert today’s date", keywords: "date today", run: (editor, range) => editor.chain().focus().deleteRange(range).insertContent(new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(new Date())).run() }
 ];
@@ -35,7 +36,7 @@ export const SlashCommands = Extension.create({
         allowSpaces: true,
         items: ({ query }) => {
           const needle = query.toLowerCase();
-          return commands.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(needle)).slice(0, 8);
+          return commands.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(needle)).slice(0, 16);
         },
         command: ({ editor, range, props }) => props.run(editor, range),
         render: () => {
@@ -68,6 +69,7 @@ export const SlashCommands = Extension.create({
                 current?.command(item);
               });
               container?.append(button);
+              if (index === selected) button.scrollIntoView?.({ block: "nearest" });
             });
             place();
           };
