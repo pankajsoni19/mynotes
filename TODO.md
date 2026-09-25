@@ -113,6 +113,13 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Mobile panels, action sheet, Move sheet, and browser history
 - [x] Home Files card live; desktop/mobile manual QA and accessibility check; released v0.4.0
 
+### Wave 5b — Files views and header polish (operator feedback 2026-09-25, in progress)
+
+- [ ] List and thumbnail (grid) views in Files with a persisted toggle; image tiles use the inline content URL
+- [ ] Files list takes the full width until a file is selected; the preview/details pane opens on selection with a Close control, URL-driven (`/files/:id`)
+- [ ] App headers show only the icon plus the app name (the "MYNOTES" eyebrow read as "Notes"); product name stays on the login page and in the tab title
+- [ ] Review, QA, release with v0.5.0 or as v0.4.2
+
 ### Wave 6 — Documentation and final audit (complete, v0.4.1)
 
 - [x] README, ARCHITECTURE, and site docs for Files/Bin, editor features, URLs, env vars, backup sizing (`8259794`, `8e1aa18`, `42d5300`, `eff0971`); the `app-dev` reference was already removed in Wave 4
