@@ -108,6 +108,23 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [ ] README, ARCHITECTURE, and site docs for Files/Bin, env vars, backup sizing; fix `app-dev` profile reference
 - [ ] Final independent security audit across Waves 3–5
 
+## Backlog — candidate modules and enhancements (for later picking)
+
+Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md). Nothing here is scheduled until the operator picks it.
+
+**Chosen for planning (Waves 7–9, plan in progress):** full-text search in notes; MCP coverage across notes, files, and tasks with per-key scopes; Task Boards module (multiple boards, sharing, draggable cards, comments, attachments).
+
+**New standalone modules, ranked by value for effort (operator: "look good, keep for later"):**
+- [ ] Today dashboard (S/M) — read-only home pulling due tasks, recent notes/files, Bin warnings; natural mobile landing page
+- [ ] Journal (S) — note engine plus date key, mood, prompts, streaks; habits fold in
+- [ ] Agent inbox and routines (M) — stored routines run by outside AI clients over MCP; results return as proposals to approve
+- [ ] Bookmarks and read-later (M) — snapshots stored through Files, never rendered as HTML; fetching off by default with strict server-request protections
+- [ ] Calendar and reminders (M, staged) — subscription feed first, push reminders next, CalDAV only on demand
+- [ ] Collections (L) — generic typed tables with templates (inventory, recipes, subscriptions, expenses); see the report for downsides
+- Next in line if wanted: whiteboard/canvas stored as files. Rejected for now: password vault, scanning/OCR, photo gallery, transcription, chat, RSS (reasons in the report).
+
+**Enhancements to existing modules (not chosen yet):** tags, wikilinks/backlinks, daily notes and templates, cross-note task list, Markdown export and Obsidian/Notion/Joplin import, passkeys, installable offline app with share target, web clipper, document OCR, encrypted vault notes.
+
 ## Foundation
 
 - [x] Initialize Git repository
