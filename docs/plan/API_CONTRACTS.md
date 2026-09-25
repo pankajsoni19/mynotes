@@ -1,4 +1,4 @@
-# API contracts: Files, content, Bin, and Search
+# API contracts: Files, content, Bin, Search, and Tasks
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every endpoint lives under `/api` and inherits the existing middleware:
 
@@ -252,6 +252,60 @@ type NoteSearchHit = {
 | 429 | More than 20 searches in 10 seconds by this user | `{ error, code: "RATE_LIMITED" }` with `Retry-After` in seconds |
 
 Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT`: a note's owner searches their draft when one exists and the published version otherwise; everyone else searches the published version of notes they can read. Binned notes never match; restoring one makes it searchable again, and purging removes its index rows. The index holds the published version and the owner's draft, built from checksum-verified files in the same transaction as each change.
+
+## Tasks (Wave 9)
+
+Task Boards ([WAVES_7-9.md](WAVES_7-9.md) §3). Every endpoint is under `/api/tasks`, takes and returns JSON, and inherits the global session, Origin, CSRF, `Content-Type: application/json`, and TOTP rules. Path ids are UUIDs (400 otherwise) and are always joined to a board the caller can read.
+
+**Roles (D38, D39).** A board's readers are its owner, its members when `visibility = 'selected'`, and every user when `visibility = 'all_users'`. Readers create, edit, move, and bin cards. Only the owner renames the board, manages columns and sharing, and deletes it. A caller who cannot read the board gets **404**; a reader calling an owner-only endpoint gets **403** `{ error, code: "OWNER_ONLY" }`. Binned boards are unreadable for everyone.
+
+**Caps** (409 `{ error, code: "LIMIT_REACHED" }`): 50 live boards per owner, 20 columns per board, 1000 live cards per board.
+
+```ts
+type BoardSummary = {
+  id: string; name: string;          // 1–120 characters, trimmed, no control characters
+  owner_id: string; owner_name: string; is_owner: 0 | 1;
+  visibility: Visibility;
+  card_count: number;                // live cards
+  created_at: string; updated_at: string;
+};
+type BoardColumn = { id: string; board_id: string; name: string /* 1–60 */; position: number; created_at: string; updated_at: string };
+```
+
+Positions are computed by the server (D40) and never accepted from clients: a new item goes to the midpoint of its neighbours, to last + 1024 at the bottom, or to half the first position at the top. When a gap would drop below 1e-6, the whole column (or the board's column list) is renumbered to 1024, 2048, … and the response says `renormalized: true`. Ordering changes run under the `board:<id>` lock.
+
+### Boards
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /boards` | any | 200 `{ boards: BoardSummary[] }`: owned boards first, then shared ones, each by name (limit 500) | |
+| `POST /boards { name }` | any | 201 `{ board, columns }` with To do, Doing, Done at 1024, 2048, 3072 | 400, 409 `LIMIT_REACHED` |
+| `GET /boards/:b` | reader | 200 `{ board, columns, cards: CardSummary[] }` (columns and cards by position) | 404 |
+| `PATCH /boards/:b { name }` | owner | 200 `{ board }` | 400, 403, 404 |
+| `DELETE /boards/:b` | owner | 200 `{ ok: true, purgeAfter }`: the board moves to the Bin for 30 days | 403, 404 |
+
+Stage A sets the board's Bin columns only; restore, purge, and Bin listing arrive with stage D.
+
+### Sharing
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /boards/:b/sharing` | owner | 200 `{ visibility, users: [{ id, display_name }] }` | 403, 404 |
+| `PUT /boards/:b/sharing { visibility: "private" \| "selected" \| "all_users", userIds ≤ 100 }` | owner | 200 `{ ok: true }` | 400, 403, 404 |
+
+Same rules as folder sharing: the owner cannot be a recipient (400), `selected` needs at least one user (400), every user must exist and be enabled (400), and member rows are kept only for `selected`. Removing a member revokes access at once.
+
+### Columns
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /boards/:b/columns { name, afterColumnId? }` | owner | 201 `{ column, columns }`. Omitted `afterColumnId` appends; `null` puts the column first. | 400, 403, 404 (board, or an anchor not on this board), 409 `LIMIT_REACHED` |
+| `PATCH /columns/:c { name?, afterColumnId? }` | owner | 200 `{ column, columns, renormalized? }` | 400 (neither field, or after itself), 403, 404 |
+| `DELETE /columns/:c` | owner | 200 `{ ok: true, columns }` | 403, 404, 409 `COLUMN_NOT_EMPTY` (with `cardCount`) or `LAST_COLUMN` |
+
+Binned cards do not block deleting their column; they keep `column_id = NULL` and restore to the first column.
+
+**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, each with `{ boardId, columnId? }`.
 
 ## Changes to existing note endpoints (Wave 4)
 
