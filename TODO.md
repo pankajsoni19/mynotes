@@ -100,17 +100,18 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Director QA on the isolated instance (Bun 1.4.2 backend): five uploads via the app's file input (PNG, 1.2 MB text, PDF, random binary, HTML) all reached 100 % with correct sizes; previews matched each kind; HEAD on every inline URL returned the contract headers (HTML/binary forced to `application/octet-stream; attachment`, PDF with `frame-ancestors 'none'`, others with `sandbox`); deep link to `/files` survived login; 390 px panels and Back work
 - Deferred to Wave 5: rename, move, share, delete with Undo, New folder, OS drag-and-drop, sort/filter, keyboard shortcuts, mobile upload bottom sheet
 
-### Wave 5 — Files UI (v0.4.0)
+### Wave 5 — Files UI (released v0.4.0, deployed at `5c42aa6`)
 
 - [x] Implemented in `0d48272` (rename/move/share/delete with Undo), `72313ae` (New folder, sort, filter), `a374264` (OS drop upload, drag-to-folder), `e5cbb0d` (mobile action sheet, Move sheet, upload bottom sheet, Back closes dialogs via `src/historyDialogs.ts`), `2b1a5d3` (Home copy, empty/error states, live region, labels). 189 tests; Docker verify passes.
 - [x] Director QA on isolated data: action sheet → Delete → Bin confirm copy → "Moved to the Bin" toast → Undo → "Restored to Default" and the row returns; Rename preselects the base name, shows "Will be saved as “report- final”" for a colon, and saves; New folder dialog creates and opens the folder; Move sheet disables the current folder, confirm reads "Move to Projects", toast "Moved to Projects · private", folder updated; 390 px: ⋯ opens a sheet with 44–48 px rows, browser Back closes it and stays on Files.
-- [ ] Independent review, then release v0.4.0
+- [x] Independent review (fresh session): releasable, no high; mediums fixed in `24ec4ba` (Forward/Back with a dialog open undone via `history.go`), `7f97157` (shortcuts resolve the ⋯ button's own row); lows in `590c644` (focus trap, focus return), `b6e07c0` (unlisted files, Undo refresh error, 44 px Clear). 193 tests.
+- [x] **Released v0.4.0 (2026-09-25):** bump `5c42aa6`, pushed; forced backup taken; deployed; healthy; `/api/about` reports `0.4.0` / `5c42aa630890222a9adec3365bfb34b61d699f7d`.
 
 - [x] Files API client and upload queue with progress, cancel, and retry
 - [x] Desktop Files workspace: folders, list, preview/details, rename, download, move, share, delete with Undo
 - [x] Drag and drop upload from OS and drag-to-folder move
 - [x] Mobile panels, action sheet, Move sheet, and browser history
-- [ ] Home Files card live; desktop/mobile manual QA and accessibility check; release v0.4.0
+- [x] Home Files card live; desktop/mobile manual QA and accessibility check; released v0.4.0
 
 ### Wave 6 — Documentation and final audit
 
