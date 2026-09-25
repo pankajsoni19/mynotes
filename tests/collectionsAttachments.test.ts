@@ -83,6 +83,12 @@ describe("row attachments", () => {
     const documentId = await upload(owner, "collection_attachment", "linked.txt");
     expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id })).status).toBe(201);
     db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), owner.userId, new Date(Date.now() + 86_400_000).toISOString(), documentId);
+    const binItem = async () => ((await (await request("/bin", {}, owner)).json()) as { items: Array<{ id: string; attachment: boolean; attachment_of: string | null; attachment_kind: string | null }> }).items.find((item) => item.id === documentId);
+    // The Bin names the row it still belongs to; once the row is binned it is still a row attachment.
+    expect(await binItem()).toMatchObject({ attachment: true, attachment_of: "Fridge", attachment_kind: "row" });
+    db.query("UPDATE collection_rows SET deleted_at = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString(), row.id);
+    expect(await binItem()).toMatchObject({ attachment: true, attachment_of: null, attachment_kind: "row" });
+    db.query("UPDATE collection_rows SET deleted_at = NULL, purge_after = NULL WHERE id = ?").run(row.id);
     expect((await request(`/bin/document/${documentId}/restore`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
     expect(db.query("SELECT purpose, folder_id, deleted_at FROM documents WHERE id = ?").get(documentId)).toEqual({ purpose: "collection_attachment", folder_id: null, deleted_at: null });
     expect(await filesList(owner)).not.toContain(documentId);

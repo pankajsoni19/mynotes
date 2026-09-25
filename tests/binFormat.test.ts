@@ -97,5 +97,16 @@ test("a restored linked attachment returns to its card", () => {
 
 test("attachment rows name their card while it exists", () => {
   expect(attachmentLabel({ attachment_of: "Ship it" })).toBe("Attachment of Ship it");
-  expect(attachmentLabel({ attachment_of: null })).toBe("Card attachment");
+  expect(attachmentLabel({ attachment_of: null, attachment_kind: "card" })).toBe("Card attachment");
+  expect(attachmentLabel({ attachment_of: null })).toBe("Card attachment · restores to Default");
+});
+
+test("row attachments name their row and only mention Default once nothing links them", () => {
+  expect(attachmentLabel({ attachment_of: "Acme", attachment_kind: "row" })).toBe("Attachment of Acme");
+  expect(attachmentLabel({ attachment_of: "", attachment_kind: "row" })).toBe("Attachment of Untitled row");
+  expect(attachmentLabel({ attachment_of: null, attachment_kind: "row" })).toBe("Row attachment");
+  expect(attachmentLabel({ attachment_of: null, attachment_kind: null, folder_name: null })).toBe("Attachment · restores to Default");
+  expect(attachmentLabel({ attachment_of: null, attachment_kind: null, folder_name: "Work" })).toBe("Attachment · restores to Work");
+  expect(binKindLabel({ type: "document", attachment: true, attachment_kind: "row" })).toBe("Row attachment");
+  expect(restoreResultMessage({ type: "document", attachment: true, attachment_kind: "row" }, { ok: true, folderId: null, folderName: null })).toBe("Restored to its row");
 });

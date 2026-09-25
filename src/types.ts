@@ -73,8 +73,10 @@ export type BinItem = {
   board_name?: string | null;
   /** A document that was a card attachment. */
   attachment?: boolean;
-  /** The live card it is still attached to, when there is one. */
+  /** The live card (or row primary field) it is still attached to, when there is one. */
   attachment_of?: string | null;
+  /** What still links the attachment: a card, a collection row, or nothing (null). Older servers omit it. */
+  attachment_kind?: "card" | "row" | null;
   /** False for a card, row, or event the caller deleted on someone else's board, collection, or calendar: they may only restore it. */
   can_purge?: boolean;
 };

@@ -19,7 +19,7 @@ import { binUnlinkedAttachments, LIMITS } from "./service";
 const collectionLock = (collectionId: string) => `collection:${collectionId}`;
 
 /** Task and attachment columns every Bin item carries (server/bin.ts BinItem); none apply to collections or rows. */
-const providedDefaults = { board_id: null, board_name: null, attachment: false, attachment_of: null } as const;
+const providedDefaults = { board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null } as const;
 
 type BinnedCollection = { id: string; owner_id: string; name: string; visibility: CollectionVisibility; deleted_at: string | null; purge_started_at: string | null };
 

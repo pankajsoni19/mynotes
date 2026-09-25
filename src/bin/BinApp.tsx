@@ -247,7 +247,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
             <span className="bin-row-copy">
               <span className="bin-row-title" title={label}><span className="sr-only">{binKindLabel(item)}: </span>{label}</span>
               <span className="bin-row-meta">
-                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" ? `In ${binFolderLabel(item)}` : item.attachment ? (item.attachment_of ? attachmentLabel(item) : `${attachmentLabel(item)} · restores to Default`) : binFolderLabel(item)}</span>
+                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" ? `In ${binFolderLabel(item)}` : item.attachment ? attachmentLabel(item) : binFolderLabel(item)}</span>
                 <time dateTime={item.deleted_at}>Deleted {relativeTime(item.deleted_at)}</time>
                 {item.purging || action === "delete"
                   ? <span className="bin-row-status">Deleting forever…</span>

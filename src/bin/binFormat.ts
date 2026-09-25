@@ -52,13 +52,26 @@ export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
   return item.title.trim() || untitled[item.type];
 }
 
-/** Row meta for an attachment: the card it still belongs to, or a generic label. */
-export function attachmentLabel(item: Pick<BinItem, "attachment_of">) {
-  return item.attachment_of ? `Attachment of ${item.attachment_of}` : "Card attachment";
+const attachmentKindLabel = (item: Partial<Pick<BinItem, "attachment_kind">>) =>
+  item.attachment_kind === "row" ? "Row attachment" : item.attachment_kind === null ? "Attachment" : "Card attachment";
+
+/**
+ * Row meta for an attachment: the card or row it still belongs to, a kind label while something
+ * still links it, or where it restores to once nothing does.
+ */
+export function attachmentLabel(item: Pick<BinItem, "attachment_of"> & Partial<Pick<BinItem, "attachment_kind" | "folder_name">>) {
+  if (item.attachment_of != null) {
+    const name = item.attachment_of.trim() || (item.attachment_kind === "row" ? "Untitled row" : "Untitled card");
+    return `Attachment of ${name}`;
+  }
+  const kind = attachmentKindLabel(item);
+  // Older servers omit attachment_kind; they only report a card link through attachment_of.
+  const linked = item.attachment_kind === "card" || item.attachment_kind === "row";
+  return linked ? kind : `${kind} · restores to ${item.folder_name ?? "Default"}`;
 }
 
 /** The kind shown to screen readers and in the row meta. */
-export function binKindLabel(item: Pick<BinItem, "type" | "attachment">) {
+export function binKindLabel(item: Pick<BinItem, "type" | "attachment"> & Partial<Pick<BinItem, "attachment_kind">>) {
   if (item.type === "note") return "Note";
   if (item.type === "card") return "Card";
   if (item.type === "board") return "Board";
@@ -66,11 +79,11 @@ export function binKindLabel(item: Pick<BinItem, "type" | "attachment">) {
   if (item.type === "collection_row") return "Row";
   if (item.type === "calendar") return "Calendar";
   if (item.type === "event") return "Event";
-  return item.attachment ? "Card attachment" : "File";
+  return item.attachment ? attachmentKindLabel(item) : "File";
 }
 
 /** Toast after restoring any Bin item. */
-export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<BinItem, "attachment" | "folder_name">>, result: BinRestoreResult) {
+export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<BinItem, "attachment" | "attachment_kind" | "folder_name">>, result: BinRestoreResult) {
   if (item.type === "board") {
     const name = result.boardName ? ` “${result.boardName}”` : "";
     return result.alreadyRestored ? `The board${name} is already restored` : `Restored the board${name}`;
@@ -84,7 +97,7 @@ export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<
     const where = result.folderName ?? binFolderLabel({ type: item.type, folder_name: item.folder_name ?? null });
     return result.alreadyRestored ? `Already restored to ${where}` : restoredMessage(where, result.visibility);
   }
-  if (item.type === "document" && item.attachment && !result.folderName && !result.alreadyRestored) return "Restored to its card";
+  if (item.type === "document" && item.attachment && !result.folderName && !result.alreadyRestored) return item.attachment_kind === "row" ? "Restored to its row" : "Restored to its card";
   const folderName = result.folderName ?? "Default";
   return result.alreadyRestored ? `Already restored to ${folderName}` : restoredMessage(folderName, result.visibility);
 }

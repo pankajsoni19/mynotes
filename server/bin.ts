@@ -3,6 +3,7 @@ import { removeObject } from "./documentStorage";
 import { storage, withResourceLock } from "./storage";
 import { emptyTaskBin, listTaskBin, sweepTaskBin, type TaskBinType } from "./tasks/bin";
 import { readableBoardPredicate } from "./tasks/access";
+import { readableCollectionPredicate } from "./collections/access";
 
 /** Bin retention is a constant (D11), not configurable. */
 export const BIN_RETENTION_MS = 30 * 86_400_000;
@@ -253,8 +254,13 @@ export type BinItem = {
   board_name: string | null;
   /** A document that was a card attachment (it returns to Files when restored). */
   attachment: boolean;
-  /** For an attachment still linked to a live card on a board the caller can read: that card's title. */
+  /**
+   * For an attachment still linked to a live card on a board the caller can read, that card's title;
+   * else to a live row in a collection they can read, that row's primary field ('' when empty).
+   */
   attachment_of: string | null;
+  /** What an attachment is still linked to ('card' or 'row'), so a restore keeps it there; null when nothing links it. */
+  attachment_kind: "card" | "row" | null;
   /** Whether the caller may delete it forever (a card's deleter may only restore it). */
   can_purge: boolean;
 };
@@ -268,7 +274,7 @@ export const BIN_LIST_LIMIT = 500;
  */
 export function listBin(ownerId: string, type: BinListType | null) {
   const notes = `SELECT 'note' AS type, n.id, n.title, f.id AS folder_id, f.name AS folder_name, NULL AS size_bytes,
-      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 0 AS attachment, NULL AS attachment_of
+      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 0 AS attachment, NULL AS attachment_of, NULL AS row_attachment_of, NULL AS attachment_kind
     FROM notes n LEFT JOIN folders f ON f.id = n.folder_id AND f.owner_id = n.owner_id
     WHERE n.owner_id = $ownerId AND n.deleted_at IS NOT NULL`;
   const documents = `SELECT 'document' AS type, d.id, d.name AS title, f.id AS folder_id, f.name AS folder_name, d.size_bytes,
@@ -276,7 +282,15 @@ export function listBin(ownerId: string, type: BinListType | null) {
       CASE WHEN d.purpose = 'file' THEN NULL ELSE (
         SELECT k.title FROM card_attachments ca JOIN cards k ON k.id = ca.card_id AND k.deleted_at IS NULL JOIN boards b ON b.id = k.board_id
         WHERE ca.document_id = d.id AND ${readableBoardPredicate.replaceAll("$userId", "$ownerId")} ORDER BY ca.created_at LIMIT 1
-      ) END AS attachment_of
+      ) END AS attachment_of,
+      CASE WHEN d.purpose = 'file' THEN NULL ELSE (
+        SELECT COALESCE(CAST(json_extract(r.values_json, '$.' || json_extract(c.schema_json, '$.fields[0].id')) AS TEXT), '')
+        FROM collection_row_attachments cra JOIN collection_rows r ON r.id = cra.row_id AND r.deleted_at IS NULL JOIN collections c ON c.id = r.collection_id
+        WHERE cra.document_id = d.id AND ${readableCollectionPredicate.replaceAll("$userId", "$ownerId")} ORDER BY cra.created_at LIMIT 1
+      ) END AS row_attachment_of,
+      CASE WHEN d.purpose = 'file' THEN NULL
+        WHEN EXISTS (SELECT 1 FROM card_attachments ca WHERE ca.document_id = d.id) THEN 'card'
+        WHEN EXISTS (SELECT 1 FROM collection_row_attachments cra WHERE cra.document_id = d.id) THEN 'row' ELSE NULL END AS attachment_kind
     FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
     WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
   const items: BinItem[] = [];
@@ -285,13 +299,15 @@ export function listBin(ownerId: string, type: BinListType | null) {
     // The Files filter shows Files items only; attachments appear under All (WAVES_7-9.md §7).
     const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'` : `${notes} UNION ALL ${documents}`;
     const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
-      .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging" | "attachment" | "board_id" | "board_name" | "can_purge"> & { purging: number; attachment: number }>;
-    items.push(...rows.map((row): BinItem => ({ ...row, purging: row.purging === 1, attachment: row.attachment === 1, board_id: null, board_name: null, can_purge: true })));
+      .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging" | "attachment" | "board_id" | "board_name" | "can_purge"> & { purging: number; attachment: number; row_attachment_of: string | null }>;
+    items.push(...rows.map(({ row_attachment_of, ...row }): BinItem => ({
+      ...row, attachment_of: row.attachment_of ?? row_attachment_of, purging: row.purging === 1, attachment: row.attachment === 1, board_id: null, board_name: null, can_purge: true
+    })));
   }
   if (type === null || type === "card" || type === "board") {
     items.push(...listTaskBin(ownerId, type === "card" || type === "board" ? type : null, BIN_LIST_LIMIT).map((row): BinItem => ({
       type: row.type, id: row.id, title: row.title, folder_id: null, folder_name: null, size_bytes: null,
-      deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purging, attachment: false, attachment_of: null,
+      deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purging, attachment: false, attachment_of: null, attachment_kind: null,
       board_id: row.board_id, board_name: row.board_name, can_purge: row.can_purge
     })));
   }
