@@ -26,6 +26,8 @@ export type McpErrorCode =
   | "READ_ONLY"
   | "EVENT_CHANGED"
   | "REMINDER_EXISTS"
+  | "ROW_CHANGED"
+  | "SCHEMA_CHANGED"
   | "INTERNAL";
 
 export class McpToolError extends Error {

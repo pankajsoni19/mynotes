@@ -8,7 +8,7 @@
  */
 export const MCP_SCOPES = [
   "notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read",
-  "calendar:read", "calendar:write"
+  "calendar:read", "calendar:write", "collections:read", "collections:write"
 ] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 
@@ -18,7 +18,8 @@ export const DEFAULT_MCP_SCOPES: readonly McpScope[] = ["notes:read"];
 export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
   "notes:write-draft": "notes:read",
   "tasks:write": "tasks:read",
-  "calendar:write": "calendar:read"
+  "calendar:write": "calendar:read",
+  "collections:write": "collections:read"
 };
 
 export const isMcpScope = (value: unknown): value is McpScope => typeof value === "string" && (MCP_SCOPES as readonly string[]).includes(value);

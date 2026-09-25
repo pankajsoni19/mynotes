@@ -4,7 +4,7 @@
  * Pure, so the checkbox rules are unit-tested.
  */
 export type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read"
-  | "calendar:read" | "calendar:write";
+  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write";
 
 export type McpPermission = { scope: McpScope; label: string; help: string; implies?: McpScope };
 
@@ -16,7 +16,9 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards: never deletes", implies: "tasks:read" },
   { scope: "today:read", label: "Read Today", help: "The Today summary, limited to the other read permissions this key has" },
   { scope: "calendar:read", label: "Read calendar", help: "Calendars, events, and their links you can open" },
-  { scope: "calendar:write", label: "Write calendar", help: "Create and change events, and set your own reminders: never deletes", implies: "calendar:read" }
+  { scope: "calendar:write", label: "Write calendar", help: "Create and change events, and set your own reminders: never deletes", implies: "calendar:read" },
+  { scope: "collections:read", label: "Read collections", help: "Collections you can open, their fields, and their rows; attachments as names only" },
+  { scope: "collections:write", label: "Write collections", help: "Add and change rows where you can edit: never deletes, and never changes fields or sharing", implies: "collections:read" }
 ];
 
 /** The permissions offered when creating a key: every scope that has tools. */

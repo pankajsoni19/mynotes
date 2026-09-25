@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Ellipsis, Eye, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, Bot, Ellipsis, Eye, RotateCcw, Undo2, X } from "lucide-react";
 import { ApiError } from "../api";
 import { relativeTime } from "../files/format";
 import { errorMessage, getRow, type CollectionDetail, type CollectionRow, type FieldDefinition, type FieldValue } from "./collectionsApi";
@@ -20,6 +20,8 @@ type RowPanelProps = {
   save: (rowId: string, values: Record<string, FieldValue | null>, known?: () => CollectionRow | null) => Promise<CollectionRow | null>;
   onAcceptConflict: () => void;
   onActions: (row: CollectionRow) => void;
+  /** Undo the last change (offered next to "Changed by <key>" after an MCP edit, T73). */
+  onUndo?: (row: CollectionRow) => void;
   onClose: () => void;
   onMissing: () => void;
   /** Attachments editor for file fields (stage C). */
@@ -28,12 +30,17 @@ type RowPanelProps = {
 
 type Picker = { kind: "options" | "note"; fieldId: string };
 
+/** "Changed by <key>": the last change came through an MCP key (its name, while the key exists). */
+export function changedByKeyText(row: Pick<CollectionRow, "updated_via_key_name">) {
+  return `Changed by ${row.updated_via_key_name ? `the MCP key “${row.updated_via_key_name}”` : "an MCP key"}`;
+}
+
 /**
  * One row: a side pane on desktop, a full-screen panel on phones, with one ≥ 44 px editor per field.
  * The panel is a route (/collections/:c/row/:r); its pickers are dialog layers, so Back closes an
  * open picker first and leaves the row on the next Back.
  */
-export function RowPanel({ collection, rowId, editable, listed, conflict, save, onAcceptConflict, onActions, onClose, onMissing, renderFiles }: RowPanelProps) {
+export function RowPanel({ collection, rowId, editable, listed, conflict, save, onAcceptConflict, onActions, onUndo, onClose, onMissing, renderFiles }: RowPanelProps) {
   const [row, setRow] = useState<CollectionRow | null>(listed);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
@@ -94,6 +101,10 @@ export function RowPanel({ collection, rowId, editable, listed, conflict, save, 
     </div>}
     {loadError && <p className="file-dialog-error row-panel-state" role="alert">{loadError}</p>}
     {!row && !loadError && <p className="bin-loading row-panel-state" role="status">Opening row…</p>}
+    {row?.updated_via_key_id && <div className="row-panel-agent" role="status">
+      <span><Bot aria-hidden="true" />{changedByKeyText(row)}</span>
+      {editable && row.can_undo && onUndo && !conflict && <button className="secondary-button" onClick={() => onUndo(row)}><Undo2 />Undo</button>}
+    </div>}
     {row && <div className="row-panel-body">
       {collection.fields.map((field) => {
         const labelId = `row-field-${field.id}`;

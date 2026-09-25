@@ -401,13 +401,16 @@ export type RowSummary = {
   created_by_name: string | null;
   updated_by_name: string | null;
   updated_via_key_id: string | null;
+  /** The MCP key that made the last change, while the key exists ("Changed by <key>", T73). */
+  updated_via_key_name: string | null;
   created_at: string;
   updated_at: string;
 };
 
-type RowWithNames = RowRecord & { created_by_name: string | null; updated_by_name: string | null };
-const rowSelect = `SELECT r.*, cu.display_name AS created_by_name, uu.display_name AS updated_by_name
-  FROM collection_rows r LEFT JOIN users cu ON cu.id = r.created_by LEFT JOIN users uu ON uu.id = r.updated_by`;
+type RowWithNames = RowRecord & { created_by_name: string | null; updated_by_name: string | null; updated_via_key_name: string | null };
+const rowSelect = `SELECT r.*, cu.display_name AS created_by_name, uu.display_name AS updated_by_name, mk.name AS updated_via_key_name
+  FROM collection_rows r LEFT JOIN users cu ON cu.id = r.created_by LEFT JOIN users uu ON uu.id = r.updated_by
+  LEFT JOIN mcp_api_keys mk ON mk.id = r.updated_via_key_id`;
 
 /** Resolves note ids for `viewerId`: readable live notes give their title, everything else is restricted. */
 function resolveNotes(noteIds: string[], viewerId: string) {
@@ -477,6 +480,7 @@ function presentValues(schema: CollectionSchema, rows: RowWithNames[], viewerId:
       created_by_name: row.created_by_name,
       updated_by_name: row.updated_by_name,
       updated_via_key_id: row.updated_via_key_id,
+      updated_via_key_name: row.updated_via_key_id === null ? null : row.updated_via_key_name ?? null,
       created_at: row.created_at,
       updated_at: row.updated_at
     };
@@ -527,8 +531,10 @@ export const rowHooks = {
 };
 
 export type RowCreateInput = { values: unknown; afterRowId?: string | null };
+/** `keyId` marks a write as made through that MCP key (Stage E, T73). */
+export type RowWriteOptions = { keyId?: string | null };
 
-export function createRow(userId: string, collectionId: string, input: RowCreateInput) {
+export function createRow(userId: string, collectionId: string, input: RowCreateInput, options: RowWriteOptions = {}) {
   return withCollectionLock(collectionId, () => {
     const collection = requireEditableCollection(collectionId, userId);
     const schema = schemaOf(collection);
@@ -540,8 +546,8 @@ export function createRow(userId: string, collectionId: string, input: RowCreate
     db.transaction(() => {
       applyRenumber(plan.renumbered);
       const timestamp = now();
-      db.query(`INSERT INTO collection_rows (id, collection_id, position, values_json, created_by, updated_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(id, collectionId, plan.position, JSON.stringify(result.values), userId, userId, timestamp, timestamp);
+      db.query(`INSERT INTO collection_rows (id, collection_id, position, values_json, updated_via_key_id, created_by, updated_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, collectionId, plan.position, JSON.stringify(result.values), options.keyId ?? null, userId, userId, timestamp, timestamp);
       db.query("UPDATE collections SET updated_at = ? WHERE id = ?").run(timestamp, collectionId);
       rowHooks.afterWrite(id, collection);
       audit(userId, null, "collection.row_create", { collectionId, rowId: id });
@@ -565,7 +571,7 @@ function rowChanged(rowId: string, schema: CollectionSchema, userId: string) {
  * ROW_CHANGED carries the current row). The previous values are kept for a
  * one-step undo (D61). Values of removed fields are dropped here.
  */
-export async function patchRow(userId: string, rowId: string, input: { values: unknown; revision: number }) {
+export async function patchRow(userId: string, rowId: string, input: { values: unknown; revision: number }, options: RowWriteOptions = {}) {
   const { collection: initial } = requireEditableRow(rowId, userId);
   return withCollectionLock(initial.id, () => {
     const { row, collection } = requireEditableRow(rowId, userId);
@@ -577,8 +583,8 @@ export async function patchRow(userId: string, rowId: string, input: { values: u
     db.transaction(() => {
       const timestamp = now();
       const updated = db.query(`UPDATE collection_rows SET values_json = ?, prev_values_json = values_json, prev_revision = revision, revision = revision + 1,
-          updated_by = ?, updated_via_key_id = NULL, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL`)
-        .run(JSON.stringify(result.values), userId, timestamp, rowId, input.revision);
+          updated_by = ?, updated_via_key_id = ?, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL`)
+        .run(JSON.stringify(result.values), userId, options.keyId ?? null, timestamp, rowId, input.revision);
       if (updated.changes !== 1) throw new Error("Concurrent row update detected");
       db.query("UPDATE collections SET updated_at = ? WHERE id = ?").run(timestamp, collection.id);
       rowHooks.afterWrite(rowId, collection);
@@ -791,5 +797,38 @@ export async function detachDocument(userId: string, rowId: string, documentId: 
       audit(userId, null, "collection.row_detach", { collectionId: collection.id, rowId, documentId });
     })();
     return { row: rowDetail(rowId, schemaOf(collection), userId)!, documentBinned: binned > 0 };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Today
+
+export type RecentRow = { rowId: string; collectionId: string; collectionName: string; title: string; updated_at: string; changedByKey: boolean };
+
+/**
+ * Recently edited live rows in collections the caller can read, newest first, for Today's
+ * `collectionsRecent` section (D51, T51). Every row write also touches its collection's
+ * `updated_at`, so the newest `limit` rows lie in the `limit` most recently updated collections;
+ * only those are scanned. Titles only, never other values.
+ */
+export function listRecentRows(userId: string, limit: number): RecentRow[] {
+  const collections = db.query(`SELECT c.id, c.name, c.schema_json FROM collections c WHERE ${readableCollectionPredicate}
+      ORDER BY c.updated_at DESC, c.id LIMIT $limit`).all({ userId, limit }) as Array<{ id: string; name: string; schema_json: string }>;
+  if (!collections.length) return [];
+  const byId = new Map(collections.map((collection) => [collection.id, { name: collection.name, schema: parseStoredSchema(collection.schema_json) }]));
+  const rows = db.query(`SELECT r.id, r.collection_id, r.values_json, r.updated_at, r.updated_via_key_id FROM collection_rows r
+      WHERE r.deleted_at IS NULL AND r.collection_id IN (SELECT value FROM json_each($ids))
+      ORDER BY r.updated_at DESC, r.id LIMIT $limit`)
+    .all({ ids: JSON.stringify(collections.map((collection) => collection.id)), limit }) as Array<{ id: string; collection_id: string; values_json: string; updated_at: string; updated_via_key_id: string | null }>;
+  return rows.map((row) => {
+    const collection = byId.get(row.collection_id)!;
+    return {
+      rowId: row.id,
+      collectionId: row.collection_id,
+      collectionName: collection.name,
+      title: rowTitle(collection.schema, readValues(collection.schema, JSON.parse(row.values_json))),
+      updated_at: row.updated_at,
+      changedByKey: row.updated_via_key_id !== null
+    };
   });
 }

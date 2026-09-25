@@ -16,6 +16,7 @@ import { defineTool, errorResult, McpToolError, notFound, textResult, type McpKe
 import { taskTools } from "./tasks/mcpTools";
 import { todayTools } from "./today/mcpTools";
 import { calendarTools } from "./calendar/mcpTools";
+import { collectionTools } from "./collections/mcpTools";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -328,6 +329,7 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...fileTools,
   ...taskTools,
   ...calendarTools,
+  ...collectionTools,
   ...todayTools
 ];
 

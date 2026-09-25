@@ -94,7 +94,7 @@ describe("get_today MCP tool", () => {
 });
 
 describe("get_today Bin items follow the key's module scopes (T74)", () => {
-  test("each Bin type needs its module's read scope; collections never reach MCP; the web sees all", async () => {
+  test("each Bin type needs its module's read scope; the web sees all", async () => {
     const { newCollection, addRow, call: collections } = await import("./support/collections");
     const user = await createUser("MCP today bin");
     const soon = new Date(Date.now() + 86_400_000).toISOString();
@@ -129,6 +129,7 @@ describe("get_today Bin items follow the key's module scopes (T74)", () => {
     expect(types((await getToday(user, ["today:read", "files:read"])).value)).toEqual(["document"]);
     expect(types((await getToday(user, ["today:read", "tasks:read"])).value)).toEqual(["board", "card"]);
     expect(types((await getToday(user, ["today:read", "calendar:read"])).value)).toEqual(["calendar"]);
+    expect(types((await getToday(user, ["today:read", "collections:read"])).value)).toEqual(["collection", "collection_row"]);
     const all = (await getToday(user, ["today:read", "notes:read", "files:read", "tasks:write"])).value;
     expect(types(all)).toEqual(["board", "card", "document", "note"]);
     expect(JSON.stringify(all)).not.toContain("Binned collection");

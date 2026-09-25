@@ -88,10 +88,10 @@ export async function respond(c: Context<AppEnv>, operation: () => unknown, stat
  * docs/plan/API_CONTRACTS.md § Collections. JSON only; the global session,
  * Origin, CSRF, and TOTP middleware apply.
  *
- * MCP extension point (Stage E, after Wave 8): `list_collections`,
- * `query_rows`, `get_row`, `create_row`, and `update_row` call the same
- * service functions (listCollections, queryRows, getRow, createRow, patchRow)
- * with `updated_via_key_id` set. Nothing here is MCP-specific.
+ * The MCP tools (server/collections/mcpTools.ts: `list_collections`,
+ * `query_rows`, `get_row`, `create_row`, `update_row`) call the same service
+ * functions (listCollections, queryRows, getRow, createRow, patchRow) with the
+ * key id, which sets `updated_via_key_id`. Nothing here is MCP-specific.
  */
 export function registerCollectionRoutes(app: Hono<AppEnv>) {
   const user = (c: Context<AppEnv>) => c.get("user").id;

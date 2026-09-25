@@ -64,7 +64,7 @@ test("Today starts with busy skeleton sections, each labelled by its heading", (
   const markup = home();
   expect(markup).toContain('<div class="today-grid" aria-busy="true">');
   const sections = [...markup.matchAll(/<section class="today-section today-section-(\w+)" aria-labelledby="today-(\w+)"/g)];
-  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "binSoon", "upcoming", "storage"]);
+  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "collectionsRecent", "binSoon", "upcoming", "storage"]);
   for (const [, name] of sections) expect(markup).toContain(`<h2 id="today-${name}">${TODAY_SECTIONS[name!]!.title}</h2>`);
   expect(markup).toContain('class="today-skeleton" aria-hidden="true"');
   expect(markup).toContain('role="status" aria-live="polite"');
@@ -84,6 +84,10 @@ test("Today rows link to their app routes and show due and storage copy", () => 
   expect(TODAY_SECTIONS.tasksMine!.row!({ cardId: "c", boardId: "b", boardName: "Home", title: "x", dueOn: null, reason: "assigned" }, "2026-09-25").meta).toBe("Home · Assigned to you");
   expect(TODAY_SECTIONS.notesRecent!.row!({ id: "n", title: "", is_owner: 0, owner_name: "Bo", updated_at: new Date().toISOString() }, "").label).toBe("Untitled");
   expect(TODAY_SECTIONS.binSoon!.row!({ type: "document", id: "d", title: "a.pdf", purge_after: new Date(Date.now() + 86_400_000).toISOString() }, "").route).toEqual({ app: "bin" });
+  expect(TODAY_SECTIONS.collectionsRecent!.row!({ rowId: "r1", collectionId: "c1", collectionName: "Recipes", title: "", updated_at: new Date().toISOString(), changedByKey: true }, "")).toMatchObject({
+    key: "r1", label: "Untitled", route: { app: "collections", collectionId: "c1", viewId: null, rowId: "r1" }
+  });
+  expect(TODAY_SECTIONS.collectionsRecent!.row!({ rowId: "r1", collectionId: "c1", collectionName: "Recipes", title: "Soup", updated_at: new Date().toISOString(), changedByKey: true }, "").meta).toContain("Recipes · Changed by an MCP key");
   expect(TODAY_SECTIONS.drafts!.row!({ id: "n", title: "T", neverPublished: true, updated_at: new Date().toISOString() }, "").meta).toContain("Never published");
   expect(storageText({ usedBytes: 3.2 * 1024 ** 3, binnedBytes: 0, quotaBytes: 10 * 1024 ** 3 }).summary).toBe("3.2 GB of 10 GB");
   expect(storageText({ usedBytes: 0, binnedBytes: 0, quotaBytes: null })).toEqual({ summary: "0 B used", detail: "No storage limit" });

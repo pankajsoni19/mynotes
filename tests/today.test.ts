@@ -105,7 +105,7 @@ describe("GET /api/today", () => {
   test("returns every installed section, bounded, with hrefs and no bodies", async () => {
     const user = await createUser("Today shape");
     const view = await today(user, "Europe/Berlin");
-    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "binSoon", "upcoming", "storage"]);
+    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "collectionsRecent", "binSoon", "upcoming", "storage"]);
     // Calendar (W12) is installed: a user with no calendars gets an empty section linking to /calendar.
     expect(view.sections.upcoming).toEqual({ items: [], more: false, href: "/calendar" });
     expect(view.date).toBe(dateInZone(new Date(view.generatedAt), "Europe/Berlin"));

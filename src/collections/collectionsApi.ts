@@ -56,6 +56,7 @@ export type CollectionRow = {
   created_by_name: string | null;
   updated_by_name: string | null;
   updated_via_key_id: string | null;
+  updated_via_key_name?: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -1,5 +1,6 @@
 import { readableNotePredicate } from "../access";
 import { listUpcoming } from "../calendar/service";
+import { listRecentRows } from "../collections/service";
 import { BIN_LIST_LIMIT, listBinPurgingSoon } from "../bin";
 import { db } from "../db";
 import { recentListableDocuments } from "../documentAccess";
@@ -17,6 +18,7 @@ import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
  * - notes: `readableNotePredicate` (the Notes list and search)
  * - files: `recentListableDocuments` (the Files list predicate, `purpose = 'file'`)
  * - Bin: `listBin`; storage: `storageUsage` (the upload quota's own sum)
+ * - collectionsRecent: `listRecentRows` (readable collections, live rows, titles only)
  * - upcoming: `listUpcoming` (Calendar's occurrence service, readable calendars only)
  */
 
@@ -111,11 +113,12 @@ registerTodayProvider("files", {
 
 /**
  * The module read scope an MCP key needs to see a Bin item of each type in get_today (T74).
- * Types without an entry (Collections: there is no collections:read scope yet) are left out
- * for MCP callers. A signed-in session sees every type, as in the Bin itself.
+ * Types without an entry are left out for MCP callers. A signed-in session sees every type, as
+ * in the Bin itself.
  */
 export const BIN_TYPE_MCP_SCOPE: Partial<Record<string, McpScope>> = {
-  note: "notes:read", document: "files:read", card: "tasks:read", board: "tasks:read", calendar: "calendar:read", event: "calendar:read"
+  note: "notes:read", document: "files:read", card: "tasks:read", board: "tasks:read",
+  collection: "collections:read", collection_row: "collections:read", calendar: "calendar:read", event: "calendar:read"
 };
 
 export function binItemVisible(type: string, scopes: readonly McpScope[] | undefined) {
@@ -123,6 +126,13 @@ export function binItemVisible(type: string, scopes: readonly McpScope[] | undef
   const needed = BIN_TYPE_MCP_SCOPE[type];
   return needed !== undefined && hasScope(scopes, needed);
 }
+
+/** Recently edited rows in collections the caller can read (Collections, W11); titles only. */
+registerTodayProvider("collectionsRecent", {
+  mcpScope: "collections:read",
+  href: "/collections",
+  load: ({ userId }) => page(listRecentRows(userId, TODAY_FETCH))
+});
 
 /** Items in the caller's Bin that are purged within three days, soonest first. */
 registerTodayProvider("binSoon", {

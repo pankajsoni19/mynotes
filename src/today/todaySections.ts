@@ -1,5 +1,6 @@
 import { dayHeading, zonedParts } from "../calendar/calendarFormat";
 import { eventRoute } from "../calendarRoute";
+import { collectionsRoute } from "../collectionsRoute";
 import { formatBytes } from "../files/filesApi";
 import { relativeTime } from "../files/format";
 import { parseRoute, type Route } from "../router";
@@ -64,6 +65,15 @@ export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
   files: {
     title: "Recent files", empty: "No files yet.", app: "Files",
     row: (item) => ({ key: item.id, label: item.name, meta: [formatBytes(item.size_bytes), item.is_owner ? null : item.owner_name, relativeTime(item.updated_at)].filter(Boolean).join(" · "), route: { app: "files", folder: "all", documentId: item.id } })
+  },
+  collectionsRecent: {
+    title: "Recently edited rows", empty: "No rows edited yet.", app: "Collections",
+    row: (item) => ({
+      key: item.rowId,
+      label: item.title || "Untitled",
+      meta: [item.collectionName, item.changedByKey ? "Changed by an MCP key" : null, `Updated ${relativeTime(item.updated_at)}`].filter(Boolean).join(" · "),
+      route: collectionsRoute(item.collectionId, { rowId: item.rowId })
+    })
   },
   binSoon: {
     title: "Leaving the Bin soon", empty: "Nothing in your Bin is deleted forever in the next three days.", app: "Bin",

@@ -335,6 +335,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
           if (!findRow(row.id)) setDetached((items) => ({ ...items, [row.id]: row }));
           setDialog({ kind: "actions", rowId: row.id });
         }}
+        onUndo={(row) => { void undo(row); }}
         onClose={closeRow}
         onMissing={rowMissing}
         renderFiles={(row, field, replace) => <Attachments row={row} field={field} editable={editable} notify={notify} onChanged={(saved) => { replace(saved); rows.replaceRow(saved); }} />}
