@@ -73,6 +73,8 @@ These facts were checked against git and the running container when this plan wa
 
 ### Known discrepancies to fix in the docs wave (not blockers)
 
+_Both items below were resolved in Waves 4 and 6 (2026-09-25)._
+
 - `README.md` → *Development* mentions `docker compose --profile dev up app-dev`, but `compose.yaml` defines no `app-dev` service or `dev` profile.
 - The `docs/ARCHITECTURE.md` API list omits the MCP key endpoints, recovery-code endpoints, and `/mcp`.
 
@@ -118,7 +120,7 @@ The remaining requested work, in delivery order:
 | D15 | Folder deletion semantics are **unchanged**: subfolders cascade, and contained notes and documents get `folder_id = NULL` through FK `SET NULL`. An item with a NULL folder is private unless it has an override, and it appears under "All". | Keeps the notes behavior. A separate folder-delete UX redesign is out of scope. |
 | D16 | Duplicate filenames in a folder are allowed. The server never renames automatically. | No race conditions, and it matches common file-manager behavior. |
 | D17 | Documents are excluded from MCP in this scope. | MCP is read-only for notes. Exposing binaries needs its own design. |
-| D18 | Browser history entries are pushed only on mobile viewports, for all apps. This is unchanged from Wave 1 and Wave 2. On `popstate`, any open Files or Bin dialog closes before the panel snapshot is restored. | Parity with existing behavior. |
+| D18 | **Superseded by D21 (Wave 2b): history entries are now pushed on desktop and mobile.** Original text: Browser history entries are pushed only on mobile viewports, for all apps. This is unchanged from Wave 1 and Wave 2. On `popstate`, any open Files or Bin dialog closes before the panel snapshot is restored. | Parity with existing behavior. |
 | D19 | Delivery order is Files backend (W3) → Bin (W4) → Files UI (W5). The Bin ships before the Files UI, so no user ever deletes a file without a working Bin. | Avoids a period where delete copy promises a restore that doesn't exist yet. |
 | D21 | **(Added 2026-09-25, operator request.) Every app, view, and item gets its own URL** (`/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, `/files`, `/files/folder/:id`, `/files/:documentId`, `/bin`). Real history entries are pushed on desktop **and** mobile. This supersedes the mobile-only rule in D18 once Wave 2b ships; the mobile panel hint (`folders`/`list`/`editor`) stays as history state layered over the URL. No new dependency: a small in-house router (`src/router.ts`) over `history.pushState` and `popstate`. | Shareable and bookmarkable links, and later features (Files, Bin, MCP deep links) need addressable items. The production server already serves `dist/index.html` for every non-API path. |
 | D20 | No new runtime dependency except **`busboy`** (exact-pinned, lockfile committed) for streaming multipart parsing. MIME sniffing is an in-house signature table. | Small, well-known parser. A hand-rolled multipart parser is riskier. |
@@ -575,7 +577,7 @@ Exit criteria:
 - the RSS streaming check is done and its result recorded in the commit body or PR notes
 - an independent **security review** (§12) has no unresolved high or critical findings
 
-### Wave 4: shared Bin (released with Wave 3 as v0.3.0)
+### Wave 4: shared Bin (planned with Wave 3 as v0.3.0; actually released as v0.3.1 after Wave 3 shipped in v0.3.0)
 
 Suggested commits:
 
@@ -661,7 +663,7 @@ New environment variables. Add them to `server/config.ts` with validation, to `.
 | `USER_STORAGE_QUOTA_BYTES` | `10737418240` (10 GiB) | integer ≥ 0; `0` = unlimited | Live plus binned document bytes per user |
 | `MIN_FREE_DISK_BYTES` | `1073741824` (1 GiB) | integer ≥ 0 | Refuse uploads that would leave less free space than this |
 
-Constants (not configurable): 3 concurrent uploads per user, 30-day Bin retention, 1 MiB text preview, 4100-byte sniff window, sweeper every hour with batches of 100.
+Constants (not configurable): 3 concurrent uploads per user on the server (the Files client runs 2 at a time), 30-day Bin retention, 1 MiB text preview, 4100-byte sniff window, sweeper every hour with a budget of 50 resumed purges plus 100 due items per table per run.
 
 - **Docker/Compose:** no new volumes. Staging lives under `/data/documents/.staging`, never under the 64 MB `/tmp` tmpfs. The root filesystem stays read-only. The healthcheck is unchanged. Only one app instance may use a data directory, because the locks and sweeper are in-process. Document this.
 - **Backups:** `scripts/backup.sh` already includes `documents/`. Add `--exclude='./documents/.staging'`. Document that:

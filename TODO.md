@@ -59,14 +59,14 @@ Operator request (2026-09-25): every module, page, note, file, and view gets its
 
 Operator direction (2026-09-25): build backend and frontend together so each stage is visible. Wave 3 therefore also ships a **minimal Files slice** in the Files app (upload with progress, list, preview/download, routed through `/files` and `/files/folder/:id`). Rename, move, share, and delete UI wait for Wave 5 so nothing can be deleted before the Bin exists (D19).
 
-- [ ] Bounded JSON and MCP request bodies independent of `Content-Length`
-- [ ] Migration `006_documents` (documents, document_shares, bin columns, upload idempotency key)
-- [ ] UUID-only private disk storage (`documents/objects`, `documents/.staging`) with confinement, locks, and sweeper
-- [ ] Magic-byte MIME sniffing and safe preview allowlist
-- [ ] Bounded streamed multipart uploads (busboy, per-file cap, quota, free-disk floor, concurrency, idempotency)
-- [ ] List, metadata, rename, move, sharing (folder inheritance + document precedence), and soft-delete APIs
-- [ ] Authenticated content responses with strict headers, single Range, If-Range, and HEAD
-- [ ] Upload env vars, Compose pass-through, and backup staging exclusion
+- [x] Bounded JSON and MCP request bodies independent of `Content-Length`
+- [x] Migration `006_documents` (documents, document_shares, bin columns, upload idempotency key)
+- [x] UUID-only private disk storage (`documents/objects`, `documents/.staging`) with confinement, locks, and sweeper
+- [x] Magic-byte MIME sniffing and safe preview allowlist
+- [x] Bounded streamed multipart uploads (busboy, per-file cap, quota, free-disk floor, concurrency, idempotency)
+- [x] List, metadata, rename, move, sharing (folder inheritance + document precedence), and soft-delete APIs
+- [x] Authenticated content responses with strict headers, single Range, If-Range, and HEAD
+- [x] Upload env vars, Compose pass-through, and backup staging exclusion
 - [x] Wave tests (118 across 16 files), independent security review (no high/critical; three race tests, a teardown guard, and a contract row added in `cbf73f5`, `2397a78`, `3c9db1e`)
 - [x] Container base image moved to Bun 1.4.2 (`4e040c3`): Bun 1.2.22 buffered an 800 MiB upload to 1.67 GB RSS. In-container check on the production image (2026-09-25): 600 MB upload at 150 MB/s, RSS baseline 64 MB → peak 89 MB, staging empty afterwards, `Range` 206 and the exact content headers confirmed.
 - Accepted low findings: content responses omit HSTS/Permissions-Policy (contract-conformant); streamed 200/206 bodies are chunked without Content-Length (Bun); huge chunked non-file bodies get Bun's bare 413; upload slots are per user only; a few invisible characters beyond the plan's list survive name sanitising.
@@ -115,8 +115,8 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 
 ### Wave 6 — Documentation and final audit
 
-- [ ] README, ARCHITECTURE, and site docs for Files/Bin, env vars, backup sizing; fix `app-dev` profile reference
-- [ ] Final independent security audit across Waves 3–5
+- [x] README, ARCHITECTURE, and site docs for Files/Bin, editor features, URLs, env vars, backup sizing (`8259794`, `8e1aa18`, `42d5300`, `eff0971`); the `app-dev` reference was already removed in Wave 4
+- [ ] Final independent security audit across Waves 3–5 (in progress, fresh session probing a scratch server)
 
 ## Backlog — candidate modules and enhancements (for later picking)
 
