@@ -12,12 +12,19 @@ Implementation plan: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [API contract
 
 ### Wave 2 — Authenticated Home app selector (target v0.2.3)
 
-- [x] Home with separate Notes and Files apps plus shared Bin cards; placeholders for Files/Bin (`cb59b6a`, local, not pushed)
-- [ ] Independent review of `cb59b6a` against the DEVELOPMENT_PLAN §4 checklist (pending; items are review gates, not confirmed bugs)
-  - [ ] G2.1 (blocking gate): draft finalization and blank-note cleanup when leaving Notes for Home — outcome: _not yet reviewed_
-  - [ ] G2.2 (blocking gate): Settings and Sign out reachable from Home — outcome: _not yet reviewed_
-- [ ] Fix confirmed findings (or record operator acceptance)
-- [ ] Bump to 0.2.3 in every version location, run all gates, push and deploy with operator approval, smoke test
+- [x] Home with separate Notes and Files apps plus shared Bin cards; placeholders for Files/Bin (`cb59b6a`)
+- [x] Independent review of `cb59b6a` against the DEVELOPMENT_PLAN §4 checklist (2026-09-25)
+  - [x] G2.1 (blocking gate) — **confirmed gap, fixed** in `7a8319d` and `963f9aa`. Before the fix, the brand button and mobile Back to Home did not publish a changed draft (only the 900 ms autosave ran, and its errors were invisible on Home) and left blank new notes behind. Leaving Notes now runs the shared `finalizeOpenNote` sequence also used by note/folder switches: remove a blank never-published note, otherwise save and publish the changed draft. The note stays selected and is reloaded after publishing (a deliberate deviation from `publish(false)`: without the reload, the stale draft revision made the next save or switch fail with 409). On failure, Notes stays open with a toast and the draft kept; on mobile, the Notes history entry is pushed back. The editor is read-only while leaving. Browser QA on isolated data passed on desktop and at 390 px.
+  - [x] G2.2 (blocking gate) — **confirmed gap, fixed** in `611bf88`. Home and the Files/Bin placeholders now have an Account group (Settings, Sign out) that drives the single App-owned settings dialog, scrim, and toast. `TOTP_POLICY=required` users without a factor still bypass Home and get Settings forced open (verified against an isolated server).
+  - [x] Popstate routing: history entries without an app-shell section now resolve to Notes. Back/Forward across Home ⇄ Notes (folders/list/editor) ⇄ Files/Bin works with no trap (verified at 390 px).
+  - [x] Reload lands on Home; Notes still resumes its last folder and note — intended, no issue.
+  - [x] Desktop pushes no history for app switches (D18) — confirmed, no issue.
+  - [x] Accessibility: cards and account actions are buttons with accessible names and the global focus ring; mobile account actions are 40 px icon buttons with visually hidden labels; reduced motion is honored — no issue.
+  - [x] "Coming next / Preview" copy accepted for v0.2.3.
+  - [x] Tests added: `tests/noteFinalization.test.ts`, `tests/appShell.test.tsx`, legacy-entry cases in `tests/appShellNavigation.test.ts`.
+  - Accepted low risks (not blocking): the settings scrim closes without the one-time MCP key confirmation (pre-existing in Notes, now also on Home); a Back/Forward pressed during an in-flight leave can leave history one entry out of step; clicking the brand button while a note switch is already running does nothing; Sign out from the Notes sidebar still cancels a pending autosave (pre-existing).
+- [x] Fix confirmed findings (`7a8319d`, `611bf88`, `963f9aa`)
+- [ ] Bump to 0.2.3 in every version location, run all gates, push and deploy, smoke test
 
 ### Wave 3 — Secure documents backend (released with Wave 4 as v0.3.0)
 
