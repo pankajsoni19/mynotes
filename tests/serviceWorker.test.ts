@@ -11,13 +11,16 @@ const notificationId = "b1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d";
 type Shown = { title: string; options: { tag?: string; data?: { path: string }; body?: string } };
 
 /** Runs public/sw.js against a fake worker scope and returns its event handlers and effects. */
-function loadWorker(options: { api?: () => Promise<Response>; clients?: Array<{ url: string }> } = {}) {
+function loadWorker(options: { api?: () => Promise<Response>; clients?: Array<{ url: string }>; navigateFails?: boolean } = {}) {
   const handlers = new Map<string, (event: unknown) => void>();
   const shown: Shown[] = [];
   const opened: string[] = [];
   const navigated: string[] = [];
   const fetched: Array<{ url: string; init: RequestInit }> = [];
-  const clients = (options.clients ?? []).map((client) => ({ ...client, focus: async () => undefined, navigate: async (url: string) => { navigated.push(url); } }));
+  const clients = (options.clients ?? []).map((client) => ({ ...client, focus: async () => undefined, navigate: async (url: string) => {
+    if (options.navigateFails) throw new TypeError("navigate failed");
+    navigated.push(url);
+  } }));
   const self = {
     location: new URL("https://nook.example.test/sw.js"),
     addEventListener: (type: string, handler: (event: unknown) => void) => handlers.set(type, handler),
@@ -87,6 +90,11 @@ describe("public/sw.js", () => {
     await reuse.dispatch("notificationclick", { notification: { close, data: { path: `/calendar/event/${eventId}` } } });
     expect(reuse.opened).toEqual([]);
     expect(reuse.navigated).toEqual([`https://nook.example.test/calendar/event/${eventId}`]);
+    // L8: when navigating the open window fails, the same safe path opens in a new one.
+    const failing = loadWorker({ clients: [{ url: "https://nook.example.test/calendar" }], navigateFails: true });
+    await failing.dispatch("notificationclick", { notification: { close, data: { path: "https://evil.example/phish" } } });
+    expect(failing.navigated).toEqual([]);
+    expect(failing.opened).toEqual(["https://nook.example.test/notifications"]);
   });
 });
 

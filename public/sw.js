@@ -61,9 +61,14 @@ self.addEventListener("notificationclick", (event) => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of windows) {
       if (new URL(client.url).origin !== self.location.origin) continue;
-      await client.focus();
-      if ("navigate" in client) await client.navigate(target.href).catch(() => undefined);
-      return;
+      try {
+        await client.focus();
+        if ("navigate" in client) await client.navigate(target.href);
+        return;
+      } catch {
+        // The window could not be focused or navigated: open the same safe path instead.
+        break;
+      }
     }
     await self.clients.openWindow(target.href);
   })());

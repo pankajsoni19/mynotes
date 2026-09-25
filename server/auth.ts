@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { revokeUserPushSubscriptions } from "./calendar/push";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, now, type UserRow } from "./db";
 
@@ -62,6 +63,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
   }
   if (!isEmailAllowed(row.email)) {
     db.query("DELETE FROM sessions WHERE id = ?").run(row.session_id);
+    revokeUserPushSubscriptions(row.id, "email_not_allowed");
     clearSession(c);
     return c.json({ error: "Authentication required" }, 401);
   }

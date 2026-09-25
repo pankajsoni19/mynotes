@@ -6,6 +6,7 @@ import { addDays, agendaRoute, calendarBackAction, calendarHomeRoute, eventRoute
 import { formToInput, formFromEvent, newEventForm, occurrenceDays, repeatSummary, sameForm } from "../src/calendar/calendarFormat";
 import type { EventDetail, Occurrence } from "../src/calendar/calendarApi";
 import { formatRoute, parseRoute, type Route } from "../src/router";
+import { confirmForcedDiscard, guardDialogPop } from "../src/calendar/hooks";
 
 const eventId = "a1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d";
 
@@ -124,4 +125,30 @@ test("occurrences cover the right local days and rules read naturally", () => {
   expect(repeatSummary({ freq: "weekly", interval: 1, byDay: ["MO", "WE"] }, "2026-05-04")).toBe("Every week on Mon, Wed");
   expect(repeatSummary({ freq: "daily", interval: 2, count: 5 }, "2026-05-04")).toBe("Every 2 days, 5 times");
   expect(repeatSummary({ freq: "monthly", interval: 1 }, "2026-01-31")).toBe("Every month on day 31");
+});
+
+test("a forced dialog pop asks before discarding an edited sheet and restores the URL when kept (L4)", () => {
+  const asked: string[] = [];
+  expect(confirmForcedDiscard(false, (message) => { asked.push(message); return false; })).toBeUndefined();
+  expect(asked).toEqual([]);
+  expect(confirmForcedDiscard(true, (message) => { asked.push(message); return false; })).toBe("keep");
+  expect(asked[0]!.startsWith("Discard changes?")).toBe(true);
+  expect(confirmForcedDiscard(true, () => true)).toBeUndefined();
+
+  const state = (depth: number) => withHistoryDepth({}, depth);
+  let restored = 0;
+  const undone: string[] = [];
+  const calls: boolean[] = [];
+  const restore = () => { restored += 1; };
+  const undo = (direction: "back" | "forward") => { undone.push(direction); };
+  // Direction known: the top dialog closes and the move is undone.
+  expect(guardDialogPop(3, state(2), (forced) => { calls.push(forced); }, restore, undo)).toBe(true);
+  expect([calls, undone, restored]).toEqual([[false], ["back"], 0]);
+  // Direction unknown and discarded: everything closes and the route handlers follow the browser.
+  expect(guardDialogPop(3, state(3), (forced) => { calls.push(forced); }, restore, undo)).toBe(false);
+  expect(restored).toBe(0);
+  // Direction unknown and kept: the popstate is consumed and the dialog's URL restored.
+  expect(guardDialogPop(3, state(3), () => "keep", restore, undo)).toBe(true);
+  expect(restored).toBe(1);
+  expect(undone).toEqual(["back"]);
 });

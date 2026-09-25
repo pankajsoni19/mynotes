@@ -191,6 +191,17 @@ export function onNotification(listener: (created: NotificationCreated[]) => voi
 type DueRow = ReminderRow & { event_live: number | null; calendar_id: string | null };
 
 let dispatching = false;
+/**
+ * L1: users over the hourly limit, and when their oldest counted notification leaves the window.
+ * Their due reminders keep `next_fire_at` and are left out of the due query until then (in
+ * memory: after a restart they are simply retried on the first tick).
+ */
+const deferredUntil = new Map<string, number>();
+
+/** Test hook. */
+export function resetReminderDeferrals() {
+  deferredUntil.clear();
+}
 
 /**
  * One dispatcher tick at `nowMs` (tests pass a fake clock). Single-flight: a tick that starts
@@ -201,14 +212,23 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
   dispatching = true;
   const counts: DispatchCounts = { notified: 0, skipped: 0, limited: 0, removed: 0, dormant: 0 };
   const created: NotificationCreated[] = [];
+  const limitedByUser = new Map<string, number>();
   try {
     const nowMs = options.nowMs ?? Date.now();
     const now = iso(nowMs);
+    for (const [userId, retryMs] of deferredUntil) if (retryMs <= nowMs) deferredUntil.delete(userId);
     const due = db.query(`SELECT r.*, CASE WHEN e.id IS NULL THEN NULL WHEN e.deleted_at IS NULL THEN 1 ELSE 0 END AS event_live, e.calendar_id
         FROM reminders r LEFT JOIN events e ON e.id = r.event_id
-        WHERE r.next_fire_at IS NOT NULL AND r.claimed_at IS NULL AND r.next_fire_at <= ? ORDER BY r.next_fire_at LIMIT ?`)
-      .all(now, DISPATCH_BATCH) as DueRow[];
+        WHERE r.next_fire_at IS NOT NULL AND r.claimed_at IS NULL AND r.next_fire_at <= ?
+          AND r.user_id NOT IN (SELECT value FROM json_each(?)) ORDER BY r.next_fire_at LIMIT ?`)
+      .all(now, JSON.stringify([...deferredUntil.keys()]), DISPATCH_BATCH) as DueRow[];
     for (const row of due) {
+      if (deferredUntil.has(row.user_id)) {
+        // Deferred earlier in this tick: leave it due for a later one.
+        counts.limited += 1;
+        limitedByUser.set(row.user_id, (limitedByUser.get(row.user_id) ?? 0) + 1);
+        continue;
+      }
       db.transaction(() => {
         const claimed = db.query("UPDATE reminders SET claimed_at = ? WHERE id = ? AND claimed_at IS NULL AND next_fire_at = ?").run(now, row.id, row.next_fire_at);
         if (claimed.changes !== 1) return;
@@ -242,9 +262,16 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
         if (late > MAX_LATENESS_MS) {
           counts.skipped += 1;
         } else {
-          const recent = (db.query("SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND created_at > ?").get(row.user_id, iso(nowMs - HOUR_MS)) as { count: number }).count;
-          if (recent >= HOURLY_NOTIFICATION_LIMIT) {
+          const window = db.query("SELECT COUNT(*) AS count, MIN(created_at) AS oldest FROM notifications WHERE user_id = ? AND created_at > ?")
+            .get(row.user_id, iso(nowMs - HOUR_MS)) as { count: number; oldest: string | null };
+          if (window.count >= HOURLY_NOTIFICATION_LIMIT) {
+            // L1: defer rather than drop. The claim is released and next_fire_at kept, so the
+            // reminder fires once the window has room (unless it is by then too late).
+            db.query("UPDATE reminders SET claimed_at = NULL WHERE id = ?").run(row.id);
+            deferredUntil.set(row.user_id, Math.max(nowMs + 1, Date.parse(window.oldest!) + HOUR_MS));
             counts.limited += 1;
+            limitedByUser.set(row.user_id, (limitedByUser.get(row.user_id) ?? 0) + 1);
+            return;
           } else {
             const id = crypto.randomUUID();
             db.query("INSERT INTO notifications (id, user_id, reminder_id, event_id, occurrence_start, late, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -259,6 +286,7 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
   } finally {
     dispatching = false;
   }
+  for (const [userId, deferred] of limitedByUser) audit(userId, null, "reminder.rate_limited", { deferred, limit: HOURLY_NOTIFICATION_LIMIT });
   if (created.length) for (const listener of listeners) {
     try {
       listener(created);
@@ -267,7 +295,7 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
     }
   }
   if (counts.notified || counts.skipped || counts.limited || counts.removed) {
-    console.info(`Reminders: ${counts.notified} notified, ${counts.skipped} skipped as too late, ${counts.limited} over the hourly limit, ${counts.removed} removed after access loss`);
+    console.info(`Reminders: ${counts.notified} notified, ${counts.skipped} skipped as too late, ${counts.limited} deferred by the hourly limit, ${counts.removed} removed after access loss`);
   }
   return counts;
 }

@@ -116,6 +116,13 @@ describe("the endpoint allowlist (T62)", () => {
       expect(push.isPrivateAddress(address)).toBe(true);
     }
     for (const address of ["142.250.1.1", "2607:f8b0:4004::200e"]) expect(push.isPrivateAddress(address)).toBe(false);
+    // L2: IPv4 embedded or tunnelled in IPv6, site-local, unique-local, and malformed forms.
+    for (const address of [
+      "::ffff:127.0.0.1", "::FFFF:7f00:1", "::ffff:a9fe:a9fe", "0:0:0:0:0:ffff:10.1.2.3", "::127.0.0.1", "::8.8.8.8", "::",
+      "2002:c0a8:101::1", "2002:8efa:101::1", "fec0::1", "feff::1", "fc00::1", "fdff:ffff::1", "fe80::1%eth0",
+      "2001:0:4136:e378::1", "64:ff9b::a00:1", "2001:db8::1", "ff02::1"
+    ]) expect(push.isPrivateAddress(address)).toBe(true);
+    for (const address of ["::ffff:142.250.1.1", "::ffff:8efa:101", "2a00:1450:4001:80b::200a", "2001:4860:4860::8888"]) expect(push.isPrivateAddress(address)).toBe(false);
     push.pushNet.resolve = async () => ["142.250.1.1", "10.0.0.8"];
     expect(await push.endpointAllowed(endpoint("rebind"))).toBe(false);
     push.pushNet.resolve = async () => { throw new Error("ENOTFOUND"); };
@@ -207,6 +214,90 @@ describe("subscriptions and delivery", () => {
     await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
     expect(sent).toEqual([]);
     expect(rows()[0]!.failure_count).toBe(1);
+
+    // L2: the host is resolved again right before the request. A private second answer is
+    // refused (and counts); a public one with no address in common aborts without counting.
+    const answers = (...lists: string[][]) => {
+      let call = 0;
+      push.pushNet.resolve = async () => lists[Math.min(call++, lists.length - 1)]!;
+    };
+    answers(["142.250.1.1"], ["127.0.0.1"]);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
+    expect(sent).toEqual([]);
+    expect(rows()[0]!.failure_count).toBe(2);
+    answers(["142.250.1.1"], ["142.250.9.9"]);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
+    expect(sent).toEqual([]);
+    expect(rows()[0]!.failure_count).toBe(2);
+    responder = () => 201;
+    answers(["142.250.1.1", "142.250.1.2"], ["142.250.1.2"]);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
+    expect(sent.length).toBe(1);
+    expect(rows()[0]!.failure_count).toBe(0);
+  });
+
+  test("a hanging push service cannot pile deliveries up: 4 users at a time, one delivery per user (L9)", async () => {
+    await push.initPush({ setting: "true", keys: await push.createVapidKeys() });
+    const users: Session[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const user = await createUser(`Push slow ${index}`);
+      expect((await send(user, "POST", "/push/subscriptions", subscription(endpoint(`slow-${index}`)))).status).toBe(201);
+      users.push(user);
+    }
+    let inFlight = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    push.pushNet.fetch = async (url, init) => {
+      sent.push({ url, init });
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((resolve) => release.push(resolve));
+      inFlight -= 1;
+      return new Response(null, { status: 201 });
+    };
+    const until = async (condition: () => boolean) => {
+      for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) await Bun.sleep(1);
+      expect(condition()).toBe(true);
+    };
+    const notify = (user: Session) => ({ id: crypto.randomUUID(), userId: user.userId });
+    const drained = push.deliverNotifications(users.map(notify));
+    await until(() => inFlight === 4);
+    // More ticks while the service hangs: nothing new starts, and each user is queued at most once.
+    for (let tick = 0; tick < 5; tick += 1) void push.deliverNotifications([notify(users[0]!), notify(users[0]!), notify(users[5]!)]);
+    await Bun.sleep(5);
+    expect(inFlight).toBe(4);
+    expect(sent.length).toBe(4);
+    while (release.length || inFlight) {
+      release.splice(0).forEach((resolve) => resolve());
+      await Bun.sleep(1);
+    }
+    await drained;
+    expect(peak).toBe(4);
+    // Six first deliveries, then one more for user 0 (re-queued while in flight); user 5 was still queued.
+    expect(sent.length).toBe(7);
+    expect(sent.filter((item) => item.url === endpoint("slow-0")).length).toBe(2);
+    expect(sent.filter((item) => item.url === endpoint("slow-5")).length).toBe(1);
+  });
+
+  test("disabled users and users whose email is no longer allowed lose their subscriptions (L5)", async () => {
+    await push.initPush({ setting: "true", keys: await push.createVapidKeys() });
+    const subscriptions = (userId: string) => (db.query("SELECT COUNT(*) AS count FROM push_subscriptions WHERE user_id = ?").get(userId) as { count: number }).count;
+    const revoked = (userId: string) => db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'push.subscriptions_revoked'").all(userId) as Array<{ metadata_json: string }>;
+
+    const disabled = await createUser("Push disabled");
+    expect((await send(disabled, "POST", "/push/subscriptions", subscription(endpoint("disabled")))).status).toBe(201);
+    db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), disabled.userId);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: disabled.userId }]);
+    expect(sent).toEqual([]);
+    expect(subscriptions(disabled.userId)).toBe(0);
+    expect(revoked(disabled.userId).map((row) => JSON.parse(row.metadata_json))).toEqual([{ reason: "user_disabled", count: 1 }]);
+
+    const removed = await createUser("Push removed email");
+    expect((await send(removed, "POST", "/push/subscriptions", subscription(endpoint("removed")))).status).toBe(201);
+    db.query("UPDATE users SET email = ? WHERE id = ?").run(`removed-${crypto.randomUUID()}@elsewhere.test`, removed.userId);
+    expect((await send(removed, "GET", "/push/subscriptions")).status).toBe(401);
+    expect(subscriptions(removed.userId)).toBe(0);
+    expect(revoked(removed.userId).map((row) => JSON.parse(row.metadata_json))).toEqual([{ reason: "email_not_allowed", count: 1 }]);
   });
 
   test("Send test is limited to 5 per hour", async () => {

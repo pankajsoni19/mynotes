@@ -87,3 +87,10 @@ test("labels for ages, badges, and reminder offsets", () => {
   expect(reminderLabel(2340, true)).toBe("9:00, 2 days before");
   expect(reminderLabel(9540, true)).toBe("9:00 a week before");
 });
+
+test("the calendar Today button and notification text buttons are 44 px targets (L6)", async () => {
+  const calendarCss = await Bun.file(new URL("../src/calendar/calendar.css", import.meta.url)).text();
+  expect(calendarCss.slice(calendarCss.indexOf("@media (max-width: 760px)"))).toMatch(/\.calendar-today-button \{ min-height: 44px; \}/);
+  const notificationsCss = await Bun.file(new URL("../src/notifications/notifications.css", import.meta.url)).text();
+  expect(notificationsCss).toMatch(/\.notification-text-button \{ min-height: 44px;/);
+});

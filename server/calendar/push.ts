@@ -96,19 +96,52 @@ function hostMatches(host: string, pattern: string) {
 
 export const allowedPushHosts = () => [...BUILT_IN_PUSH_HOSTS, ...config.pushEndpointHosts];
 
-/** Private, loopback, link-local, CGNAT/Tailscale, multicast, and unspecified ranges. */
-export function isPrivateAddress(address: string) {
-  const version = isIP(address);
+/** The eight 16-bit groups of an IPv6 address (a trailing dotted IPv4 part included), or null. */
+function ipv6Groups(address: string): number[] | null {
+  let text = address.toLowerCase().replace(/%.*$/, "");
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (dotted) {
+    if (isIP(dotted[1]!) !== 4) return null;
+    const [a, b, c, d] = dotted[1]!.split(".").map(Number) as [number, number, number, number];
+    text = `${text.slice(0, -dotted[1]!.length)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part: string) => part === "" ? [] : part.split(":").map((group) => /^[0-9a-f]{1,4}$/.test(group) ? parseInt(group, 16) : NaN);
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+  const groups = [...head, ...Array<number>(halves.length === 2 ? missing : 0).fill(0), ...tail];
+  return groups.some(Number.isNaN) ? null : groups;
+}
+
+const ipv4Of = (high: number, low: number) => `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+
+/**
+ * Private, loopback, link-local, CGNAT/Tailscale, multicast, and unspecified ranges. For IPv6 also
+ * unique-local fc00::/7, link- and site-local fe80::/9 (fe80::/10 and fec0::/10), and every form
+ * that embeds or tunnels to an IPv4 address (L2): IPv4-mapped and -compatible (dotted or hex),
+ * NAT64 64:ff9b::/96, 6to4 2002::/16, and Teredo 2001::/32.
+ */
+export function isPrivateAddress(address: string): boolean {
+  const version = isIP(address.replace(/%.*$/, ""));
   if (version === 4) {
     const [a, b] = address.split(".").map(Number) as [number, number];
     return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
       || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
   }
   if (version === 6) {
-    const lower = address.toLowerCase();
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-    if (mapped) return isPrivateAddress(mapped[1]!);
-    return lower === "::" || lower === "::1" || /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower) || lower.startsWith("ff") || lower.startsWith("64:ff9b:") || lower.startsWith("2001:db8");
+    const groups = ipv6Groups(address);
+    if (!groups) return true;
+    const [g0, g1, g2, g3, g4, g5, g6, g7] = groups as [number, number, number, number, number, number, number, number];
+    const leadingZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
+    // ::ffff:0:0/96 (IPv4-mapped) is judged by its IPv4 address; ::/96 (unspecified, loopback, and
+    // the deprecated IPv4-compatible form) is never a push service.
+    if (leadingZero && g5 === 0xffff) return isPrivateAddress(ipv4Of(g6, g7));
+    if (leadingZero && g5 === 0) return true;
+    return (g0 & 0xfe00) === 0xfc00 || (g0 & 0xff80) === 0xfe80 || (g0 & 0xff00) === 0xff00
+      || (g0 === 0x64 && g1 === 0xff9b) || g0 === 0x2002 || (g0 === 0x2001 && (g1 === 0 || g1 === 0xdb8));
   }
   return true;
 }
@@ -133,15 +166,20 @@ export function endpointShapeAllowed(endpoint: string) {
   return allowedPushHosts().some((pattern) => hostMatches(host, pattern));
 }
 
-/** Shape plus DNS: every address the host resolves to must be public. */
-export async function endpointAllowed(endpoint: string) {
-  if (!endpointShapeAllowed(endpoint)) return false;
+/** Shape plus DNS: the addresses the host resolves to, when every one is public; otherwise null. */
+async function publicAddresses(endpoint: string) {
+  if (!endpointShapeAllowed(endpoint)) return null;
   try {
     const addresses = await pushNet.resolve(new URL(endpoint).hostname);
-    return addresses.length > 0 && addresses.every((address) => !isPrivateAddress(address));
+    return addresses.length > 0 && addresses.every((address) => !isPrivateAddress(address)) ? addresses : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Shape plus DNS: every address the host resolves to must be public. */
+export async function endpointAllowed(endpoint: string) {
+  return await publicAddresses(endpoint) !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,10 +268,18 @@ export async function sendPush(row: SubscriptionRow, nowMs = Date.now()): Promis
   if (!pushState.enabled || !pushState.keys || row.failure_count >= MAX_FAILURES) return "skipped";
   let status = 0;
   try {
-    if (!await endpointAllowed(row.endpoint)) throw new Error("Endpoint not allowed");
+    const checked = await publicAddresses(row.endpoint);
+    if (!checked) throw new Error("Endpoint not allowed");
+    const authorization = await vapidAuthorization(row.endpoint, pushState.keys, config.pushSubject, nowMs);
+    // L2: fetch() resolves the host again and cannot be pinned to the checked address, so narrow
+    // the DNS-rebinding window: resolve once more right before the request, and abort (without
+    // counting a failure) unless the answer is still public and shares an address with the first.
+    const again = await publicAddresses(row.endpoint);
+    if (!again) throw new Error("Endpoint not allowed");
+    if (!again.some((address) => checked.includes(address))) return "skipped";
     const response = await pushNet.fetch(row.endpoint, {
       method: "POST",
-      headers: { TTL: String(PUSH_TTL_SECONDS), Urgency: "normal", Authorization: await vapidAuthorization(row.endpoint, pushState.keys, config.pushSubject, nowMs), "Content-Length": "0" },
+      headers: { TTL: String(PUSH_TTL_SECONDS), Urgency: "normal", Authorization: authorization, "Content-Length": "0" },
       redirect: "manual",
       signal: AbortSignal.timeout(PUSH_TIMEOUT_MS)
     });
@@ -255,21 +301,78 @@ export async function sendPush(row: SubscriptionRow, nowMs = Date.now()): Promis
   return "failed";
 }
 
-async function sendToUser(userId: string) {
+/**
+ * L5: removes every push subscription of a user whose sessions were all revoked, who was
+ * disabled, or whose email is no longer allowed, so their devices stop being woken.
+ */
+export function revokeUserPushSubscriptions(userId: string, reason: string) {
+  const removed = db.query("DELETE FROM push_subscriptions WHERE user_id = ?").run(userId).changes;
+  if (removed) audit(userId, null, "push.subscriptions_revoked", { reason, count: removed });
+  return removed;
+}
+
+async function sendToUser(userId: string, parallel = true) {
+  if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) {
+    revokeUserPushSubscriptions(userId, "user_disabled");
+    return { sent: 0, failed: 0 };
+  }
   const rows = db.query("SELECT * FROM push_subscriptions WHERE user_id = ? AND failure_count < ?").all(userId, MAX_FAILURES) as SubscriptionRow[];
-  const outcomes = await Promise.all(rows.map((row) => sendPush(row)));
+  const outcomes: DeliveryOutcome[] = [];
+  if (parallel) outcomes.push(...await Promise.all(rows.map((row) => sendPush(row))));
+  else for (const row of rows) outcomes.push(await sendPush(row));
   return { sent: outcomes.filter((outcome) => outcome === "sent").length, failed: outcomes.filter((outcome) => outcome === "failed" || outcome === "gone").length };
 }
 
-/** Called after a dispatcher tick commits: one wake-up per user, whatever the number of notifications. */
-export async function deliverNotifications(created: NotificationCreated[]) {
-  for (const userId of new Set(created.map((item) => item.userId))) {
-    try {
-      await sendToUser(userId);
-    } catch (error) {
-      console.error("Push delivery failed", error instanceof Error ? error.name : "Unknown error");
-    }
+/** Users whose devices are being woken at once, across every dispatcher tick (L9). */
+export const PUSH_CONCURRENCY = 4;
+const queuedUsers = new Set<string>();
+const activeUsers = new Set<string>();
+let runningWorkers = 0;
+let drainWaiters: Array<() => void> = [];
+
+function nextQueuedUser() {
+  for (const userId of queuedUsers) if (!activeUsers.has(userId)) return userId;
+  return null;
+}
+
+/** Starts workers up to PUSH_CONCURRENCY while a queued user is not already being delivered to. */
+function pumpDeliveries() {
+  while (runningWorkers < PUSH_CONCURRENCY && nextQueuedUser() !== null) {
+    runningWorkers += 1;
+    void (async () => {
+      for (let userId = nextQueuedUser(); userId !== null; userId = nextQueuedUser()) {
+        queuedUsers.delete(userId);
+        activeUsers.add(userId);
+        try {
+          await sendToUser(userId, false);
+        } catch (error) {
+          console.error("Push delivery failed", error instanceof Error ? error.name : "Unknown error");
+        } finally {
+          activeUsers.delete(userId);
+        }
+      }
+    })().finally(() => {
+      runningWorkers -= 1;
+      if (runningWorkers === 0) {
+        const waiters = drainWaiters;
+        drainWaiters = [];
+        for (const resolve of waiters) resolve();
+      }
+    });
   }
+}
+
+/**
+ * Called after a dispatcher tick commits: one wake-up per user, whatever the number of
+ * notifications. Deliveries are single-flight per user (a user already queued is not queued
+ * twice; one being delivered to is queued once more) and at most PUSH_CONCURRENCY users are
+ * served at a time, each device in turn, so a hanging push service cannot pile deliveries up.
+ * Resolves when the queue has drained.
+ */
+export function deliverNotifications(created: NotificationCreated[]): Promise<void> {
+  for (const { userId } of created) queuedUsers.add(userId);
+  pumpDeliveries();
+  return runningWorkers === 0 ? Promise.resolve() : new Promise((resolve) => drainWaiters.push(resolve));
 }
 
 const testSends = new Map<string, number[]>();
