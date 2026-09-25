@@ -9,6 +9,7 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
+import { purgeAfterFrom, purgeLocked } from "./bin";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -50,6 +51,46 @@ function hasDraftDelta(note: NoteRow, draftChecksum: string) {
     .get(note.id, note.current_version) as { checksum: string } | null;
   if (!published) throw new Error("Published version metadata is missing");
   return draftChecksum !== published.checksum;
+}
+
+/**
+ * A note is blank when it was never published and has no draft, or only a
+ * whitespace draft (the client's `markdown.trim() === ""` check). The draft is
+ * read, not inferred from its checksum. Call under the note lock.
+ */
+async function isBlankNote(note: NoteRow) {
+  if (note.current_version !== 0) return false;
+  if (note.draft_revision === null) return true;
+  try {
+    return (await storage.readDraft(note.id)).trim() === "";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+/** Moves a live note to the Bin for 30 days. Drafts, versions, files, and shares are kept. Call under the note lock. */
+function moveNoteToBin(note: NoteRow, userId: string) {
+  const deletedAt = new Date();
+  const purgeAfter = purgeAfterFrom(deletedAt);
+  db.transaction(() => {
+    const result = db.query("UPDATE notes SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
+      .run(deletedAt.toISOString(), userId, purgeAfter, note.id, userId);
+    if (result.changes !== 1) throw new Error("Concurrent note update detected");
+    audit(userId, note.id, "note.delete");
+  })();
+  return { ok: true as const, purgeAfter };
+}
+
+/** D12: blank never-published notes skip the Bin and are purged at once. Call under the note lock. */
+async function purgeBlankNote(note: NoteRow, userId: string) {
+  const timestamp = now();
+  const result = db.query("UPDATE notes SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
+    .run(timestamp, userId, timestamp, note.id, userId);
+  if (result.changes !== 1) throw new Error("Concurrent note update detected");
+  const outcome = await purgeLocked("note", note.id, { reason: "blank", actorId: userId, ownerId: userId });
+  // A pending purge is already unreadable; the sweeper finishes removing it.
+  return outcome === "pending" ? { ok: true as const, purged: true as const, pending: true as const } : { ok: true as const, purged: true as const };
 }
 
 function totpState(user: Pick<UserRow, "totp_enabled_at">) {
@@ -620,12 +661,14 @@ app.delete("/api/notes/:id/draft", async (c) => {
     const note = ownedNote(id, userId);
     if (!note) return c.json({ error: "Note not found" }, 404);
     if (note.current_version === 0) {
-      db.query("UPDATE notes SET deleted_at = ?, draft_revision = NULL, draft_checksum = NULL WHERE id = ? AND owner_id = ?").run(now(), id, userId);
-    } else {
-      const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
-      db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
-        .run(versionTitle?.title ?? note.title, now(), id, userId);
+      // Discarding a never-published note deletes it: blank ones are purged, anything
+      // with content moves to the Bin with its draft (and draft revision) intact.
+      if (await isBlankNote(note)) return c.json(await purgeBlankNote(note, userId));
+      return c.json({ ...moveNoteToBin(note, userId), binned: true });
     }
+    const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
+    db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
+      .run(versionTitle?.title ?? note.title, now(), id, userId);
     await storage.discardDraft(id).catch((error) => console.error("Could not remove discarded draft", error instanceof Error ? error.message : "Unknown error"));
     audit(userId, id, "draft.discard");
     return c.json({ ok: true });
@@ -750,13 +793,8 @@ app.delete("/api/notes/:id", async (c) => {
   return withNoteLock(id, async () => {
     const note = ownedNote(id, userId);
     if (!note) return c.json({ error: "Note not found" }, 404);
-    const timestamp = now();
-    const result = db.query("UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
-      .run(timestamp, timestamp, id, userId);
-    if (!result.changes) return c.json({ error: "Note not found" }, 404);
-    if (note.current_version === 0) await storage.deleteUnpublished(id);
-    audit(userId, id, "note.delete");
-    return c.json({ ok: true });
+    if (await isBlankNote(note)) return c.json(await purgeBlankNote(note, userId));
+    return c.json(moveNoteToBin(note, userId));
   });
 });
 

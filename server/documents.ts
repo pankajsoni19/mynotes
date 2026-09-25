@@ -12,10 +12,10 @@ import { listReadableDocuments, ownedDocument, ownedDocumentSummary, readableDoc
 import { commitStaged, createStagingFile, discardStaged, DocumentIntegrityError, openObjectForRead, removeObject } from "./documentStorage";
 import { SNIFF_BYTES, sniff } from "./mimeSniff";
 import { withResourceLock } from "./storage";
+import { purgeAfterFrom } from "./bin";
 import { documentPatchSchema, parseJson, sanitizeDisplayName, sharingSchema, uuid } from "./validation";
 
 const MAX_CONCURRENT_UPLOADS = 3;
-const BIN_RETENTION_MS = 30 * 86_400_000;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
 
 class UploadError extends Error {
@@ -453,7 +453,7 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
       if (!document) return notFound(c);
       if (document.deleted_at) return c.json({ ok: true, alreadyDeleted: true, purgeAfter: document.purge_after });
       const deletedAt = new Date();
-      const purgeAfter = new Date(deletedAt.getTime() + BIN_RETENTION_MS).toISOString();
+      const purgeAfter = purgeAfterFrom(deletedAt);
       db.transaction(() => {
         db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
           .run(deletedAt.toISOString(), userId, purgeAfter, id, userId);

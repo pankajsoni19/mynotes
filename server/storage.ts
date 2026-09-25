@@ -146,5 +146,12 @@ export const storage = {
     await rm(join(directory, "draft.md"), { force: true });
   },
   discardDraft: async (noteId: string) => rm(join(await secureNoteDir(noteId), "draft.md"), { force: true }),
-  deleteUnpublished: async (noteId: string) => rm(await secureNoteDir(noteId), { recursive: true, force: true })
+  /**
+   * Removes notes/<id> and everything in it. A missing directory is success.
+   * Symlinks inside are unlinked, never followed.
+   */
+  removeNote: async (noteId: string) => {
+    const notes = await ensureDirectory(join(config.dataDir, "notes"));
+    await rm(withinDataRoot(join(notes, safeNoteId(noteId))), { recursive: true, force: true });
+  }
 };
