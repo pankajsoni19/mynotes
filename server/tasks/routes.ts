@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
+import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
   createBoard,
   createCard,
@@ -47,6 +48,10 @@ export const cardPatchSchema = z.object({
   description: description.optional(),
   revision: z.number().int().positive()
 }).strict().refine((value) => value.title !== undefined || value.description !== undefined, "Provide a title or a description");
+const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
+  .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
+export const commentCreateSchema = z.object({ body: commentBody }).strict();
+export const commentPatchSchema = z.object({ body: commentBody }).strict();
 export const cardMoveSchema = z.object({ columnId: uuid, afterCardId: uuid.nullable() }).strict();
 
 const id = (c: Context<AppEnv>, name: string) => uuid.parse(c.req.param(name));
@@ -122,7 +127,45 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
 
   app.get("/api/tasks/cards/:cardId", (c) => {
     const cardId = id(c, "cardId");
-    return respond(c, () => getCard(c.get("user").id, cardId));
+    const userId = c.get("user").id;
+    return respond(c, () => {
+      const { card } = getCard(userId, cardId);
+      const page = listComments(userId, cardId);
+      return { card, comments: page.comments, hasMoreComments: page.hasMore, attachments: [] };
+    });
+  });
+
+  app.get("/api/tasks/cards/:cardId/comments", async (c) => {
+    const cardId = id(c, "cardId");
+    const userId = c.get("user").id;
+    const before = c.req.query("before");
+    const limitParam = c.req.query("limit");
+    const limit = limitParam === undefined ? COMMENT_PAGE_SIZE : Number(limitParam);
+    if (!/^\d+$/.test(limitParam ?? "50") || limit < 1 || limit > COMMENT_PAGE_SIZE) {
+      return c.json({ error: "Invalid request", details: [`limit must be an integer from 1 to ${COMMENT_PAGE_SIZE}`] }, 400);
+    }
+    const beforeId = before === undefined ? undefined : uuid.parse(before);
+    return respond(c, () => {
+      getCard(userId, cardId);
+      return listComments(userId, cardId, { before: beforeId, limit });
+    });
+  });
+
+  app.post("/api/tasks/cards/:cardId/comments", async (c) => {
+    const cardId = id(c, "cardId");
+    const body = await parseJson(c.req.raw, commentCreateSchema);
+    return respond(c, () => createComment(c.get("user").id, cardId, body), 201);
+  });
+
+  app.patch("/api/tasks/comments/:commentId", async (c) => {
+    const commentId = id(c, "commentId");
+    const body = await parseJson(c.req.raw, commentPatchSchema);
+    return respond(c, () => updateComment(c.get("user").id, commentId, body.body));
+  });
+
+  app.delete("/api/tasks/comments/:commentId", (c) => {
+    const commentId = id(c, "commentId");
+    return respond(c, () => deleteComment(c.get("user").id, commentId));
   });
 
   app.patch("/api/tasks/cards/:cardId", async (c) => {

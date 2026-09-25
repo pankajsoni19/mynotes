@@ -22,13 +22,13 @@ export class TaskError extends Error {
   }
 }
 
-export const LIMITS = { boardsPerOwner: 50, columnsPerBoard: 20, liveCardsPerBoard: 1000 } as const;
+export const LIMITS = { boardsPerOwner: 50, columnsPerBoard: 20, liveCardsPerBoard: 1000, commentsPerCard: 500, attachmentsPerCard: 50, attachmentsPerComment: 10 } as const;
 export const DEFAULT_COLUMNS = ["To do", "Doing", "Done"] as const;
 
 const boardNotFound = () => new TaskError(404, "Board not found");
 const columnNotFound = () => new TaskError(404, "Column not found");
-const ownerOnly = () => new TaskError(403, "Only the board owner can do this", "OWNER_ONLY");
-const limitReached = (message: string) => new TaskError(409, message, "LIMIT_REACHED");
+export const ownerOnly = () => new TaskError(403, "Only the board owner can do this", "OWNER_ONLY");
+export const limitReached = (message: string) => new TaskError(409, message, "LIMIT_REACHED");
 
 /** Serializes every change to one board: ordering, column changes, sharing, and deletion. */
 export const withBoardLock = <T>(boardId: string, operation: () => T | Promise<T>) =>
@@ -292,9 +292,9 @@ export async function deleteColumn(userId: string, columnId: string) {
 
 export type CardDetail = CardSummary & { description: string };
 
-const cardNotFound = () => new TaskError(404, "Card not found");
+export const cardNotFound = () => new TaskError(404, "Card not found");
 
-function cardDetail(cardId: string) {
+export function cardDetail(cardId: string) {
   return db.query(`${cardDetailSelect} WHERE k.id = ? AND k.deleted_at IS NULL`)
     .get(cardId) as CardDetail | null;
 }
@@ -318,7 +318,7 @@ function requireBoardColumn(boardId: string, columnId: string) {
   return column;
 }
 
-function requireReadableCard(cardId: string, userId: string) {
+export function requireReadableCard(cardId: string, userId: string) {
   const found = readableCard(cardId, userId);
   if (!found) throw cardNotFound();
   return found;
@@ -348,10 +348,10 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
   });
 }
 
-/** Comments and attachments arrive with stages B and C; both lists are empty until then. */
+/** The card alone; routes add its comments page and attachments (server/tasks/comments.ts, attachments.ts). */
 export function getCard(userId: string, cardId: string) {
-  requireReadableCard(cardId, userId);
-  return { card: cardDetail(cardId)!, comments: [] as unknown[], attachments: [] as unknown[] };
+  const found = requireReadableCard(cardId, userId);
+  return { card: cardDetail(cardId)!, board: found.board };
 }
 
 export type CardPatchInput = { title?: string; description?: string; revision: number };

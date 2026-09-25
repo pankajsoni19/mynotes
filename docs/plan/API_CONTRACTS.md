@@ -323,7 +323,7 @@ type CardDetail = CardSummary & { description: string };  // Markdown, at most 6
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `POST /boards/:b/cards { columnId, title, description?, afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. | 400, 404 (board, or a column not on this board), 409 `STALE_POSITION` or `LIMIT_REACHED` |
-| `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: [], attachments: [] }` (both lists fill in with stages B and C) | 404 |
+| `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: [] }`: the newest 50 comments in chronological order (attachments fill in with stage C) | 404 |
 | `PATCH /cards/:k { title?, description?, revision }` | reader | 200 `{ card }` with `revision + 1` | 400, 404, 409 `{ code: "CARD_CHANGED", card }` (the current card) when `revision` is not the stored one |
 | `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION` |
 | `DELETE /cards/:k` | reader | 200 `{ ok: true, purgeAfter }`: the card moves to the Bin and keeps its column | 404 |
@@ -332,7 +332,28 @@ type CardDetail = CardSummary & { description: string };  // Markdown, at most 6
 - **Moves** stay on the card's board and do not change `revision`, so an open editor can still save.
 - Binned cards and cards on binned boards return 404 on every card route. Restore arrives with stage D.
 
-**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.card_create`, `task.card_update`, `task.card_move { boardId, cardId, columnId }`, and `task.card_delete`, each with `{ boardId, columnId?, cardId? }`.
+### Comments
+
+```ts
+type CardComment = {
+  id: string; card_id: string;
+  author_id: string | null; author_name: string | null;  // null once the author's account is deleted
+  is_author: 0 | 1;
+  body: string;                        // plain text, 1–16,384 UTF-8 bytes, not only whitespace
+  created_at: string; edited_at: string | null;
+};
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /cards/:k/comments?before=<commentId>&limit=1–50` | reader | 200 `{ comments, hasMore }`: the `limit` comments before `before` (or the newest), in chronological order | 400, 404 (card, or `before` not a comment of this card) |
+| `POST /cards/:k/comments { body }` | reader | 201 `{ comment }`. The author is always the session user. | 400, 404, 409 `LIMIT_REACHED` (500 per card) |
+| `PATCH /comments/:m { body }` | author | 200 `{ comment }` with `edited_at` set | 400, 403 `AUTHOR_ONLY`, 404 |
+| `DELETE /comments/:m` | author or board owner | 200 `{ ok: true }`. Comments are deleted outright, not binned. | 403 `AUTHOR_ONLY`, 404 |
+
+Comments on binned cards, binned boards, or boards the caller can no longer read return 404.
+
+**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.card_create`, `task.card_update`, `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, each with `{ boardId, columnId?, cardId? }`.
 
 ## Changes to existing note endpoints (Wave 4)
 
