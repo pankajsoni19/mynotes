@@ -118,6 +118,8 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
       if (generation !== generationRef.current) return;
       const message = reason instanceof Error ? reason.message : "Could not load Today";
       setLoadError(message);
+      // A failure also counts as an attempt, so tab switches retry at most once a minute.
+      fetchedAtRef.current = Date.now();
       if (announce) setAnnouncement(`Could not refresh: ${message}`);
     } finally {
       if (generation === generationRef.current) setRefreshing(false);
