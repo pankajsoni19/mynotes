@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { defineTool, McpToolError, type McpToolSpec } from "../mcpToolKit";
+import { todayRateLimited } from "./rateLimit";
 import { loadToday, todayContext, todaySectionsForScopes, validTimeZone } from "./registry";
 import "./providers";
 
@@ -18,6 +19,9 @@ export const todayTools: McpToolSpec[] = [
     write: false,
     inputSchema: z.object({ tz: z.string().max(64).optional().describe("IANA time zone for today's date and overdue flags; defaults to UTC") }),
     handler: async ({ tz }, key) => {
+      // The same per-user budget as GET /api/today, on top of the MCP call limits.
+      const retryAfter = todayRateLimited(key.userId);
+      if (retryAfter) throw new McpToolError("RATE_LIMITED", "Too many Today requests. Try again in a moment.", { retryAfterSeconds: retryAfter });
       const zone = validTimeZone(tz ?? "UTC");
       if (!zone) throw new McpToolError("INVALID", "tz must be an IANA time zone");
       const allowed = todaySectionsForScopes(key.scopes);

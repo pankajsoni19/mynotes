@@ -4,9 +4,10 @@ import { createUser, db, origin, request, type Session } from "./support/harness
 const { createMcpApiKey } = await import("../server/mcp");
 const { invokeMcpToolForTests } = await import("../server/mcpTools");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
+const { resetTodayRateLimit, TODAY_RATE_LIMIT } = await import("../server/today/rateLimit");
 type McpScope = import("../server/mcpScopes").McpScope;
 
-beforeEach(() => resetMcpLimits());
+beforeEach(() => { resetMcpLimits(); resetTodayRateLimit(); });
 
 async function rpc(token: string, method: string, params: unknown = {}) {
   const response = await fetch(`${origin}/mcp`, {
@@ -61,6 +62,19 @@ describe("get_today MCP tool", () => {
     expect(Object.keys((await getToday(user, ["today:read", "tasks:write"])).value.sections)).toEqual(["tasksDue", "tasksMine", "binSoon", "storage"]);
     const all = await getToday(user, ["today:read", "notes:read", "files:read", "tasks:read"]);
     expect(Object.keys(all.value.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "binSoon", "storage"]);
+  });
+
+  test("shares the 30-a-minute Today budget with the web, per user", async () => {
+    const user = await createUser("MCP today limit");
+    const key = createMcpApiKey(user.userId, "Busy agent", ["today:read"]);
+    for (let index = 0; index < TODAY_RATE_LIMIT - 1; index += 1) expect((await invokeMcpToolForTests("get_today", {}, key.id)).isError).toBeFalsy();
+    expect((await request("/today?tz=UTC", {}, user)).status).toBe(200);
+    const limited = await invokeMcpToolForTests("get_today", {}, key.id);
+    expect(limited.isError).toBe(true);
+    expect(JSON.parse(limited.content[0]!.text)).toMatchObject({ code: "RATE_LIMITED", retryAfterSeconds: expect.any(Number) });
+    expect((await request("/today?tz=UTC", {}, user)).status).toBe(429);
+    const other = await createUser("MCP today limit other");
+    expect((await invokeMcpToolForTests("get_today", {}, createMcpApiKey(other.userId, "Other", ["today:read"]).id)).isError).toBeFalsy();
   });
 
   test("validates tz, defaults to UTC, and is not audited", async () => {

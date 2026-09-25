@@ -108,8 +108,8 @@ Rows T50, T51, and T74 of [WAVES_10-12.md](WAVES_10-12.md) §5.
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
 | T50 | **Today leaks through a new aggregation path** | Every section is a provider that calls its module's own predicate or list function (`readableBoardPredicate`, `readableNotePredicate`, the Files list predicate, `listBin`, the quota sum). Recipients see a note only once it is published, with its published title. `tests/today.test.ts` checks every item against the owning app's list across sharing, unsharing, the Bin, member removal, and drafts | Done (Wave 10) |
-| T51 | **Today cost amplification** | Each provider fetches at most 11 rows (ten plus `more`) using the 011 indexes; titles and ids only, no bodies or counts; 30 requests a minute per user; no caching or polling (a refetch on tab focus only after 60 s) | Done (Wave 10) |
-| T74 | **`get_today` bypasses module scopes** | `get_today` needs `today:read` and returns only sections whose module read scope the key also holds (notes, files, tasks); Bin and storage need `today:read` alone. Registered per scope and re-checked in the handler; `tests/mcpToday.test.ts` | Done (Wave 10) |
+| T51 | **Today cost amplification** | Each provider fetches at most 11 rows (ten plus `more`) using the 011 indexes; titles and ids only, no bodies or counts; 30 requests a minute per user, shared by the web and `get_today`; `binSoon` queries by `purge_after` with its own limit; no caching or polling (a refetch on tab focus only after 60 s) | Done (Wave 10) |
+| T74 | **`get_today` bypasses module scopes** | `get_today` needs `today:read` and returns only sections whose module read scope the key also holds (notes, files, tasks); Bin and storage need `today:read` alone, and Bin items are filtered by type to the same module scopes (collection items never reach MCP until a collections scope exists). Registered per scope and re-checked in the handler; `tests/mcpToday.test.ts` | Done (Wave 10) |
 
 ### Collections (Wave 11)
 
