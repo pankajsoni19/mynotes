@@ -116,6 +116,13 @@ describe("the endpoint allowlist (T62)", () => {
       expect(push.isPrivateAddress(address)).toBe(true);
     }
     for (const address of ["142.250.1.1", "2607:f8b0:4004::200e"]) expect(push.isPrivateAddress(address)).toBe(false);
+    // L2: IPv4 embedded or tunnelled in IPv6, site-local, unique-local, and malformed forms.
+    for (const address of [
+      "::ffff:127.0.0.1", "::FFFF:7f00:1", "::ffff:a9fe:a9fe", "0:0:0:0:0:ffff:10.1.2.3", "::127.0.0.1", "::8.8.8.8", "::",
+      "2002:c0a8:101::1", "2002:8efa:101::1", "fec0::1", "feff::1", "fc00::1", "fdff:ffff::1", "fe80::1%eth0",
+      "2001:0:4136:e378::1", "64:ff9b::a00:1", "2001:db8::1", "ff02::1"
+    ]) expect(push.isPrivateAddress(address)).toBe(true);
+    for (const address of ["::ffff:142.250.1.1", "::ffff:8efa:101", "2a00:1450:4001:80b::200a", "2001:4860:4860::8888"]) expect(push.isPrivateAddress(address)).toBe(false);
     push.pushNet.resolve = async () => ["142.250.1.1", "10.0.0.8"];
     expect(await push.endpointAllowed(endpoint("rebind"))).toBe(false);
     push.pushNet.resolve = async () => { throw new Error("ENOTFOUND"); };
@@ -207,6 +214,26 @@ describe("subscriptions and delivery", () => {
     await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
     expect(sent).toEqual([]);
     expect(rows()[0]!.failure_count).toBe(1);
+
+    // L2: the host is resolved again right before the request. A private second answer is
+    // refused (and counts); a public one with no address in common aborts without counting.
+    const answers = (...lists: string[][]) => {
+      let call = 0;
+      push.pushNet.resolve = async () => lists[Math.min(call++, lists.length - 1)]!;
+    };
+    answers(["142.250.1.1"], ["127.0.0.1"]);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
+    expect(sent).toEqual([]);
+    expect(rows()[0]!.failure_count).toBe(2);
+    answers(["142.250.1.1"], ["142.250.9.9"]);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
+    expect(sent).toEqual([]);
+    expect(rows()[0]!.failure_count).toBe(2);
+    responder = () => 201;
+    answers(["142.250.1.1", "142.250.1.2"], ["142.250.1.2"]);
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
+    expect(sent.length).toBe(1);
+    expect(rows()[0]!.failure_count).toBe(0);
   });
 
   test("Send test is limited to 5 per hour", async () => {
