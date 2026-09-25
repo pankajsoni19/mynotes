@@ -20,6 +20,8 @@ export const MAX_SUBSCRIPTIONS_PER_USER = 10;
 export const MAX_FAILURES = 5;
 export const PUSH_TTL_SECONDS = 3600;
 export const PUSH_TIMEOUT_MS = 5000;
+/** A DNS answer that takes longer than this fails the delivery, so a dead resolver cannot stall a tick. */
+export const PUSH_RESOLVE_TIMEOUT_MS = 2000;
 export const TEST_PUSHES_PER_HOUR = 5;
 const JWT_LIFETIME_S = 12 * 3600;
 export const BUILT_IN_PUSH_HOSTS = ["*.googleapis.com", "*.push.services.mozilla.com", "*.push.apple.com", "*.notify.windows.com"];
@@ -146,11 +148,25 @@ export function isPrivateAddress(address: string): boolean {
   return true;
 }
 
-/** Network access, on an object so tests can replace DNS and fetch. */
+/** Network access, on an object so tests can replace DNS and fetch (and shorten the DNS bound). */
 export const pushNet = {
   resolve: async (host: string) => (await lookup(host, { all: true, verbatim: true })).map((entry) => entry.address),
-  fetch: (url: string, init: RequestInit) => fetch(url, init)
+  fetch: (url: string, init: RequestInit) => fetch(url, init),
+  resolveTimeoutMs: PUSH_RESOLVE_TIMEOUT_MS
 };
+
+/** pushNet.resolve, rejected once pushNet.resolveTimeoutMs passes without an answer. */
+async function resolveBounded(host: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("DNS lookup timed out")), pushNet.resolveTimeoutMs);
+  });
+  try {
+    return await Promise.race([pushNet.resolve(host), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** The shape check alone: https, port 443, no credentials, not an IP literal, an allowlisted host. */
 export function endpointShapeAllowed(endpoint: string) {
@@ -166,11 +182,14 @@ export function endpointShapeAllowed(endpoint: string) {
   return allowedPushHosts().some((pattern) => hostMatches(host, pattern));
 }
 
-/** Shape plus DNS: the addresses the host resolves to, when every one is public; otherwise null. */
+/**
+ * Shape plus DNS: the addresses the host resolves to, when every one is public; otherwise null.
+ * A lookup that fails or outlasts the bound is null too, so delivery counts it as a failure.
+ */
 async function publicAddresses(endpoint: string) {
   if (!endpointShapeAllowed(endpoint)) return null;
   try {
-    const addresses = await pushNet.resolve(new URL(endpoint).hostname);
+    const addresses = await resolveBounded(new URL(endpoint).hostname);
     return addresses.length > 0 && addresses.every((address) => !isPrivateAddress(address)) ? addresses : null;
   } catch {
     return null;

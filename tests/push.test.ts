@@ -24,7 +24,9 @@ const endpoint = (suffix: string) => `https://fcm.googleapis.com/fcm/send/${suff
 beforeEach(() => {
   sent = [];
   responder = () => 201;
+  // No test performs real DNS: the container build has no resolver.
   push.pushNet.resolve = async () => ["142.250.1.1"];
+  push.pushNet.resolveTimeoutMs = push.PUSH_RESOLVE_TIMEOUT_MS;
   push.pushNet.fetch = async (url, init) => {
     sent.push({ url, init });
     return new Response(null, { status: responder(url) });
@@ -234,6 +236,16 @@ describe("subscriptions and delivery", () => {
     await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
     expect(sent.length).toBe(1);
     expect(rows()[0]!.failure_count).toBe(0);
+
+    // A resolver that never answers is bounded: the delivery fails (and counts) instead of stalling.
+    push.pushNet.resolve = () => new Promise<string[]>(() => undefined);
+    push.pushNet.resolveTimeoutMs = 20;
+    sent = [];
+    const started = Date.now();
+    await push.deliverNotifications([{ id: crypto.randomUUID(), userId: user.userId }]);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(sent).toEqual([]);
+    expect(rows()[0]!.failure_count).toBe(1);
   });
 
   test("a hanging push service cannot pile deliveries up: 4 users at a time, one delivery per user (L9)", async () => {
@@ -267,11 +279,16 @@ describe("subscriptions and delivery", () => {
     await Bun.sleep(5);
     expect(inFlight).toBe(4);
     expect(sent.length).toBe(4);
-    while (release.length || inFlight) {
+    // Keep releasing until the queue drains: a worker may be between devices (signing) with
+    // nothing in flight, so "nothing in flight" alone does not mean it is done.
+    let done = false;
+    void drained.then(() => { done = true; });
+    const started = Date.now();
+    while (!done) {
       release.splice(0).forEach((resolve) => resolve());
       await Bun.sleep(1);
     }
-    await drained;
+    expect(Date.now() - started).toBeLessThan(1000);
     expect(peak).toBe(4);
     // Six first deliveries, then one more for user 0 (re-queued while in flight); user 5 was still queued.
     expect(sent.length).toBe(7);
