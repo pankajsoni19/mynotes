@@ -119,12 +119,16 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
 }
 
 export const SWEEP_BATCH_SIZE = 100;
+/** Interrupted purges resumed per table and run. Kept separate so rows that keep failing never starve due ones. */
+export const SWEEP_RESUME_BATCH_SIZE = 50;
 export type BinSweepCounts = { purged: number; pending: number };
 
 /**
- * Sweeper step 3 (DEVELOPMENT_PLAN §6.5). Per table and run: first resume
- * interrupted purges, then purge rows whose retention has ended, up to one
- * batch of SWEEP_BATCH_SIZE rows in total. Remaining rows wait for the next run.
+ * Sweeper step 3 (DEVELOPMENT_PLAN §6.5). Per table and run: resume up to
+ * SWEEP_RESUME_BATCH_SIZE interrupted purges, then purge up to
+ * SWEEP_BATCH_SIZE rows whose retention has ended. Each budget is separate, so
+ * a run is bounded and failing tombstones never block expired items.
+ * Remaining rows wait for the next run.
  */
 export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSweepCounts> {
   const cutoff = new Date(options.nowMs ?? Date.now()).toISOString();
@@ -132,9 +136,9 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
   for (const type of ["note", "document"] as const) {
     const table = tables[type];
     const resumed = db.query(`SELECT id, purge_after FROM ${table} WHERE purge_started_at IS NOT NULL ORDER BY purge_started_at LIMIT ?`)
-      .all(SWEEP_BATCH_SIZE) as Array<{ id: string; purge_after: string | null }>;
+      .all(SWEEP_RESUME_BATCH_SIZE) as Array<{ id: string; purge_after: string | null }>;
     const due = db.query(`SELECT id, purge_after FROM ${table} WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after <= ? ORDER BY purge_after LIMIT ?`)
-      .all(cutoff, SWEEP_BATCH_SIZE - resumed.length) as Array<{ id: string; purge_after: string | null }>;
+      .all(cutoff, SWEEP_BATCH_SIZE) as Array<{ id: string; purge_after: string | null }>;
     for (const row of [...resumed, ...due]) {
       // An interrupted purge that was not due yet was started by its owner.
       const reason: PurgeReason = row.purge_after !== null && row.purge_after > cutoff ? "user" : "retention";

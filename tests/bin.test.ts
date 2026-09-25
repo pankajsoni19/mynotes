@@ -321,6 +321,29 @@ describe("restore, purge, and the retention sweeper", () => {
     expect(JSON.parse(audit.metadata_json)).toEqual({ noteId: id, reason: "user" });
   });
 
+  test("tombstones that keep failing do not starve expired items", async () => {
+    const owner = await createUser("Starvation owner");
+    await runSweep();
+    const failing = new Set(Array.from({ length: bin.SWEEP_RESUME_BATCH_SIZE + 10 }, () => insertBinnedNote(owner.userId, past(), { purgeStartedAt: past() })));
+    const due = insertBinnedNote(owner.userId, past());
+    const original = bin.binStorage.removeBytes;
+    bin.binStorage.removeBytes = async (type, id) => {
+      if (failing.has(id)) throw Object.assign(new Error("injected"), { code: "EACCES" });
+      return original(type, id);
+    };
+    try {
+      const counts = await runSweep();
+      expect(counts!.bin.pending).toBe(bin.SWEEP_RESUME_BATCH_SIZE);
+      expect(counts!.bin.purged).toBe(1);
+    } finally {
+      bin.binStorage.removeBytes = original;
+    }
+    expect(noteRow(due)).toBeNull();
+    await runSweep();
+    await runSweep();
+    for (const id of failing) expect(noteRow(id)).toBeNull();
+  });
+
   test("a byte-removal failure leaves the tombstone for the next sweep", async () => {
     const owner = await createUser("Failing purge owner");
     const id = insertBinnedNote(owner.userId, past());
