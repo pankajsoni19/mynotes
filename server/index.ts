@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
-import { ownedNote, readableNote } from "./access";
+import { listReadableFolders, ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { purgeAfterFrom, purgeLocked } from "./bin";
@@ -450,23 +450,7 @@ app.get("/api/users", (c) => {
   return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name })) });
 });
 
-app.get("/api/folders", (c) => {
-  const userId = c.get("user").id;
-  const rows = db.query(`
-    SELECT f.id, CASE WHEN f.owner_id = $userId THEN f.parent_id ELSE NULL END AS parent_id,
-           f.name, f.is_default, f.visibility, f.created_at, f.updated_at,
-           f.owner_id, u.display_name AS owner_name,
-           CASE WHEN f.owner_id = $userId THEN 1 ELSE 0 END AS is_owner
-    FROM folders f JOIN users u ON u.id = f.owner_id
-    WHERE f.owner_id = $userId OR f.visibility = 'all_users' OR (
-      f.visibility = 'selected' AND EXISTS (
-        SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-      )
-    )
-    ORDER BY is_owner DESC, f.is_default DESC, f.name COLLATE NOCASE
-  `).all({ userId });
-  return c.json({ folders: rows });
-});
+app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user").id) }));
 
 app.post("/api/folders", async (c) => {
   const body = await parseJson(c.req.raw, folderSchema);

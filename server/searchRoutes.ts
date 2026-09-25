@@ -118,6 +118,59 @@ export function searchNotes(userId: string, q: string, options: { folder: "all" 
   return { results, truncated: rows.length > options.limit };
 }
 
+/** An MCP search hit (D32): published text only, plain strings, no scores. */
+export type PublishedSearchHit = {
+  id: string;
+  title: string;
+  snippet: string;
+  version: number;
+  folder_id: string | null;
+  owner_name: string;
+  is_owner: 0 | 1;
+  updated_at: string;
+};
+
+/**
+ * Published rows only, for every reader including the owner (whose draft is
+ * never searched here). The title is the published version's, not the
+ * draft-derived `notes.title`. Snippets carry no markers, so the text is
+ * plain. The same live ACL applies before LIMIT.
+ */
+const publishedSearch = db.query(`
+  SELECT n.id, v.title, n.current_version AS version,
+         snippet(note_fts, 1, '', '', $ellipsis, $snippetTokens) AS snippet,
+         ${folderIdExpression} AS folder_id,
+         u.display_name AS owner_name,
+         CASE WHEN n.owner_id = $userId THEN 1 ELSE 0 END AS is_owner,
+         n.updated_at
+  FROM note_fts
+  JOIN note_search_rows r ON r.id = note_fts.rowid AND r.kind = 'published'
+  JOIN notes n ON n.id = r.note_id
+  JOIN note_versions v ON v.note_id = n.id AND v.version_number = n.current_version
+  JOIN users u ON u.id = n.owner_id
+  LEFT JOIN folders f ON f.id = n.folder_id
+  WHERE note_fts MATCH $query
+    AND n.deleted_at IS NULL AND n.current_version > 0
+    AND ${readableNotePredicate}
+    AND ($folderId IS NULL OR ${folderIdExpression} = $folderId)
+  ORDER BY bm25(note_fts, 8.0, 1.0), n.updated_at DESC
+  LIMIT $limit
+`);
+
+export function searchPublishedNotes(userId: string, q: string, options: { folderId: string | null; limit: number }) {
+  const query = buildFtsQuery(q);
+  if (query === null) return { results: [] as PublishedSearchHit[], truncated: false };
+  const rows = publishedSearch.all({
+    userId,
+    query,
+    folderId: options.folderId,
+    ellipsis: ELLIPSIS,
+    snippetTokens: SNIPPET_TOKENS,
+    limit: options.limit + 1
+  }) as PublishedSearchHit[];
+  return { results: rows.slice(0, options.limit), truncated: rows.length > options.limit };
+}
+
 const invalid = (detail: string) => ({ error: "Invalid request", details: [detail] });
 
 export function registerSearchRoutes(app: Hono<AppEnv>) {
