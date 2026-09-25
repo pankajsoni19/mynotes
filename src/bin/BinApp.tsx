@@ -199,7 +199,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     <section className="bin-content" aria-labelledby="bin-title">
       <div className="bin-intro">
         <div>
-          <span className="eyebrow">Shared Bin</span>
+          <span className="eyebrow">Bin</span>
           <h1 id="bin-title">Bin</h1>
           <p>Deleted notes, files, cards, and boards stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
         </div>

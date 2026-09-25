@@ -6,7 +6,7 @@ import { ApiError } from "../api";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
+import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -395,7 +395,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
     <section className="task-card-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={trapTabKey}>
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
-          <span className="eyebrow">{column ? `In ${column.name}` : "Card"}</span>
+          <span className="eyebrow">{column ? columnEyebrow(column.name) : "Card"}</span>
           {card
             ? <input
               id={titleId}

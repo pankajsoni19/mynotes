@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ChevronLeft, ChevronRight, Ellipsis, MessageSquare, Paperclip, Plus, AlignLeft } from "lucide-react";
 import { CARD_DRAG_TYPE, isCardDrag, isMoveKey, type MoveKey } from "./boardOrder";
-import { validateCardTitle } from "./taskActions";
+import { attachmentCountLabel, cardCountLabel, commentCountLabel, validateCardTitle } from "./taskActions";
 import type { BoardColumn, CardSummary } from "./tasksApi";
 
 type BoardColumnViewProps = {
@@ -94,7 +94,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
     onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onDragOverIndex(null); }}>
     <header className="task-column-header">
       <h2 id={`column-${column.id}`} title={column.name}>{column.name}</h2>
-      <b aria-label={`${cards.length} cards`}>{cards.length}</b>
+      <b aria-label={cardCountLabel(cards.length)}>{cards.length}</b>
       {owner && <span className="task-column-controls">
         <button className="icon-button desktop-only" onClick={() => props.onMoveColumn(-1)} disabled={isFirst} aria-label={`Move ${column.name} left`} title="Move column left"><ChevronLeft /></button>
         <button className="icon-button desktop-only" onClick={() => props.onMoveColumn(1)} disabled={isLast} aria-label={`Move ${column.name} right`} title="Move column right"><ChevronRight /></button>
@@ -134,8 +134,8 @@ export function BoardColumnView(props: BoardColumnViewProps) {
           <span className="task-card-title">{card.title}</span>
           {(card.has_description === 1 || card.comment_count > 0 || card.attachment_count > 0) && <span className="task-card-meta">
             {card.has_description === 1 && <span title="Has a description"><AlignLeft aria-label="Has a description" /></span>}
-            {card.comment_count > 0 && <span title="Comments"><MessageSquare aria-hidden="true" />{card.comment_count}<span className="sr-only"> comments</span></span>}
-            {card.attachment_count > 0 && <span title="Attachments"><Paperclip aria-hidden="true" />{card.attachment_count}<span className="sr-only"> attachments</span></span>}
+            {card.comment_count > 0 && <span title="Comments"><MessageSquare aria-hidden="true" /><span aria-hidden="true">{card.comment_count}</span><span className="sr-only">{commentCountLabel(card.comment_count)}</span></span>}
+            {card.attachment_count > 0 && <span title="Attachments"><Paperclip aria-hidden="true" /><span aria-hidden="true">{card.attachment_count}</span><span className="sr-only">{attachmentCountLabel(card.attachment_count)}</span></span>}
           </span>}
           <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…" draggable={false}><Ellipsis /></button>
         </div>

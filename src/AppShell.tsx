@@ -33,14 +33,23 @@ const cards: Array<{ section: Exclude<AppSection, "home" | "bin">; icon: typeof 
   { section: "tasks", icon: KanbanSquare, eyebrow: "Your workspace", title: "Tasks", copy: "Plan work on shared boards with draggable cards", status: "Open Tasks" }
 ];
 
-export function AppHome({ displayName, onOpen, onSettings, onSignOut }: ShellProps) {
+/**
+ * The Bin badge count: one lazy look on mount (no polling); a failure leaves the plain Bin button.
+ * `enabled` false skips the request where the header has no Bin button.
+ */
+export function useBinCount(enabled = true) {
   const [binCount, setBinCount] = useState(0);
-  // One lazy look when Home mounts, just for the badge; a failure leaves the plain Bin button.
   useEffect(() => {
+    if (!enabled) return;
     let live = true;
     listBin().then(({ items }) => { if (live) setBinCount(items.length); }, () => undefined);
     return () => { live = false; };
-  }, []);
+  }, [enabled]);
+  return binCount;
+}
+
+export function AppHome({ displayName, onOpen, onSettings, onSignOut }: ShellProps) {
+  const binCount = useBinCount();
   return <main className="app-home">
     <header className="app-home-header">
       <div className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Home</strong></span></div>

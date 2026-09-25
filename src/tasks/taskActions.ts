@@ -20,6 +20,18 @@ export const sharingLabel = (visibility: "private" | "selected" | "all_users") =
   visibility === "all_users" ? "Everyone here" : visibility === "selected" ? "Shared" : "Private";
 
 export const cardCountLabel = (count: number) => count === 1 ? "1 card" : `${count} cards`;
+export const commentCountLabel = (count: number) => count === 1 ? "1 comment" : `${count} comments`;
+export const attachmentCountLabel = (count: number) => count === 1 ? "1 attachment" : `${count} attachments`;
+
+/** The card dialog eyebrow: one “In”, even for a column already named “In progress”. */
+export const columnEyebrow = (name: string) => /^in\s/i.test(name.trim()) ? name.trim() : `In ${name}`;
+
+/** The second line in the user picker: the email, or a short id when another user has the same name. */
+export function pickerDetail(user: { id: string; email?: string; displayName: string }, users: readonly { id: string; displayName: string }[]) {
+  if (user.email) return user.email;
+  const name = user.displayName.trim().toLowerCase();
+  return users.some((other) => other.id !== user.id && other.displayName.trim().toLowerCase() === name) ? `ID ${user.id.slice(0, 8)}` : null;
+}
 
 export const COMMENT_MAX_BYTES = 16_384;
 

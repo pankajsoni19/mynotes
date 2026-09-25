@@ -25,7 +25,7 @@
 .task-shared svg { width: 13px; }
 .task-board-actions { display: flex; gap: 2px; flex: none; }
 .task-board-actions .icon-button svg { width: 17px; }
-.task-share-copy { margin: 0 0 12px; color: #9a9aa1; font-size: .82rem; line-height: 1.5; }
+.task-share-copy { margin: 0; padding: 14px 14px 0; color: #9a9aa1; font-size: .82rem; line-height: 1.5; }
 
 /* Board view */
 .task-board { flex: 1; min-height: 0; display: flex; flex-direction: column; }

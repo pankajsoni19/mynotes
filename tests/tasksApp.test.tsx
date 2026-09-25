@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardList } from "../src/tasks/BoardList";
-import { attachmentsFor, canRetryTitle, canUnlink, descriptionDirty, cardCountLabel, commentBodyError, isInlineImage, sharingLabel, unlinkConfirmMessage, validateBoardName, validateCardTitle, validateColumnName } from "../src/tasks/taskActions";
+import { attachmentsFor, canRetryTitle, canUnlink, columnEyebrow, commentCountLabel, descriptionDirty, cardCountLabel, pickerDetail, commentBodyError, isInlineImage, sharingLabel, unlinkConfirmMessage, validateBoardName, validateCardTitle, validateColumnName } from "../src/tasks/taskActions";
 
 test("the board list starts with its loading state and a New board action", () => {
   const markup = renderToStaticMarkup(<BoardList onOpen={() => undefined} notify={() => undefined} />);
@@ -57,4 +57,15 @@ test("only unsaved description edits ask before leaving the card", () => {
   expect(descriptionDirty(false, "changed", "saved")).toBe(false);
   expect(descriptionDirty(true, "saved", "saved")).toBe(false);
   expect(descriptionDirty(true, "changed", "saved")).toBe(true);
+});
+
+test("card copy uses one “In” prefix, plural counts, and picker details for duplicate names", () => {
+  expect(columnEyebrow("In progress")).toBe("In progress");
+  expect(columnEyebrow("Doing")).toBe("In Doing");
+  expect(commentCountLabel(1)).toBe("1 comment");
+  expect(commentCountLabel(3)).toBe("3 comments");
+  const users = [{ id: "aaaaaaaa-1", displayName: "Sam" }, { id: "bbbbbbbb-2", displayName: "sam " }, { id: "cccccccc-3", displayName: "Kim", email: "kim@example.test" }];
+  expect(pickerDetail(users[0]!, users)).toBe("ID aaaaaaaa");
+  expect(pickerDetail(users[2]!, users)).toBe("kim@example.test");
+  expect(pickerDetail({ id: "d", displayName: "Lee" }, users)).toBeNull();
 });
