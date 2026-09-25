@@ -104,3 +104,17 @@ export function dueStatus(dueOn: string | null, today: string, done = false): Du
   if (days === 1) return { tone: "soon", label: "Tomorrow", description: "Due tomorrow" };
   return { tone: days <= 7 ? "soon" : "later", label: short, description: `Due ${short}` };
 }
+
+/**
+ * The due date to save from the date field, or null when there is nothing to save: the value
+ * must be a complete real date from 1900 to 2999 (as the server requires) and differ from the
+ * saved one. Browsers report partial years such as 0202 while a date is typed.
+ */
+export function committableDueDate(value: string, saved: string | null) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match || value === saved) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (year < 1900 || year > 2999) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? value : null;
+}

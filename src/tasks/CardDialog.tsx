@@ -6,7 +6,7 @@ import { ApiError } from "../api";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, dueStatus, isInlineImage, localDateString, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
+import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, committableDueDate, dueStatus, isInlineImage, localDateString, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -82,6 +82,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   const [readers, setReaders] = useState<Array<{ id: string; displayName: string }> | null>(null);
   const [savingDetails, setSavingDetails] = useState(false);
   const [dueDraft, setDueDraft] = useState<string | null>(null);
+  const [detailsConflict, setDetailsConflict] = useState<string | null>(null);
   const cardFileRef = useRef<HTMLInputElement>(null);
   const commentFileRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<CardDetail | null>(null);
@@ -183,22 +184,25 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
     }
   }
 
-  // Due date and assignee save on change. These are single fields, so on CARD_CHANGED (someone
-  // edited the title or description) the change is retried once at the new revision.
+  // Due date and assignee save when committed. On CARD_CHANGED the card reloads to the current
+  // version and says so, as the title does, instead of overwriting someone else's change.
   async function saveDetails(change: Pick<CardChange, "dueOn" | "assigneeId">, success: string) {
     const current = cardRef.current;
     if (!current) return;
     setSavingDetails(true);
+    setDetailsConflict(null);
     try {
-      try {
-        applyCard((await updateCard(current.id, { ...change, revision: current.revision })).card);
-      } catch (reason) {
-        const latest = taskErrorCode(reason) === "CARD_CHANGED" ? payloadCard(reason) : null;
-        if (!latest) throw reason;
-        applyCard((await updateCard(current.id, { ...change, revision: latest.revision })).card);
-      }
+      applyCard((await updateCard(current.id, { ...change, revision: current.revision })).card);
       notify(success);
     } catch (reason) {
+      const latest = taskErrorCode(reason) === "CARD_CHANGED" ? payloadCard(reason) : null;
+      if (latest) {
+        applyCard(latest);
+        setTitle(latest.title);
+        setDueDraft(null);
+        setDetailsConflict("Someone else changed this card, so your change was not saved. The card now shows their version; make your change again if it is still needed.");
+        return;
+      }
       notify(taskErrorCode(reason) === "ASSIGNEE_NOT_MEMBER"
         ? "That person can no longer open this board"
         : taskErrorMessage(reason, "Could not save the change"));
@@ -477,14 +481,15 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
                   min="1900-01-01"
                   max="2999-12-31"
                   disabled={savingDetails}
-                  onChange={(event) => {
-                    // Browsers report "" while a typed date is incomplete, so only a full date saves;
-                    // Clear removes the date.
-                    const value = event.target.value;
-                    setDueDraft(value);
-                    if (value && value !== card.due_on) void saveDetails({ dueOn: value }, "Due date saved");
+                  // The date saves when committed (leaving the field or Enter), and only as a complete
+                  // real date; typing passes through partial values. Clear removes the date.
+                  onChange={(event) => setDueDraft(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}
+                  onBlur={() => {
+                    const value = dueDraft === null ? null : committableDueDate(dueDraft, card.due_on);
+                    setDueDraft(null);
+                    if (value) void saveDetails({ dueOn: value }, "Due date saved");
                   }}
-                  onBlur={() => setDueDraft(null)}
                   aria-describedby={`${titleId}-due`}
                 />
                 {card.due_on && <button type="button" className="secondary-button task-small-button" disabled={savingDetails} onClick={() => { setDueDraft(null); void saveDetails({ dueOn: null }, "Due date removed"); }}>Clear</button>}
@@ -512,6 +517,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
               </select>
             </div>
           </div>
+          {detailsConflict && <p className="file-dialog-error" role="alert">{detailsConflict}</p>}
 
           <section className="task-card-section" aria-labelledby={`${titleId}-description`}>
             <header><h3 id={`${titleId}-description`}>Description</h3>{!editing && <button className="secondary-button task-small-button" onClick={startEditing}><Pencil />Edit</button>}</header>

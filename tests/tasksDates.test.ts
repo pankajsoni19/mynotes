@@ -114,3 +114,13 @@ describe("task due dates, assignees, and done columns", () => {
     expect(localDateString(new Date(2026, 0, 5))).toBe("2026-01-05");
   });
 });
+
+test("the due field saves only a complete real date that changed", async () => {
+  const { committableDueDate } = await import("../src/tasks/taskActions");
+  expect(committableDueDate("2026-10-01", null)).toBe("2026-10-01");
+  expect(committableDueDate("2026-10-01", "2026-10-01")).toBeNull();
+  // Partial years a browser reports while typing, and out-of-range or impossible dates.
+  for (const value of ["", "0002-10-01", "0202-10-01", "1899-12-31", "3000-01-01", "2026-02-30", "2026-13-01", "2026-10"]) expect(committableDueDate(value, null)).toBeNull();
+  expect(committableDueDate("1900-01-01", null)).toBe("1900-01-01");
+  expect(committableDueDate("2028-02-29", "2026-10-01")).toBe("2028-02-29");
+});
