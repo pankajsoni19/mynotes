@@ -1,4 +1,4 @@
-# Test plan: Home, Files, and Bin
+# Test plan: Home, Files, Bin, and Search
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every automated case below must exist and pass before its wave's exit gate.
 
@@ -124,6 +124,41 @@ Unit tests (no DOM):
 
 - [ ] `tests/filesNavigation.test.ts`: round trip; preserves foreign state (the app-shell key and the notes key); rejects a cross-user entry, an invalid panel, and a non-string documentId; `sameFilesSnapshot`.
 - [ ] `tests/uploadQueue.test.ts`: enqueue several files; concurrency cap of 2; progress updates; cancel; failure with an error code; retry keeps the same idempotency key; completed items do not re-run.
+
+## Wave 7: Search
+
+Unit tests (no server):
+
+- [x] `tests/search.test.ts`: `buildFtsQuery` quotes every term with implicit AND and a trailing prefix (none after a space or punctuation); FTS operators, `title:x`, `NEAR()`, `-`/`+`/`^`, `{col}`, `foo*`, `***`, and unterminated quotes become plain words or nothing; up to 4 phrases (extra phrases become words); NFKC, lowercase, emoji, diacritics, and Devanagari; caps (1–200 characters, 2–64 characters per word, 8 words); every built query is valid FTS5 syntax. `searchText` keeps headings, text, link and alt text, code, and table cells, and drops URLs, HTML, markup, reference definitions, and control characters. `toSegments` splits highlight markers into text/hit segments and never produces HTML.
+- [x] `tests/searchHistory.test.ts`: the search hint round-trips on history state, keeps other keys, rejects other users and malformed entries, caps the query, and leaves an empty hint only on entries that had one; the client starts searching at 2 characters and sends at most 200.
+
+`tests/migrations.test.ts`:
+
+- [x] Migration 008 creates the tables with their CHECK and UNIQUE constraints, backfills nothing, folds accents, and deleting a note cascades to `note_search_rows` while the trigger removes its FTS rows.
+
+`tests/searchIndex.test.ts`:
+
+- [x] Draft save, empty draft, publish, second draft, discard, publish, and version restore each leave exactly the expected rows, titles, bodies, and checksums. Note creation indexes nothing.
+- [x] Bin and restore keep rows; purge removes them (FTS count drops). A discarded never-published note keeps its draft row in the Bin; a blank note is purged with none.
+- [x] Reconcile reindexes a missing row and a stale checksum, removes an orphan FTS row, leaves out a draft whose file fails its checksum, and a second run changes nothing.
+- [x] Boot backfill (subprocess `tests/support/searchBackfillProbe.ts`): a 007-shaped data directory with notes on disk boots to `[1..8]` and indexes published versions, drafts, both kinds for one note, and binned notes; skips an empty draft and a tampered version file; never indexes the stale `current.md` mirror; a second reconcile indexes nothing.
+
+`tests/searchApi.test.ts`:
+
+- [x] Matching: accents and case, prefix, a trailing space disables the prefix, title matches outrank body matches, `limit` and `truncated`, segments carry no HTML, no scores are returned, operators are plain words.
+- [x] Drafts: only the owner finds draft text (as `source: "draft"`) and then not their published text; readers find only the published text; after publish the draft row is gone; never-published notes are invisible to readers.
+- [x] Access: across owner, folder share, note share, `all_users` folder and note, private override, and a stranger, results equal the expected set and ⊆ `GET /api/notes`; `folder_id` is masked; `folder=<id>` and `folder=shared` filter; unsharing a folder or note applies at once.
+- [x] Bin: binned notes are hidden for owner and reader, restored notes return, purge removes the index rows.
+- [x] Version restore reindexes the draft.
+- [x] 400 for bad `scope`, `folder`, `limit` (0, 51, `abc`, `1.5`) and `q` over 200 characters; 401 without a session; 429 `RATE_LIMITED` with `Retry-After` after 20 searches in 10 s, per user.
+
+Manual QA (desktop and 390×844):
+
+- [ ] Desktop: `/` and Ctrl/⌘+K focus search; typing shows the title filter instantly, then full-text results with highlighted title and snippet, folder, owner, Draft badge, and time; ↑/↓ move the highlight, Enter opens, Esc clears; the result count is announced.
+- [ ] Desktop: in a folder, results are limited to it; **Search all notes** widens the scope; opening a hit from another folder switches to All notes and keeps the query; Back and Forward restore each entry's search.
+- [ ] A second user sees only shared, published notes (with the owner's name) and never the first user's drafts.
+- [ ] 390×844: rows and the scope chip are at least 44 px; no horizontal scroll; open a result, Back returns to the results with the query kept, Back again returns to the list without the search, then to the folders.
+- [ ] More than 20 searches in 10 s show the inline rate-limit message with the title filter still visible.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

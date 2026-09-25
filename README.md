@@ -15,6 +15,7 @@ MyNotes is a private, self-hosted home for the notes you cannot afford to lose: 
 - **One home for your workspace.** After sign-in, Home offers three apps: **Notes**, **Files**, and the shared **Bin**. Every app, folder, note, and file has its own URL, so links can be bookmarked and browser Back/Forward work on desktop and phone.
 - **Write without friction.** A responsive, macOS Notes-inspired workspace pairs folders and note cards with an Outline-like editor, slash commands, Markdown formatting, checklists, links, quotes, code blocks, inline images, and tables. Any note can be downloaded as a PDF.
 - **Keep files next to your notes.** Files shares the folder tree with Notes: upload with progress, preview images, PDFs, text, audio, and video safely, download, rename, move, share, and delete with Undo.
+- **Find anything fast.** Full-text search covers note titles and bodies, ignores case and accents, matches words as you type, and highlights where they appear. Results respect sharing exactly: you only ever see notes you can open, and your drafts only you can find.
 - **Keep every meaningful change.** Edits begin as drafts, save automatically, publish as immutable versions, and can be compared or restored when you need to understand how a note evolved.
 - **Share deliberately.** Notes start private. Share an individual note or a folder with trusted accounts or everyone signed in, with note-level permissions taking precedence.
 - **Recover mistakes.** Deleted notes and files wait in a shared Bin for 30 days, with their history and sharing intact, before they are removed for good.
@@ -53,6 +54,16 @@ Type `/` for the command menu. Besides headings, lists, checklists, quotes, and 
 - **Download as PDF** (editor toolbar, or the actions menu on phones) opens the browser's print dialog with a print layout of the note; choose "Save as PDF".
 
 **Limitation:** an embedded image follows the sharing of the **folder** it was uploaded to, not the note's own sharing. If you share a note more widely than its folder, those readers see the text but a broken image. Nothing leaks; share the folder (or the image file) too if they need the images.
+
+### Search
+
+The search box at the top of the note list searches the text of your notes, not just their titles. Press `Ctrl+K` (`⌘K` on a Mac) or `/` to jump to it, and `Esc` to clear it.
+
+- **What matches.** Every word you type must appear in the note, in any order; case and accents are ignored, so `creme` finds "Crème". The last word matches as a prefix while you type (`brul` finds "brûlée"); end the query with a space to match whole words only. Put words in `"double quotes"` to match them as an exact phrase. Punctuation and operators such as `AND`, `OR`, `NOT`, `*`, or `title:` are treated as ordinary text, not search syntax. Link text, image descriptions, and code are searched; link addresses are not.
+- **What you see.** Your own notes are searched as you last saved them, including unpublished drafts, which are marked **Draft**. Notes shared with you are searched as their latest published version; you never see someone else's draft. Notes in the Bin are not searched until restored. Matches in the title rank first, and each result shows a highlighted excerpt, its folder, its owner when it is not yours, and when it was last edited.
+- **Scope.** Search covers the section you are in: All notes, Shared with me, or one folder. Choose **Search all notes** to widen it. Opening a result from outside the current section switches to All notes.
+- **Keyboard and phone.** Use ↑ and ↓ to move through results and Enter to open one. On phones, Back from a note returns to the results with your query kept; Back again closes the search. The query is kept in the browser tab's history state, never in the URL.
+- Searching is limited to 20 searches per 10 seconds per user; the list falls back to title matches and says so if you go faster. Queries are limited to 200 characters. Files are not searched yet.
 
 ### Files
 
@@ -202,6 +213,8 @@ Deleting a note or a file moves it to the shared **Bin** (Home → Bin, or `/bin
 ## Database migrations
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. Existing databases are upgraded automatically on container boot; new schema changes must be added as a new migration rather than editing an already released migration.
+
+**Upgrading to 0.5.0:** migration 008 adds the search index tables, and the first boot fills them from the notes on disk before the server accepts requests, logging only counts (`Search index: N indexed, …`). Later boots only repair rows that are missing or stale. The index stores a plain-text copy of each note's published version and draft inside `mynotes.sqlite`, so it lives on the same disk and in the same backups as the notes themselves.
 
 The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files use `0600`. The service refuses symlinked note directories/files.
 

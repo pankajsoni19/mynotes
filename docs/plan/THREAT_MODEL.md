@@ -65,6 +65,17 @@ MyNotes is self-hosted. One Bun container serves a small set of trusted accounts
 | T27 | **Existing protections regressed** (TOTP gate, CSP on the SPA, JSON-only mutations) | The middleware exception is path-exact, and tests prove multipart is rejected elsewhere. The global CSP on the SPA is unchanged. The TOTP gate covers the new routes (test). | Required |
 | T28 | **Note images shown to the wrong audience.** Images embedded in a note are documents in the note's folder, so they follow the folder's sharing, not the note's override | No widening: a reader who can see the note but not the folder gets a broken image, never the bytes. Image sources other than this app's `/api/files/<id>/content` URLs are dropped when a note loads. Documented in the README. A proper fix belongs to a later note-attachments design. | Accepted (documented) |
 
+### Search (Wave 7)
+
+These are the rows T28–T31 of [WAVES_7-9.md](WAVES_7-9.md) §5, numbered T29–T32 here because T28 was already taken. Later waves' rows shift by one in this file.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T29 | **A snippet leaks an unreadable note or draft** | The live access rule is part of the search query and runs before `LIMIT`: draft rows only for their owner, published rows only through `readableNotePredicate` (shared with `GET /api/notes/:id`), binned notes never. Tests prove results ⊆ `GET /api/notes` across the share matrix, drafts stay with their owner, and `folder_id` is masked. | Required |
+| T30 | **FTS injection or expensive queries** | User input never becomes FTS syntax: `buildFtsQuery` emits only quoted words made of letters, numbers, and combining marks (unit tests for operators, `title:`, `NEAR()`, unterminated quotes, `***`). Caps: 200 characters, 4 phrases, 8 words of 2–64 characters, `limit` ≤ 50. 20 searches per 10 s per user (429 `RATE_LIMITED`). | Required |
+| T31 | **The index outlives an unshare, edit, or purge** | Access is evaluated live at query time, so unsharing applies at once (test). Index rows are written in the same transaction as the note change. Purge cascades to `note_search_rows` and a trigger removes the FTS row (migration and API tests). Boot reconcile repairs missing or stale rows from checksum-verified files and removes orphans. | Required |
+| T32 | **Note text is duplicated in SQLite; BM25 statistics span all users** | The copy lives in `mynotes.sqlite` on the same disk, with the same permissions, and in the same backups as the Markdown files. Scores are never returned; only the order within a caller's own readable results is visible. | Accepted |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.
@@ -82,6 +93,7 @@ Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The
 
 T7, T16, T18, T19, T23, T24. Record any new acceptance here with a rationale and a date.
 
+- 2026-09-25: T32 (search text duplicated in SQLite; cross-user BM25 statistics), the operator default in WAVES_7-9.md §7.
 - 2026-09-25: T28 (note images follow folder sharing). It fails closed (broken image, no disclosure), and fixing it needs a note-attachments model. T18 and T23 are documented in the README.
 
 ## Review checklist (Waves 3, 4, 6)

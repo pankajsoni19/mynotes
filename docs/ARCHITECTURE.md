@@ -123,6 +123,25 @@ Every step runs under the item's resource lock and is idempotent. Restore is a c
 
 Bin purges run even when the file sweep fails. Logs carry counts only.
 
+## Search
+
+Full-text search over notes (WAVES_7-9.md §2) uses an SQLite FTS5 table that stores its text, so `snippet()` and `highlight()` work (migration 008):
+
+- `note_search_rows`: one row per `(note_id, kind)`, `kind` being `published` or `draft`, with the `source_checksum` of the text it was built from. `ON DELETE CASCADE` from `notes`.
+- `note_fts(title, body)`: rowid = `note_search_rows.id`, tokenizer `unicode61 remove_diacritics 2` (case- and accent-folding) with prefix indexes of 2 and 3 characters. An `AFTER DELETE` trigger on `note_search_rows` removes the FTS row, so purging a note clears its index through the cascade.
+
+**Text.** `server/search.ts` holds the pure helpers. `searchText()` projects Markdown to plain text: headings, paragraphs, link text, image alt text, table cells, and code are kept; URLs, HTML tags, and markup are dropped, as are control characters (the highlight markers are C0 controls). The title line is kept out of the body so snippets do not repeat it.
+
+**Sync.** `server/searchIndex.ts` writes inside the same transaction as the notes change: a draft save indexes the draft (an empty one is unindexed), publish indexes the new version and removes the draft row, discarding a draft removes it, and restoring a version indexes the restored draft. The Bin changes nothing (search filters on `deleted_at`), and purge cascades. Index text always comes from `draft.md` or the version file after its checksum was verified, never from the `current.md` mirror.
+
+**Reconcile.** At boot, after the mirror reconcile, `reconcileSearchIndex()` removes orphan FTS and mapping rows and rows whose source is gone, then reindexes every published version and draft whose row is missing or whose `source_checksum` differs from the database checksum (under the note lock), and finally runs FTS `optimize`. A file that fails its checksum is left out and counted as unreadable. Logs carry counts only. Changing `searchText()` does not trigger a rebuild by itself; delete the rows (`DELETE FROM note_search_rows`) to force one on the next boot.
+
+**Query.** `buildFtsQuery()` never passes user input through as FTS syntax: it applies NFKC and lowercase, keeps up to 4 quoted phrases, splits the rest into up to 8 words of 2–64 letters, numbers, or combining marks, quotes each one, and joins them with spaces (implicit AND). The last word gets a prefix `*` unless the query ends in a space or punctuation. Combining marks count as word characters so Indic scripts are not split at vowel signs.
+
+**API.** `GET /api/search` (`server/searchRoutes.ts`) joins `note_fts MATCH` to `notes` and applies the live access rule before `LIMIT`: the draft row only for its owner, and the published row only when `current_version > 0`, the caller is not the owner with a draft (who gets the draft, as `GET /api/notes/:id` does), and `readableNotePredicate` from `server/access.ts` holds. Binned notes never match. Results are ordered by `bm25(note_fts, 8.0, 1.0)` then `updated_at`, `folder_id` is masked as in `GET /api/notes`, highlights return as `{text, hit}` segments (never HTML), and scores are never returned. A per-user in-memory limiter allows 20 searches per 10 seconds. BM25 statistics are computed across every user's rows; only the order they produce is exposed.
+
+**UI.** `src/search/` provides `useNoteSearch` (200 ms debounce, starts at 2 characters, aborts the previous request, keeps results on screen while a data refresh re-runs) and `SearchResults` (a listbox driven from the search input with `aria-activedescendant`). While a request is in flight or failed, the note list falls back to the instant title filter.
+
 ## API surface
 
 All `/api` routes except health, about, login, and register need a session. Mutations need an allowed `Origin`, `X-CSRF-Token`, and a JSON body (except the upload). With `TOTP_POLICY=required`, a user without a factor can reach only logout and the TOTP status, setup, and enable routes.
@@ -137,9 +156,10 @@ All `/api` routes except health, about, login, and register need a session. Muta
 - **Notes:** `GET/POST /api/notes`, `GET/PATCH/DELETE /api/notes/:id`, `PUT/DELETE /api/notes/:id/draft`, `POST /api/notes/:id/publish`, `GET /api/notes/:id/versions`, `GET /api/notes/:id/versions/:version`, `POST /api/notes/:id/versions/:version/restore`, `GET/PUT /api/notes/:id/sharing`
 - **Files:** `POST /api/files?folderId=` (multipart upload), `GET /api/files?folderId=`, `GET/PATCH/DELETE /api/files/:id`, `GET/HEAD /api/files/:id/content`, `GET/PUT /api/files/:id/sharing`
 - **Bin:** `GET /api/bin?type=note|document`, `POST /api/bin/:type/:id/restore`, `DELETE /api/bin/:type/:id`, `DELETE /api/bin`
+- **Search:** `GET /api/search?q=&scope=notes&folder=all|shared|<uuid>&limit=20`
 - **MCP:** `/mcp` (outside `/api`): Streamable HTTP with a `Bearer` API key, `Host` and `Origin` checks, a failed-auth rate limit, and bounded bodies. Tools: `list_notes` and `read_note`, over the latest published versions the key owner can read. Drafts, documents, and binned items are excluded.
 
-Any other `/api` path returns a JSON 404. In production every other path serves the SPA's `index.html`. Request and response shapes for Files and Bin are in [docs/plan/API_CONTRACTS.md](plan/API_CONTRACTS.md).
+Any other `/api` path returns a JSON 404. In production every other path serves the SPA's `index.html`. Request and response shapes for Files, Bin, and Search are in [docs/plan/API_CONTRACTS.md](plan/API_CONTRACTS.md).
 
 ## UI
 
@@ -157,6 +177,7 @@ History state layers hints over the URL:
 
 - `mynotes.app-shell`: the app section, tied to the user id.
 - `mynotes.mobile-navigation` and `mynotes.files-navigation`: the phone panel (and, for Files, the folder a file was opened from), so Back steps between panels.
+- `mynotes.notes-search`: the Notes search query and scope an entry showed, tied to the user id. The query never enters the URL. On phones the first search from a list entry pushes one same-URL entry, and later edits replace it, so Back from a note returns to the results and Back from the results closes the search. Every Notes entry written while a search is active carries it, and entering an entry without it clears the search.
 - `mynotes.depth`: how many entries the app has pushed below the current one. In-app Back calls `history.back()` only when depth > 0, otherwise it changes the panel in place, so it never leaves the site from a first entry.
 
 Leaving a note by any route change runs `finalizeOpenNote` (remove a blank never-published note, or save and publish a changed draft) with the editor locked; on failure the URL stays on the note. Deep links resume the named note or file; unreadable ids fall back to the list with a toast. A signed-out deep link is kept in memory through login. A failed first workspace load retries on the next route change.
