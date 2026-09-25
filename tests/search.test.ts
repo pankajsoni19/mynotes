@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { buildFtsQuery, cleanIndexText, searchText, toSegments } from "../server/search";
+import { deriveNoteTitle } from "../server/validation";
 
 describe("buildFtsQuery", () => {
   test("quotes every term, joins them with implicit AND, and prefixes the word being typed", () => {
@@ -153,5 +154,18 @@ describe("toSegments", () => {
     expect(toSegments("\u0002x\u0003\u0002y\u0003")).toEqual([{ text: "xy", hit: true }]);
     expect(toSegments("<img src=x onerror=alert(1)>")).toEqual([{ text: "<img src=x onerror=alert(1)>", hit: false }]);
     expect(toSegments("")).toEqual([]);
+  });
+});
+
+describe("deriveNoteTitle", () => {
+  test("keeps its output for normal notes and stays fast on hostile 2 MB first lines", () => {
+    expect(deriveNoteTitle("# [Launch](https://x.example) plan ![logo](/a.png) <b>now</b>\n\nbody")).toBe("Launch plan logo now");
+    expect(deriveNoteTitle(`${" ".repeat(5000)}late start`)).toBe("late start");
+    expect(deriveNoteTitle("\n\n")).toBe("New note");
+    for (const unit of ["[", "![", "<a"]) {
+      const started = performance.now();
+      deriveNoteTitle(unit.repeat((2 * 1024 * 1024) / unit.length));
+      expect(performance.now() - started).toBeLessThan(200);
+    }
   });
 });

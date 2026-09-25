@@ -100,9 +100,15 @@ export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Prom
   return schema.parse(JSON.parse(new TextDecoder().decode(body)));
 }
 
+// A title is at most eight words, so only the start of a line matters. The patterns below
+// rescan from every unmatched "[" or "<", so bounding the line keeps a huge first line cheap.
+const TITLE_SOURCE_CHARS = 2048;
+
 export function deriveNoteTitle(markdown: string) {
   for (const sourceLine of markdown.split(/\r?\n/)) {
     const line = sourceLine
+      .trimStart()
+      .slice(0, TITLE_SOURCE_CHARS)
       .trim()
       .replace(/^```.*$/, "")
       .replace(/^\s{0,3}(?:#{1,6}\s+|>\s+|[-*+]\s+|\d+[.)]\s+|\[[ xX]\]\s+)/, "")
