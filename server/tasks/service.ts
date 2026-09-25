@@ -202,7 +202,7 @@ export async function putSharing(userId: string, boardId: string, visibility: Bo
   });
 }
 
-function applyRenumber(table: "board_columns" | "cards", renumbered: Positioned[] | null) {
+export function applyRenumber(table: "board_columns" | "cards", renumbered: Positioned[] | null) {
   if (!renumbered) return false;
   const statement = db.query(`UPDATE ${table} SET position = ? WHERE id = ?`);
   for (const item of renumbered) statement.run(item.position, item.id);
@@ -299,7 +299,7 @@ export function cardDetail(cardId: string) {
     .get(cardId) as CardDetail | null;
 }
 
-function liveCardsIn(columnId: string) {
+export function liveCardsIn(columnId: string) {
   return db.query("SELECT id, position FROM cards WHERE column_id = ? AND deleted_at IS NULL ORDER BY position, id").all(columnId) as Positioned[];
 }
 

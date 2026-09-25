@@ -44,15 +44,19 @@ type DocumentSummary = {
 };
 
 type BinItem = {
-  type: "note" | "document";
+  type: "note" | "document" | "card" | "board";
   id: string;
-  title: string;                 // note title or document name
+  title: string;                 // note title, document name, card title, or board name
   folder_id: string | null;      // original folder, null if it no longer exists
   folder_name: string | null;    // null → restore target is Default
   size_bytes: number | null;     // documents only
   deleted_at: string;
   purge_after: string;
   purging: boolean;              // purge_started_at IS NOT NULL
+  board_id: string | null;       // cards: their board; boards: themselves; else null
+  board_name: string | null;
+  attachment: boolean;           // a document that was a card attachment (restores into Files)
+  can_purge: boolean;            // false for a card the caller deleted on someone else's board
 };
 ```
 
@@ -179,11 +183,13 @@ Streaming: open the object with `O_NOFOLLOW` and verify it with `fstat`, then st
 <a id="bin"></a>
 ## Bin
 
-Every Bin endpoint is scoped to the caller's own items. `:type` is `note` or `document`; any other value returns 400.
+Every Bin endpoint is scoped to the caller's own items, plus binned cards they deleted (below). `:type` is `note`, `document`, `card`, or `board`; any other value returns 400.
+
+**Cards and boards (Wave 9, D41).** A binned board is listed for its owner. A binned card is listed for the board owner and for the member who deleted it, while that member can still open the board. Either can restore the card; only the board owner deletes it forever (403 `OWNER_ONLY` for the deleter). Cards and boards have no bytes, so a purge never returns 202. Purging a card or board deletes its comments and links; a document that loses its last link moves to its uploader's Bin. A restored attachment document with no links becomes an ordinary Files item (`purpose = 'file'`) in its folder or Default.
 
 ### List
 
-`GET /api/bin?type=note|document` (the `type` filter is optional) → 200 `{ items: BinItem[] }`, ordered by `deleted_at DESC`, with a limit of 500. Notes in the list: `deleted_at IS NOT NULL` (blank unpublished notes never enter the Bin; they are purged immediately).
+`GET /api/bin?type=note|document|card|board` (the `type` filter is optional; `document` lists Files items only, while attachments appear in the unfiltered list) → 200 `{ items: BinItem[] }`, ordered by `deleted_at DESC`, with a limit of 500. Notes in the list: `deleted_at IS NOT NULL` (blank unpublished notes never enter the Bin; they are purged immediately).
 
 ### Restore
 
@@ -193,8 +199,11 @@ Every Bin endpoint is scoped to the caller's own items. `:type` is `note` or `do
 | --- | --- | --- |
 | 200 | Restored | `{ ok: true, folderId, folderName, visibility }`: original folder, or Default when the original is gone or not owned. `visibility` is the new effective visibility, because a Default fallback can change it. |
 | 200 | Already live (owner) | `{ ok: true, alreadyRestored: true, folderId, folderName }` |
+| 200 | Card or board restored (or already live) | `{ ok: true, alreadyRestored?, boardId, boardName, columnId, columnName }`. A card returns to the bottom of its column, or of the first column when its column was deleted; `columnId`/`columnName` are null for boards. |
 | 404 | Missing or not owned | `{ error }` |
 | 409 | Purge in progress | `{ error, code: "PURGING" }` |
+| 409 | A card whose board is in the Bin | `{ error, code: "BOARD_IN_BIN" }` |
+| 409 | The board would exceed 1000 live cards, or the owner 50 live boards | `{ error, code: "LIMIT_REACHED" }` |
 
 Restore is a compare-and-swap update under the resource lock. Share rows remain as they were, so the item's previous audience regains access. Audit: `note.restore` / `document.restore`.
 
@@ -206,6 +215,7 @@ Restore is a compare-and-swap update under the resource lock. Share rows remain 
 | --- | --- | --- |
 | 200 | Purged, or a purge was already in progress and has now finished | `{ ok: true }` |
 | 202 | Purge started but byte removal failed; the sweeper will retry | `{ ok: true, pending: true }` |
+| 403 | A card the caller deleted on a board they do not own | `{ error, code: "OWNER_ONLY" }` |
 | 404 | No such binned item for this owner (including items already purged) | `{ error }` |
 | 409 | The item is live (not in the Bin) | `{ error, code: "NOT_IN_BIN" }` |
 
@@ -213,7 +223,7 @@ Clients treat a 404 on a **retry** as success.
 
 ### Empty Bin
 
-`DELETE /api/bin` with body `{}` → 200 `{ ok: true, purged: number, pending: number }`. Items are processed in batches. Failures stay marked for the sweeper.
+`DELETE /api/bin` with body `{}` → 200 `{ ok: true, purged: number, pending: number }`. Items are processed in batches. Failures stay marked for the sweeper. It includes the caller's binned boards and the binned cards on boards they own, never cards on other people's boards.
 
 > **Implementation notes (shipped in v0.3.1):**
 > - Purge audit events (`note.purge`, `document.purge`) record `reason`: `user`, `blank`, `retention`, or `resumed`. `resumed` marks a purge the sweeper finished after an interruption; the original reason is not stored.
@@ -284,7 +294,7 @@ Positions are computed by the server (D40) and never accepted from clients: a ne
 | `PATCH /boards/:b { name }` | owner | 200 `{ board }` | 400, 403, 404 |
 | `DELETE /boards/:b` | owner | 200 `{ ok: true, purgeAfter }`: the board moves to the Bin for 30 days | 403, 404 |
 
-Stage A sets the board's Bin columns only; restore, purge, and Bin listing arrive with stage D.
+The board and its cards stay together in the Bin; see § Bin for restore and purge. Audit: `task.board_restore`, `task.card_restore`, `task.board_purge`, `task.card_purge { reason: "user" | "retention" }`.
 
 ### Sharing
 
@@ -330,7 +340,7 @@ type CardDetail = CardSummary & { description: string };  // Markdown, at most 6
 
 - **Stale positions.** `afterCardId` must be another live card in the target column. Otherwise (binned, in another column or board, the moved card itself, or unknown) the response is 409 `{ error, code: "STALE_POSITION", columnId, order: string[] }`, where `order` is the target column's live card ids in their current order.
 - **Moves** stay on the card's board and do not change `revision`, so an open editor can still save.
-- Binned cards and cards on binned boards return 404 on every card route. Restore arrives with stage D.
+- Binned cards and cards on binned boards return 404 on every card route. They are restored through `POST /api/bin/card/:id/restore` (§ Bin).
 
 ### Comments
 

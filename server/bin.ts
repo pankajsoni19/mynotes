@@ -1,6 +1,7 @@
 import { audit, db, ensureDefaultFolder, now } from "./db";
 import { removeObject } from "./documentStorage";
 import { storage, withResourceLock } from "./storage";
+import { emptyTaskBin, listTaskBin, sweepTaskBin, type TaskBinType } from "./tasks/bin";
 
 /** Bin retention is a constant (D11), not configurable. */
 export const BIN_RETENTION_MS = 30 * 86_400_000;
@@ -115,6 +116,11 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
       const restored = db.query(`UPDATE ${table} SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = ?, updated_at = ?
         WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`)
         .run(folder.id, now(), id, ownerId);
+      // A card attachment binned after losing its last link comes back as an ordinary Files item.
+      if (type === "document" && restored.changes === 1) {
+        db.query(`UPDATE documents SET purpose = 'file' WHERE id = ? AND purpose = 'task_attachment'
+          AND NOT EXISTS (SELECT 1 FROM card_attachments WHERE document_id = documents.id)`).run(id);
+      }
       if (restored.changes !== 1) return { status: "purging" };
       if (type === "note") audit(ownerId, id, "note.restore", { folderId: folder.id });
       else audit(ownerId, null, "document.restore", { documentId: id, folderId: folder.id });
@@ -152,11 +158,17 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
       else if (outcome === "pending") counts.pending += 1;
     }
   }
+  // Cards and boards (Task Boards stage D). Purging them can move attachments to the Bin with a
+  // fresh 30 days, so they run after documents.
+  counts.purged += await sweepTaskBin(cutoff, SWEEP_BATCH_SIZE);
   return counts;
 }
 
+/** Bin rows across notes, documents, cards, and boards (docs/plan/API_CONTRACTS.md § Bin). */
+export type BinListType = BinType | TaskBinType;
+
 export type BinItem = {
-  type: BinType;
+  type: BinListType;
   id: string;
   title: string;
   folder_id: string | null;
@@ -165,25 +177,47 @@ export type BinItem = {
   deleted_at: string;
   purge_after: string;
   purging: boolean;
+  /** Cards: their board; boards: themselves. Null for notes and documents. */
+  board_id: string | null;
+  board_name: string | null;
+  /** A document that was a card attachment (it returns to Files when restored). */
+  attachment: boolean;
+  /** Whether the caller may delete it forever (a card's deleter may only restore it). */
+  can_purge: boolean;
 };
 
 export const BIN_LIST_LIMIT = 500;
 
-/** The caller's own binned items, newest deletion first. Folder columns are null when the original folder is gone (restore then targets Default). */
-export function listBin(ownerId: string, type: BinType | null) {
+/**
+ * The caller's binned items, newest deletion first: their notes and documents, their binned
+ * boards, and binned cards on boards they own or that they deleted themselves (D41). Folder
+ * columns are null when the original folder is gone (restore then targets Default).
+ */
+export function listBin(ownerId: string, type: BinListType | null) {
   const notes = `SELECT 'note' AS type, n.id, n.title, f.id AS folder_id, f.name AS folder_name, NULL AS size_bytes,
-      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging
+      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 0 AS attachment
     FROM notes n LEFT JOIN folders f ON f.id = n.folder_id AND f.owner_id = n.owner_id
     WHERE n.owner_id = $ownerId AND n.deleted_at IS NOT NULL`;
   const documents = `SELECT 'document' AS type, d.id, d.name AS title, f.id AS folder_id, f.name AS folder_name, d.size_bytes,
-      d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging
+      d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging, CASE WHEN d.purpose = 'file' THEN 0 ELSE 1 END AS attachment
     FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
     WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
-  // The Files filter shows Files items only; attachments appear under All (WAVES_7-9.md §7).
-  const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'` : `${notes} UNION ALL ${documents}`;
-  const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
-    .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging"> & { purging: number }>;
-  return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1 }));
+  const items: BinItem[] = [];
+  if (type === null || type === "note" || type === "document") {
+    // The Files filter shows Files items only; attachments appear under All (WAVES_7-9.md §7).
+    const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'` : `${notes} UNION ALL ${documents}`;
+    const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
+      .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging" | "attachment" | "board_id" | "board_name" | "can_purge"> & { purging: number; attachment: number }>;
+    items.push(...rows.map((row): BinItem => ({ ...row, purging: row.purging === 1, attachment: row.attachment === 1, board_id: null, board_name: null, can_purge: true })));
+  }
+  if (type === null || type === "card" || type === "board") {
+    items.push(...listTaskBin(ownerId, type === "card" || type === "board" ? type : null, BIN_LIST_LIMIT).map((row): BinItem => ({
+      type: row.type, id: row.id, title: row.title, folder_id: null, folder_name: null, size_bytes: null,
+      deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purging, attachment: false,
+      board_id: row.board_id, board_name: row.board_name, can_purge: row.can_purge
+    })));
+  }
+  return items.sort((a, b) => b.deleted_at.localeCompare(a.deleted_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, BIN_LIST_LIMIT);
 }
 
 /**
@@ -206,5 +240,6 @@ export async function emptyBin(ownerId: string) {
       after = batch[batch.length - 1]!.id;
     }
   }
+  counts.purged += await emptyTaskBin(ownerId);
   return counts;
 }
