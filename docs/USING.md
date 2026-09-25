@@ -4,7 +4,7 @@ This guide covers the apps a signed-in user sees. For installing, configuring, b
 
 ## Home and URLs
 
-Signing in lands on **Home**, which links to Notes, Files, and the Bin; each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
+Signing in lands on **Home**, which links to Notes, Files, Tasks, and the Bin; each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
 
 | URL | View |
 | --- | --- |
@@ -17,9 +17,12 @@ Signing in lands on **Home**, which links to Notes, Files, and the Bin; each app
 | `/files/folder/<folder-id>` | Files in one folder |
 | `/files/shared` | Files shared with you |
 | `/files/<file-id>` | One file's preview and details |
+| `/tasks` | Tasks: your boards and boards shared with you |
+| `/tasks/<board-id>` | One board |
+| `/tasks/<board-id>/card/<card-id>` | One card, open over its board |
 | `/bin` | Bin |
 
-Unknown paths open Home. A link to a note or file you cannot read (or that is missing or in the Bin) falls back to the list with a message. On phones, Back steps from the editor or preview to the list, then to the folders, then to Home, without leaving the site; with a dialog or sheet open, Back only closes it.
+Unknown paths open Home. A link to a note or file you cannot read (or that is missing or in the Bin) falls back to the list with a message. On phones, Back steps from the editor or preview to the list, then to the folders, then to Home, without leaving the site; in Tasks it steps from a card to its board, to the board list, then to Home. With a dialog or sheet open, Back only closes it.
 
 ## Notes
 
@@ -69,9 +72,23 @@ Files lists documents in the same folders as your notes. Each app shows only its
 
 Nook does **not** strip EXIF or other embedded metadata (for example GPS location or author) from uploaded images or PDFs. Remove it before uploading if you plan to share the file.
 
+## Tasks
+
+Tasks holds kanban boards. A new board starts with **To do**, **Doing**, and **Done**. Boards start private; share one with selected accounts or with everyone signed in.
+
+- **Who can do what.** Everyone who can open a board can add, edit, move, and comment on cards, attach their own files, and move cards to the Bin. Only the board's owner renames it, adds, renames, reorders, or deletes columns, changes its sharing, deletes the board, and deletes items forever. Shared boards show their owner's name.
+- **Cards.** Add a card with **Add a card** at the bottom of a column. Drag cards within or between columns on desktop. Every card's ⋯ button opens **Move to…**, which lists the columns and Top or Bottom; with a card focused, `Alt` plus an arrow key moves it up, down, or to the next column. If someone else changed the column meanwhile, the card jumps back and the board reloads.
+- **The card view.** Click a card (or press Enter on it) to open it; it has its own URL, and Back closes it. The title saves when you leave the field. The description is Markdown, edited with **Edit** and saved with **Save**; if someone else saved first, choose **Reload** (take theirs) or **Copy my text**. Comments load 50 at a time; you can edit or delete your own, and the board owner can delete any.
+- **Attachments.** **Attach** adds files to the card, and the comment box can attach files to a comment. Images pasted or dropped into the description become attachments and show inline. Attachments never appear in Files; they are readable by the people who can open the board, and only while the card and your access last. Removing an attachment from its last card moves it to your Bin.
+- **Phones.** A board shows one column at a time: swipe sideways, or tap a column in the strip above it, which also shows how many cards each column holds. Back returns to the same column.
+- **Limits.** 50 boards per owner, 20 columns and 1000 cards per board, 500 comments and 50 attachments per card, 10 attachments per comment.
+
 ## Bin
 
-Deleting a note or a file moves it to the shared **Bin** (Home → Bin, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists only your own deleted items, newest first, with the days left for each; filter by notes or files.
+Deleting a note, a file, a card, or a board moves it to the shared **Bin** (Home → Bin, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists your own deleted items, newest first, with the days left for each; filter by notes, files, or tasks.
+
+- **Cards and boards.** A deleted board is listed for its owner. A deleted card is listed for the board's owner and for the person who deleted it (while they can still open the board); either can restore it, but only the owner can delete it forever. A restored card returns to the bottom of its column, or of the first column if its column was deleted. A card on a deleted board can be restored only after the board. Deleting a card or a board from Tasks offers **Undo** in the toast.
+- **Attachments.** When a card or board is deleted forever, or a file is removed from the last card that used it, the file moves to its uploader's Bin, labelled as a card attachment. Restoring it puts it in Files, in your Default folder.
 
 - **What is kept:** everything. A binned note keeps its draft, published versions, and files on disk; a binned file keeps its bytes. Sharing is kept too, so restoring an item gives its previous audience access again. While an item is in the Bin nobody can read it, including its owner outside the Bin and MCP clients.
 - **Restore** puts an item back in its original folder, or in your Default folder if the original was deleted. The toast names the folder and says when the item is shared again (a Default folder shared with others widens its audience).

@@ -144,6 +144,25 @@ Full-text search over notes (WAVES_7-9.md §2) uses an SQLite FTS5 table that st
 
 **UI.** `src/search/` provides `useNoteSearch` (300 ms debounce, starts at 2 characters, aborts the previous request, re-runs only when notes are added, removed, or moved, not on autosave refreshes, and keeps results on screen meanwhile) and `SearchResults` (a listbox driven from the search input with `aria-activedescendant`). While a request is in flight or failed, the note list falls back to the instant title filter.
 
+## Task Boards
+
+Kanban boards (WAVES_7-9.md §3 with the director's §7 review), migration 009: `boards`, `board_members`, `board_columns`, `cards`, `card_comments`, `card_attachments`, and `documents.purpose` (`file`, `task_attachment`, `collection_attachment`). Code lives in `server/tasks/`:
+
+- `access.ts`: `readableBoardPredicate` (owner, `all_users`, or a member row on a `selected` board; never a binned board) and the readable column and card lookups that join every id to its board.
+- `service.ts`: boards, sharing, columns, and cards. `routes.ts` is a thin JSON adapter, so Wave 8 MCP tools can call the same functions.
+- `boardOrder.ts`: pure ordering. The server computes `position REAL` from an anchor: the neighbours' midpoint, last + 1024 at the bottom, or half the first at the top, and renumbers the column (or the column list) to 1024, 2048, … when a gap would drop below 1e-6. Clients never send positions.
+- `comments.ts`, `attachments.ts`, `bin.ts`: comments, attachment links, and the Bin adapters.
+
+**Roles (D38, D39).** Readers of a board create, edit, move, comment on, and bin cards and attach their own files. The owner alone renames the board, manages columns and sharing, deletes it, and purges. Non-readers get 404; readers calling an owner-only action get 403 `OWNER_ONLY`.
+
+**Concurrency.** Every write to a board runs under `withResourceLock("board:<id>")` and re-checks access inside the lock. Card edits compare-and-swap on `revision` (409 `CARD_CHANGED` returns the current card); moves take an `afterCardId` that must be a live card in the target column, or 409 `STALE_POSITION` returns that column's order.
+
+**Attachments.** An attachment is a document uploaded with `POST /api/files?purpose=task_attachment`: owned by the uploader, `folder_id = NULL`, never listed in Files, counted in the quota. Linking needs a live attachment the caller owns (and, for a comment, the caller's own comment). `readableDocument` and `readableDocumentSummary` also admit readers of a board whose live card links the live document; lists never do. When a document loses its last link (unlink, comment delete, card or board purge) it moves to its uploader's Bin with `deleted_by` = the actor. Restoring such a document turns it into a Files item in the owner's folder or Default.
+
+**Bin (D41).** Deleting a card or board sets its Bin columns. A binned board is listed for its owner; a binned card for the board owner and for its deleter while they can still open the board. Restore is a compare-and-swap under the board lock: a card returns to the bottom of its column, or of the first column when that is gone, and a card on a binned board is refused with 409 `BOARD_IN_BIN`. Purge (owner, Empty Bin, or the sweeper after 30 days) tombstones and deletes the row in one transaction, since there are no bytes; cascades remove columns, cards, comments, members, and links.
+
+**Audit.** `task.board_*`, `task.column_*`, `task.card_*`, `task.comment_*`, and `task.attachment_*` events record ids only.
+
 ## API surface
 
 All `/api` routes except health, about, login, and register need a session. Mutations need an allowed `Origin`, `X-CSRF-Token`, and a JSON body (except the upload). With `TOTP_POLICY=required`, a user without a factor can reach only logout and the TOTP status, setup, and enable routes.
@@ -157,29 +176,32 @@ All `/api` routes except health, about, login, and register need a session. Muta
 - **Folders:** `GET/POST /api/folders`, `PATCH/DELETE /api/folders/:id`, `GET/PUT /api/folders/:id/sharing`
 - **Notes:** `GET/POST /api/notes`, `GET/PATCH/DELETE /api/notes/:id`, `PUT/DELETE /api/notes/:id/draft`, `POST /api/notes/:id/publish`, `GET /api/notes/:id/versions`, `GET /api/notes/:id/versions/:version`, `POST /api/notes/:id/versions/:version/restore`, `GET/PUT /api/notes/:id/sharing`
 - **Files:** `POST /api/files?folderId=` (multipart upload), `GET /api/files?folderId=`, `GET/PATCH/DELETE /api/files/:id`, `GET/HEAD /api/files/:id/content`, `GET/PUT /api/files/:id/sharing`
-- **Bin:** `GET /api/bin?type=note|document`, `POST /api/bin/:type/:id/restore`, `DELETE /api/bin/:type/:id`, `DELETE /api/bin`
+- **Files** also accept `?purpose=task_attachment` on upload (no folder; readable to a board only once linked to a card).
+- **Tasks:** `GET/POST /api/tasks/boards`, `GET/PATCH/DELETE /api/tasks/boards/:id`, `GET/PUT /api/tasks/boards/:id/sharing`, `POST /api/tasks/boards/:id/columns`, `PATCH/DELETE /api/tasks/columns/:id`, `POST /api/tasks/boards/:id/cards`, `GET/PATCH/DELETE /api/tasks/cards/:id`, `POST /api/tasks/cards/:id/move`, `GET/POST /api/tasks/cards/:id/comments`, `PATCH/DELETE /api/tasks/comments/:id`, `POST /api/tasks/cards/:id/attachments`, `DELETE /api/tasks/cards/:id/attachments/:documentId`
+- **Bin:** `GET /api/bin?type=note|document|card|board`, `POST /api/bin/:type/:id/restore`, `DELETE /api/bin/:type/:id`, `DELETE /api/bin`
 - **Search:** `GET /api/search?q=&scope=notes&folder=all|shared|<uuid>&limit=20`
 - **MCP:** `/mcp` (outside `/api`): Streamable HTTP with a `Bearer` API key, `Host` and `Origin` checks, a failed-auth rate limit, and bounded bodies. Tools: `list_notes` and `read_note`, over the latest published versions the key owner can read. Drafts, documents, and binned items are excluded.
 
-Any other `/api` path returns a JSON 404. In production every other path serves the SPA's `index.html`. Request and response shapes for Files, Bin, and Search are in [docs/plan/API_CONTRACTS.md](plan/API_CONTRACTS.md).
+Any other `/api` path returns a JSON 404. In production every other path serves the SPA's `index.html`. Request and response shapes for Files, Bin, Search, and Tasks are in [docs/plan/API_CONTRACTS.md](plan/API_CONTRACTS.md).
 
 ## UI
 
 ### Apps
 
-After sign-in, Home (`src/AppShell.tsx`) offers Notes, Files, and Bin. Notes uses a collapsible folder rail, note list, and editor; Files a folder rail, file list, upload queue, and preview/details pane; the Bin a single list. At 760 px and below each app becomes a sequence of full-width panels (Notes: folders → list → editor; Files: folders → files → preview).
+After sign-in, Home (`src/AppShell.tsx`) offers Notes, Files, Tasks, and Bin. Notes uses a collapsible folder rail, note list, and editor; Files a folder rail, file list, upload queue, and preview/details pane; Tasks (`src/tasks/`) a board list and a board of 280 px columns with drag and drop (`application/x-mynotes-card`, a UUID only), Alt+Arrow moves, and a card dialog; the Bin a single list. At 760 px and below each app becomes a sequence of full-width panels (Notes: folders → list → editor; Files: folders → files → preview); a board shows one column at a time on an x-mandatory scroll-snap track synced to a sticky tab strip.
 
 Tiptap provides an Outline-like block editor with Markdown serialization, keyboard shortcuts, a bubble toolbar, and `/` commands. `/image` and paste/drop upload PNG, JPEG, GIF, or WebP through `POST /api/files` into the note's folder and embed `/api/files/<id>/content?disposition=inline`; the image is kept only if the server's sniffed kind agrees, and image sources other than this app's content URLs are dropped. Images therefore follow the folder's sharing, not a note-level override. `/table` uses the Tiptap table extensions and round-trips GitHub-flavoured pipe tables. Download as PDF uses print CSS and `window.print()`.
 
 ### URL routing and history
 
-`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, and `/bin`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
+`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, `/tasks`, `/tasks/:boardId`, `/tasks/:boardId/card/:cardId`, and `/bin`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
 
 History state layers hints over the URL:
 
 - `mynotes.app-shell`: the app section, tied to the user id.
 - `mynotes.mobile-navigation` and `mynotes.files-navigation`: the phone panel (and, for Files, the folder a file was opened from), so Back steps between panels.
 - `mynotes.notes-search`: the Notes search query and scope an entry showed, tied to the user id. The query never enters the URL. On phones the first search from a list entry pushes one same-URL entry, and later edits replace it, so Back from a note returns to the results and Back from the results closes the search. Every Notes entry written while a search is active carries it, and entering an entry without it clears the search.
+- `mynotes.tasks-navigation`: the column a board showed on a phone, tied to the user and board and updated with `replaceState`, so swiping adds no entries and Back/Forward return to the same column. A card is a view with its own entry (Back closes it); the dialogs inside it push nothing.
 - `mynotes.depth`: how many entries the app has pushed below the current one. In-app Back calls `history.back()` only when depth > 0, otherwise it changes the panel in place, so it never leaves the site from a first entry.
 
 Leaving a note by any route change runs `finalizeOpenNote` (remove a blank never-published note, or save and publish a changed draft) with the editor locked; on failure the URL stays on the note. Deep links resume the named note or file; unreadable ids fall back to the list with a toast. A signed-out deep link is kept in memory through login. A failed first workspace load retries on the next route change.

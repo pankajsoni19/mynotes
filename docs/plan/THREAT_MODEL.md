@@ -76,6 +76,19 @@ These are the rows T28–T31 of [WAVES_7-9.md](WAVES_7-9.md) §5, numbered T29�
 | T31 | **The index outlives an unshare, edit, or purge** | Access is evaluated live at query time, so unsharing applies at once (test). Index rows are written in the same transaction as the note change. Purge cascades to `note_search_rows` and a trigger removes the FTS row (migration and API tests). Boot reconcile repairs missing or stale rows from checksum-verified files and removes orphans. | Required |
 | T32 | **Note text is duplicated in SQLite; BM25 statistics span all users** | The copy lives in `mynotes.sqlite` on the same disk, with the same permissions, and in the same backups as the Markdown files. Scores are never returned; only the order within a caller's own readable results is visible. | Accepted |
 
+### Task Boards (Wave 9)
+
+Rows T39–T44 of [WAVES_7-9.md](WAVES_7-9.md) §5 (T33–T38 belong to Wave 8, MCP coverage).
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T39 | **IDOR across boards**: a column, card, comment, or anchor id from board A used through board B | Every path id is joined to a board the caller can read (`readableBoardPredicate` in `server/tasks/access.ts`); body ids (`columnId`, `afterCardId`, `afterColumnId`, `commentId`) must belong to the same board or card. Moves never leave the card's board, and a foreign anchor is a 409 `STALE_POSITION`. Non-readers get 404, members calling owner-only actions 403 `OWNER_ONLY` (tests for the full matrix and for a user who can read both boards). | Required |
+| T40 | **An attachment stays reachable after a membership change** | Board access is evaluated live inside `readableDocument*` only (never lists): a link from a live card on a live, readable board. Removing a member, binning the card or board, deleting the comment, or unlinking ends access at once (tests). No copies are made; content keeps `Cache-Control: private, no-store`. | Required |
+| T41 | **Linking someone else's document** to expose it through a board | Only a live `purpose = 'task_attachment'` document owned by the caller can be linked, through the caller's own comment if one is named; Files documents cannot be linked at all (tests return 404). | Required |
+| T42 | **XSS through card Markdown** | Descriptions render through the read-only notes renderer (D44): raw HTML stays text, images other than this app's `/api/files/<id>/content` URLs are dropped (no `data:` or external sources), and unsafe link protocols render with an empty `href` (fixture tests). Comments are plain text. The global CSP is unchanged. | Required |
+| T43 | **Vandalism on an `all_users` board** | Only allowlisted accounts sign in; every change is audited with ids; binned cards restore; only the owner deletes forever. | Accepted |
+| T44 | **Resource exhaustion or comment spoofing** | Caps (50 boards per owner, 20 columns and 1000 live cards per board, 500 comments and 50 attachments per card, 10 per comment, bounded text), server-computed positions renumbered under the board lock, uploads within the quota, and the comment author is always the session user. | Required |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

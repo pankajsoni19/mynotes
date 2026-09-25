@@ -194,6 +194,42 @@ Manual QA (desktop and 390×844, two users):
 - [ ] 390×844: one column at a time with swipe snapping, the tab strip follows and taps scroll; the column survives Back/Forward and reload; Move sheet is full-screen; every target is at least 44 px; no horizontal page scroll.
 - [ ] Back: card URL → board → list → Home; Back with a dialog or sheet open only closes it.
 
+## Wave 9: Task Boards, stages B–D (comments, attachments, Bin)
+
+Unit tests (no server):
+
+- [x] `tests/cardMarkdown.test.ts`: XSS fixtures for card descriptions through the notes renderer: `<script>`, `<img onerror>`, `<a href="javascript:">`, `<iframe>`, and `<svg onload>` stay plain text; `data:`, external, protocol-relative, `javascript:`, and malformed file images are dropped; `javascript:` and `data:` links render with an empty `href`.
+- [x] `tests/tasksApp.test.tsx`: attachments group by comment, removal is for the linker or the owner, inline images are PNG/JPEG/GIF/WebP only, confirm copy names the right Bin, comment body limits.
+- [x] `tests/binFormat.test.ts`: the Tasks filter, card/board/attachment labels, and restore toasts.
+
+`tests/tasksComments.test.ts`:
+
+- [x] Readers comment as the session user (a spoofed author field is 400); validation; only the author edits (403 `AUTHOR_ONLY`), the author or board owner deletes, strangers get 404; binned cards and revoked members get 404; pages of 50 with a `before` cursor; the 500-comment cap; audit ids only.
+
+`tests/tasksAttachments.test.ts`:
+
+- [x] Attachment uploads have no folder, are never listed in Files, and only `task_attachment` is accepted (with no `folderId`).
+- [x] Linking needs the caller's own live attachment (someone else's, a Files document, or a stranger → 404); linking again is 200; linked files are readable to board readers with `no-store` and never listed.
+- [x] Access ends at once when the member is removed, the card is binned, or the comment is deleted; a deleted comment's file moves to its uploader's Bin.
+- [x] Comment attachments are the author's own files on their own comment; caps of 10 per comment and 50 per card.
+- [x] Unlinking is for the linker or the board owner (403 `LINKER_ONLY`); the last unlink moves the file to the Bin, an earlier one does not; a binned file cannot be linked again. Audit ids only.
+
+`tests/tasksBin.test.ts` and `tests/bin.test.ts`:
+
+- [x] A binned card is listed for the board owner and its deleter only (and not after the deleter loses access); `type=card|board` filters; Bin rows carry `board_id`, `board_name`, `attachment`, and `can_purge`.
+- [x] Restore by the deleter or owner returns the card to the bottom of its column, or to the first column when its column was deleted; `alreadyRestored`; cards on a binned board return 409 `BOARD_IN_BIN` until the board is restored.
+- [x] Only the board owner deletes forever (403 `OWNER_ONLY` for the deleter, 409 `NOT_IN_BIN` for live items); card and board purges cascade comments, cards, and links and move unused attachments to their uploader's Bin; a restored attachment becomes a Files item.
+- [x] Empty Bin clears the owner's boards and the binned cards on their boards, never cards on other people's boards; the sweeper purges expired cards and boards and keeps fresh ones.
+
+Manual QA (desktop and 390×844, two users):
+
+- [ ] Click a card: the URL gains `/card/<id>`, Back closes the card and focuses it on the board, Forward reopens it; Back with the delete-comment or remove-attachment confirm open only closes the confirm.
+- [ ] Edit the title (saves on blur) and the description (explicit Save); with a second user saving first, the conflict banner offers Reload and Copy my text.
+- [ ] Comments: post, edit, delete; Load earlier after 50; the owner deletes a member's comment.
+- [ ] Attach files to the card and to a comment; paste an image into the description (it shows inline and appears under Attachments); the member sees and downloads them; after removing the member from the board, the file URL is 404 for them; none of it appears in Files.
+- [ ] Delete a card from its dialog and a board from the list or header: the confirm reads like Files, the toast's Undo restores it. In the Bin, the Tasks filter shows both; restoring a card on a deleted board asks to restore the board first; the deleter of a card on someone else's board sees Restore but not Delete forever.
+- [ ] 390×844: the card view is full screen with 44 px targets; the Move sheet and confirms are reachable; no horizontal page scroll.
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.
