@@ -4,7 +4,7 @@ This guide covers the apps a signed-in user sees. For installing, configuring, b
 
 ## Home and URLs
 
-Signing in lands on **Home**, which links to Notes, Files, and the Bin; each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
+Signing in lands on **Home**, which links to Notes, Files, Tasks, Collections, and the Bin; each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
 
 | URL | View |
 | --- | --- |
@@ -17,6 +17,10 @@ Signing in lands on **Home**, which links to Notes, Files, and the Bin; each app
 | `/files/folder/<folder-id>` | Files in one folder |
 | `/files/shared` | Files shared with you |
 | `/files/<file-id>` | One file's preview and details |
+| `/collections` | Collections: yours and those shared with you |
+| `/collections/<collection-id>` | One collection's table (a card list on phones) |
+| `/collections/<collection-id>/view/<view-id>` | A saved view of a collection |
+| `/collections/<collection-id>/row/<row-id>` | One row (a side pane on desktop, a full screen on phones) |
 | `/bin` | Bin |
 
 Unknown paths open Home. A link to a note or file you cannot read (or that is missing or in the Bin) falls back to the list with a message. On phones, Back steps from the editor or preview to the list, then to the folders, then to Home, without leaving the site; with a dialog or sheet open, Back only closes it.
@@ -69,9 +73,27 @@ Files lists documents in the same folders as your notes. Each app shows only its
 
 Nook does **not** strip EXIF or other embedded metadata (for example GPS location or author) from uploaded images or PDFs. Remove it before uploading if you plan to share the file.
 
+## Collections
+
+Collections are typed tables for anything you track: a home inventory, subscriptions, expenses, recipes, contacts. Open them from Home → **Collections**.
+
+- **New collection.** Start blank (a Name and a Notes field) or from a template: Home inventory, Subscriptions, Expenses, Recipes, or Contacts. A template is copied, so changing your collection never changes the template. **Create and import CSV** starts the import right away.
+- **Fields.** The owner edits fields with **Fields**: up to 50, each a text, number (with decimals and a unit), date, checkbox, select, multi-select, link (`http` or `https`), note, or files field. The first field is the row's title everywhere and is always text. Fields can be renamed, reordered, made required, and given options with colours. A text field can become a link and back, and a select can become a multi-select; other type changes are refused. Removing a field hides its values at once; each row drops them the next time it changes.
+- **Rows.** On desktop, edit cells in place: a change saves when you leave the cell (Enter saves, Escape reverts). Multi-line text, notes, and files open the row. On phones the list shows each row's title and up to three more values; tap a row for a full-screen editor. If someone else changed the row since you loaded it, your edit is not saved and the row offers **Reload**. Up to 10,000 rows per collection.
+- **Undo.** Each row keeps its previous values. **⋯ → Undo last change** restores them once (fields removed since stay removed). The same menu has **Copy link** and **Move to Bin**.
+- **Find, sort, and filter.** **Find rows** matches text and link fields. **Sort & filter** sorts by up to 3 fields (empty values last) and filters by up to 10 conditions that must all match, and chooses which fields are shown.
+- **Saved views.** The owner can **Save as view** from the sort and filter sheet. Views appear as chips above the rows (up to 20), have their own URL, and can be updated, renamed, or deleted by the owner. Everyone with access can use them.
+- **Sharing.** The owner shares a collection with selected people or everyone signed in, and chooses one role for all of them: **View only** (read and export) or **Can edit rows** (add, change, undo, and delete rows, attach files). Only the owner changes fields, views, and sharing, or deletes the collection. Viewers see "View only" and no editors.
+- **Notes in rows.** A note field links a note you can read. Linking never shares the note: people who cannot read it see "Restricted note", never its title.
+- **Attachments.** In a files field, **Attach files** uploads files for the row (up to 20 per row). They count towards your storage quota but never appear in Files; they are readable by everyone who can open the row, and nobody else. Removing a file from its last row moves it to the uploader's Bin; an upload that was never attached is binned after a day.
+- **Search.** The search box on the Collections page finds rows in every collection you can open, by title, text, links, numbers, dates, and option labels (not note titles or file names). Back from a result returns to the results.
+- **CSV import.** **Import CSV** takes a file up to 2 MB with a header row and up to 5000 rows of up to 50 columns. Columns are matched to fields by name, and you can remap or skip them. **Check** lists every problem first; the import adds all rows or none. Options match by label (several separated by `;`), and checkboxes accept yes/no, true/false, or 1/0.
+- **CSV export.** **Export CSV** downloads the rows and fields of the current view as UTF-8 for spreadsheets. Text that a spreadsheet would run as a formula (starting with `=`, `+`, `-`, `@`, or a tab) is prefixed with `'`; importing the file again removes it.
+- **Bin.** Deleted rows and collections go to the Bin for 30 days. A row is listed for the collection owner and for whoever deleted it; either can restore it while they can still edit the collection, but only the owner deletes it forever. A row whose collection is itself in the Bin can be restored only after the collection.
+
 ## Bin
 
-Deleting a note or a file moves it to the shared **Bin** (Home → Bin, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists only your own deleted items, newest first, with the days left for each; filter by notes or files.
+Deleting a note or a file moves it to the shared **Bin** (Home → Bin, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists only your own deleted items, newest first, with the days left for each; filter by notes, files, or collections (collections and their rows; see [Collections](#collections) for who sees a binned row).
 
 - **What is kept:** everything. A binned note keeps its draft, published versions, and files on disk; a binned file keeps its bytes. Sharing is kept too, so restoring an item gives its previous audience access again. While an item is in the Bin nobody can read it, including its owner outside the Bin and MCP clients.
 - **Restore** puts an item back in its original folder, or in your Default folder if the original was deleted. The toast names the folder and says when the item is shared again (a Default folder shared with others widens its audience).

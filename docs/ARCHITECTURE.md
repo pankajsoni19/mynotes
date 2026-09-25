@@ -27,6 +27,7 @@ Database changes live in ordered files under `server/migrations`. Startup runs e
 | 005 | `mcp-api-keys` | hashed MCP API keys with prefix, name, and revocation |
 | 006 | `documents` | `documents` and `document_shares`, Bin columns on documents, per-owner `upload_key` for idempotency |
 | 007 | `bin` | `deleted_by`, `purge_after`, `purge_started_at` on notes and Bin indexes; backfills previously soft-deleted notes (published ones get 30 days from the upgrade, never-published ones are due at once) |
+| 012 | `collections` | collections, members, rows (values JSON, revision, one-step undo), saved views, row attachment links, and the row search mapping and FTS tables (see [Collections](#collections)) |
 
 Notes and documents share one folder tree and one access rule. An item is readable when it is live (`deleted_at IS NULL`) and one of these holds:
 
@@ -163,6 +164,31 @@ All `/api` routes except health, about, login, and register need a session. Muta
 
 Any other `/api` path returns a JSON 404. In production every other path serves the SPA's `index.html`. Request and response shapes for Files, Bin, and Search are in [docs/plan/API_CONTRACTS.md](plan/API_CONTRACTS.md).
 
+## Collections
+
+Typed tables (WAVES_10-12.md §3), in `server/collections/` with routes under `/api/collections` (API_CONTRACTS.md § Collections). Migration 012 adds:
+
+| Table | Holds |
+| --- | --- |
+| `collections` | owner, name, icon, `schema_json` (≤ 64 KiB) and `schema_version`, `visibility` and one audience `share_role` (`viewer`/`editor`), Bin columns |
+| `collection_members` | recipients of a `selected` collection |
+| `collection_rows` | `values_json` keyed by field id (≤ 16 KiB), `position`, `revision`, and the one-step undo pair `prev_values_json`/`prev_revision`; `updated_via_key_id` is reserved for MCP writes; Bin columns |
+| `collection_views` | saved views: name and `config_json` (sort, filters, hidden fields; ≤ 8 KiB) |
+| `collection_row_attachments` | `(row_id, document_id, field_id, linked_by)` links to documents |
+| `collection_row_search`, `collection_row_fts` | the row search index (below) |
+
+**Modules.** `schema.ts` is pure: strict zod field input (no prototype keys), server-generated ids (`f_` + 8, `o_` + 6), the allowed type changes (text ↔ url, select → multi_select), strict value validation for writes, and lenient `readValues` for reads, which projects stored values onto the current schema so removed fields and options read as empty and drop out on the next write. `templates.ts` holds the five built-in templates as static data. `access.ts` holds `readableCollectionPredicate` and `editableCollectionPredicate` and joins every path id (row, view) to its collection. `service.ts` holds every operation (routes are thin adapters, and the Stage E MCP tools will call the same functions); writes run under the `collection:<id>` resource lock and audit ids and counts only. `bin.ts` registers collections and rows as Bin providers (`registerBinProvider` in `server/bin.ts`), `search.ts` the index, `csv.ts` the in-house RFC 4180 parser and writer, `importExport.ts` import and export, and `sweep.ts` the never-linked attachment sweep.
+
+**Query builder.** `query.ts` compiles `{ sort ≤ 3, filters ≤ 10, q }` against the schema: each field type has an enumerated operator list, field ids must exist in the schema (strict for requests, lenient for saved views whose fields were removed since), and every value and JSON path is bound (`json_extract(r.values_json, ?)` with `$.f_…`). Wrong JSON types never match comparisons and sort with the empty values. Paging is an opaque offset cursor bound to a hash of the spec and to `schema_version` (409 `SCHEMA_CHANGED` after a field change). There are no generated columns; the 10,000-row cap bounds a scan.
+
+**Concurrency.** Row writes use a compare-and-swap on `revision` (409 `ROW_CHANGED` with the current row). A patch keeps the previous values for one undo. Schema changes use a CAS on `schema_version`; rows are never rewritten.
+
+**Attachments.** Uploads with `?purpose=collection_attachment` have `folder_id = NULL` and never appear in Files lists; Files routes (rename, move, sharing) refuse them, and folder or sharing access never applies to them. `readableDocument*` (only) also admits readers of a live row in a live collection that links the document, so unsharing, binning, and unlinking take effect at once. Losing the last link, a purge, or 24 hours without any link moves a `collection_attachment` upload to its uploader's Bin.
+
+**Search index.** `collection_row_search` maps an FTS rowid to a row with the `source_revision` and `schema_version` it was built from (`ON DELETE CASCADE` from rows; a trigger removes the FTS row). The title is the primary field and the body the other text, url, number, and date values and option labels; note titles and file names are never indexed. Rows are indexed in the transaction that writes them, a schema change reindexes its collection in the schema transaction, and boot runs `reconcileCollectionSearchIndex()` after the notes reconcile to rebuild missing or stale entries and drop orphans. `GET /api/search?scope=collections` applies the collection access rule inside the query, before `LIMIT`, and returns segments as notes search does.
+
+**Bin.** Collections are listed for their owner; rows for the collection owner and their deleter, who may restore while they can still edit (a row in a binned collection returns `PARENT_IN_BIN`). Only the owner purges. A purge is one SQLite transaction; the sweeper and Empty Bin include both types.
+
 ## UI
 
 ### Apps
@@ -173,13 +199,14 @@ Tiptap provides an Outline-like block editor with Markdown serialization, keyboa
 
 ### URL routing and history
 
-`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, and `/bin`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
+`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, `/collections`, `/collections/:c`, `/collections/:c/view/:v`, `/collections/:c/row/:r`, and `/bin`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
 
 History state layers hints over the URL:
 
 - `mynotes.app-shell`: the app section, tied to the user id.
 - `mynotes.mobile-navigation` and `mynotes.files-navigation`: the phone panel (and, for Files, the folder a file was opened from), so Back steps between panels.
 - `mynotes.notes-search`: the Notes search query and scope an entry showed, tied to the user id. The query never enters the URL. On phones the first search from a list entry pushes one same-URL entry, and later edits replace it, so Back from a note returns to the results and Back from the results closes the search. Every Notes entry written while a search is active carries it, and entering an entry without it clears the search.
+- `mynotes.collections-navigation`: on a Collections row entry, the saved view the row was opened over (the row URL names only the row), so reload and Forward redraw the right table behind the row. `mynotes.collections-search` keeps the row search query on the Collections list entry.
 - `mynotes.depth`: how many entries the app has pushed below the current one. In-app Back calls `history.back()` only when depth > 0, otherwise it changes the panel in place, so it never leaves the site from a first entry.
 
 Leaving a note by any route change runs `finalizeOpenNote` (remove a blank never-published note, or save and publish a changed draft) with the editor locked; on failure the URL stays on the note. Deep links resume the named note or file; unreadable ids fall back to the list with a toast. A signed-out deep link is kept in memory through login. A failed first workspace load retries on the next route change.
