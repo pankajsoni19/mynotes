@@ -203,6 +203,20 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] Schema: ids are generated (`f_` + 8, `o_` + 6) and client-invented ids are refused; `__proto__`/`constructor` keys at any depth are rejected; 51 fields, duplicate names (case-insensitive), a non-text primary field, unknown keys or types, 61-character names, control characters, 101 options, duplicate option labels, and 7 decimals are refused; only text ↔ url and select → multi_select type changes pass; the five templates and the default fields build.
 - [x] Values: text normalisation and the 4000-character cap; number, date (real dates only), checkbox, select, multi_select, url (`http(s)` only), note (readable at write time), and file rules; strict writes (unknown fields, required fields, 16 KiB rows); lenient reads (removed fields and options, wrong types, select → multi_select).
 
+`tests/collectionsQuery.test.ts` (no server; runs the compiled SQL on an in-memory table):
+
+- [x] Every operator family filters correctly (a wrong JSON type never matches a comparison; binned attachments do not count); `q` matches text and url fields; sorts put empty values last and order select fields by option order; unknown fields, mismatched operators, bad values, unsortable types, and a field sorted twice are refused; lenient mode drops stale view clauses; hostile values and field ids never appear in the SQL text; cursors round-trip and reject tampering.
+
+`tests/collectionsApi.test.ts`:
+
+- [x] Create from fields, a template, or the default; templates list; strict schema validation over HTTP (51 fields, duplicate names, client ids, unknown types, `__proto__` bodies, bad icons).
+- [x] A stranger gets 404 on every collection and row route and never sees row text.
+- [x] Rows: bottom/top/after placement and stale anchors; `INVALID_VALUES` with per-field errors; revision CAS (`ROW_CHANGED` carries the row); one-step undo (`NOTHING_TO_UNDO` after); bin; audit metadata never contains values.
+- [x] Schema: `INCOMPATIBLE_TYPE_CHANGE`; version CAS (`SCHEMA_CHANGED`); lenient reads after text → url and select → multi_select; removed values are dropped on the row's next write, and undo does not bring them back.
+- [x] Query: filters, sort, and `q`; cursor paging; a cursor from another spec is `INVALID_CURSOR`, and after a schema change `SCHEMA_CHANGED`; unknown fields, operators, injected ids, and over-limit specs are 400.
+- [x] Note links: only readable notes can be linked; a note binned later reads as `{ id, restricted: true }`.
+- [x] Caps: 100 collections, 10,000 live rows (`LIMIT_REACHED`); CSRF, Origin, and JSON rules.
+
 `tests/migrations.test.ts`:
 
 - [x] Migration 012 adds `collections`, `collection_members`, `collection_rows`, `collection_views`, `collection_row_attachments`, `collection_row_search`, and `collection_row_fts`; name, JSON, share-role, and Bin CHECKs hold; `values_json` is capped at 16,384 bytes; purging a collection cascades to rows, search rows, and (through the trigger) FTS rows.

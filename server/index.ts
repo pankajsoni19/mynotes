@@ -14,6 +14,7 @@ import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
 import { registerSearchRoutes } from "./searchRoutes";
 import { registerTaskRoutes } from "./tasks/routes";
+import { registerCollectionRoutes } from "./collections/routes";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -830,6 +831,7 @@ registerDocumentRoutes(app);
 registerBinRoutes(app);
 registerSearchRoutes(app);
 registerTaskRoutes(app);
+registerCollectionRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);

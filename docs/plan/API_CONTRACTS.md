@@ -376,6 +376,68 @@ A row's values JSON is at most 16,384 bytes. Required fields must be set on crea
 
 **Templates** (`GET /templates`): `inventory`, `subscriptions`, `expenses`, `recipes`, `contacts`. A template's fields are copied into the new collection with fresh ids.
 
+### Roles
+
+A collection's readers are its owner, its members when `visibility = 'selected'`, and every user when `visibility = 'all_users'`. The audience has one role, `share_role` (`viewer` or `editor`, D54): editors create, edit, undo, and bin rows. Only the owner edits the name, icon, schema, views, and sharing, and deletes. A caller who cannot read the collection gets **404** on every route (path ids are always joined to their collection); a viewer writing a row gets **403** `READ_ONLY`; a non-owner calling an owner-only route gets **403** `OWNER_ONLY`. Binned collections and rows are unreadable for everyone.
+
+**Caps** (409 `LIMIT_REACHED`): 100 live collections per owner, 10,000 live rows per collection, 20 views per collection, 20 attachments per row.
+
+```ts
+type CollectionSummary = {
+  id: string; name: string /* 1–120 */; icon: string /* [a-z0-9-]{1,32} */;
+  owner_id: string; owner_name: string; is_owner: 0 | 1;
+  role: "owner" | "editor" | "viewer";
+  visibility: Visibility; share_role: "viewer" | "editor";
+  row_count: number; field_count: number; template_id: string | null;
+  created_at: string; updated_at: string;
+};
+type CollectionDetail = CollectionSummary & { fields: FieldDefinition[]; schema_version: number };
+type NoteLink = { id: string; title: string } | { id: string; restricted: true };
+type RowSummary = {
+  id: string; collection_id: string; position: number;
+  title: string;                          // the primary field's text
+  values: Record<string, FieldValue>;     // lenient read against the current schema
+  links: Record<string, NoteLink>;        // note fields, resolved for the caller (never an unreadable title)
+  revision: number; can_undo: boolean;
+  created_by: string | null; created_by_name: string | null; updated_by_name: string | null;
+  updated_via_key_id: string | null;      // set by MCP writes (Stage E)
+  created_at: string; updated_at: string;
+};
+```
+
+### Collections and rows
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /` | any | 200 `{ collections: CollectionSummary[] }`: owned first, then shared, each by name (limit 500) | |
+| `GET /templates` | any | 200 `{ templates: [{ id, name, icon, description, fields: [{ name, type }] }] }` | |
+| `POST / { name, icon?, templateId?, fields? }` | any | 201 `{ collection: CollectionDetail }`. Neither `templateId` nor `fields` gives Name + Notes. | 400 (`INVALID_SCHEMA`, unknown template, both given), 409 `LIMIT_REACHED` |
+| `GET /:c` | reader | 200 `{ collection, role, views }` | 404 |
+| `PATCH /:c { name?, icon? }` | owner | 200 `{ collection }` | 400, 403, 404 |
+| `DELETE /:c` | owner | 200 `{ ok: true, purgeAfter }`: to the Bin with its rows | 403, 404 |
+| `PUT /:c/schema { fields: FieldInput[], schemaVersion }` | owner | 200 `{ collection }` with `schema_version + 1` | 400 `INVALID_SCHEMA` / `INCOMPATIBLE_TYPE_CHANGE`, 403, 404, 409 `{ code: "SCHEMA_CHANGED", collection }` |
+| `POST /:c/query { viewId?, sort?, filters?, q?, cursor?, limit? }` | reader | 200 `{ rows: RowSummary[], nextCursor: string \| null, schemaVersion, total }` | 400 `INVALID_QUERY` / `INVALID_CURSOR`, 404, 409 `SCHEMA_CHANGED` |
+| `POST /:c/rows { values, afterRowId? }` | editor | 201 `{ row }`. Omitted `afterRowId` = bottom, `null` = top. | 400 `INVALID_VALUES`, 403 `READ_ONLY`, 404 (collection, or an anchor not in it), 409 `LIMIT_REACHED` |
+| `GET /rows/:r` | reader | 200 `{ row, role, schemaVersion }` | 404 |
+| `PATCH /rows/:r { values, revision }` | editor | 200 `{ row }`: `values` is merged; `revision + 1`; the previous values are kept for undo | 400, 403, 404, 409 `{ code: "ROW_CHANGED", row }` |
+| `POST /rows/:r/undo { revision }` | editor | 200 `{ row }`: the previous values, projected onto the current schema; undo is one step | 403, 404, 409 `ROW_CHANGED` or `NOTHING_TO_UNDO` |
+| `DELETE /rows/:r` | editor | 200 `{ ok: true, purgeAfter }`: to the Bin | 403, 404 |
+
+**Query** (D56, T54). `sort` ≤ 3 `{ fieldId, direction: "asc" | "desc" }` (text, url, number, date, checkbox, and select fields; select sorts by option order; empty values last); `filters` ≤ 10 `{ fieldId, op, value? }`, AND-ed; `q` ≤ 200 characters matches any text or url field (case-insensitive substring); `limit` 1–100 (default 50). Field ids are checked against the schema, operators are enumerated, and JSON paths are bound as parameters. With `viewId`, the view's sort and filters apply unless the request gives its own; view clauses that name removed fields are dropped.
+
+| Types | Operators and `value` |
+| --- | --- |
+| text, url | `contains` / `equals` (non-empty string), `empty`, `not_empty` |
+| number, date | `eq`, `lt`, `lte`, `gt`, `gte` (a number, or `YYYY-MM-DD`), `empty` |
+| checkbox | `is` (boolean) |
+| select | `is`, `is_not` (an option id), `in` (1–20 option ids) |
+| multi_select | `has_any`, `has_all` (1–20 option ids) |
+| note, file | `empty`, `not_empty` |
+
+`nextCursor` is opaque: an offset bound to the spec and to `schema_version`. A cursor from another spec is 400 `INVALID_CURSOR`; after a schema change it is 409 `SCHEMA_CHANGED`. Offsets stop at 10,000.
+
+**Audit** (ids and counts only, never values or names): `collection.create { collectionId, fieldCount, templateId? }`, `collection.update`, `collection.delete`, `collection.schema_update { collectionId, fieldCount }`, `collection.row_create`, `collection.row_update { collectionId, rowId, fieldCount }`, `collection.row_undo`, `collection.row_delete`.
+
 ## Changes to existing note endpoints (Wave 4)
 
 - `DELETE /api/notes/:id`:
