@@ -138,3 +138,37 @@ export function cardAttachmentIds(where: { cardId: string } | { boardId: string 
     : db.query("SELECT ca.document_id FROM card_attachments ca JOIN cards c ON c.id = ca.card_id WHERE c.board_id = ?").all(where.boardId);
   return (rows as Array<{ document_id: string }>).map((row) => row.document_id);
 }
+
+export const UNLINKED_ATTACHMENT_GRACE_MS = 86_400_000;
+export const UNLINKED_ATTACHMENT_BATCH = 100;
+
+/**
+ * Sweeper step: task attachments that were uploaded but never linked (a failed link, a cap, a
+ * dropped connection, files picked for a comment that was never posted) would stay live, hidden,
+ * and counted in the quota forever. After 24 hours they move to their uploader's Bin, 100 per run.
+ * `deleted_by` stays NULL: no user removed them.
+ */
+export function sweepUnlinkedAttachments(options: { nowMs?: number } = {}) {
+  const nowMs = options.nowMs ?? Date.now();
+  const cutoff = new Date(nowMs - UNLINKED_ATTACHMENT_GRACE_MS).toISOString();
+  const rows = db.query(`SELECT d.id FROM documents d
+    WHERE d.purpose = 'task_attachment' AND d.deleted_at IS NULL AND d.created_at < ?
+      AND NOT EXISTS (SELECT 1 FROM card_attachments ca WHERE ca.document_id = d.id)
+    ORDER BY d.created_at LIMIT ?`).all(cutoff, UNLINKED_ATTACHMENT_BATCH) as Array<{ id: string }>;
+  if (!rows.length) return 0;
+  const deletedAt = new Date(nowMs);
+  const purgeAfter = purgeAfterFrom(deletedAt);
+  const bin = db.query(`UPDATE documents SET deleted_at = ?, deleted_by = NULL, purge_after = ?
+    WHERE id = ? AND purpose = 'task_attachment' AND deleted_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM card_attachments ca WHERE ca.document_id = documents.id)`);
+  let binned = 0;
+  db.transaction(() => {
+    for (const { id } of rows) {
+      if (bin.run(deletedAt.toISOString(), purgeAfter, id).changes) {
+        binned += 1;
+        audit(null, null, "document.delete", { documentId: id, reason: "attachment_never_linked" });
+      }
+    }
+  })();
+  return binned;
+}

@@ -194,3 +194,51 @@ describe("card attachments", () => {
     expect(JSON.parse(events[0]!.metadata_json)).toEqual({ boardId, cardId, documentId: document.id });
   });
 });
+
+describe("never-linked attachments", () => {
+  test("the sweeper bins task attachments with no link after 24 hours, in batches of 100", async () => {
+    const { runSweep } = await import("../server/sweeper");
+    const { sweepUnlinkedAttachments } = await import("../server/tasks/attachments");
+    const { owner, cardId } = await setup("Unlinked sweep");
+    const stale = await uploadAttachment(owner, "stale.png");
+    const fresh = await uploadAttachment(owner, "fresh.png");
+    const linked = await uploadAttachment(owner, "linked.png");
+    await call(owner, "POST", `/cards/${cardId}/attachments`, { documentId: linked.id });
+    const filesResponse = await upload(owner, "", "plain.txt", "plain");
+    const plainFile = ((await filesResponse.json()) as { document: { id: string } }).document;
+    const old = new Date(Date.now() - 25 * 3_600_000).toISOString();
+    for (const id of [stale.id, linked.id, plainFile.id]) db.query("UPDATE documents SET created_at = ? WHERE id = ?").run(old, id);
+
+    await runSweep();
+    expect(deletedAt(stale.id)).toBeTruthy();
+    expect((db.query("SELECT deleted_by FROM documents WHERE id = ?").get(stale.id) as { deleted_by: string | null }).deleted_by).toBeNull();
+    expect(deletedAt(fresh.id)).toBeNull();
+    expect(deletedAt(linked.id)).toBeNull();
+    expect(deletedAt(plainFile.id)).toBeNull();
+    const bin = (await (await request("/bin", {}, owner)).json()) as { items: Array<{ id: string; attachment: boolean }> };
+    expect(bin.items.find((item) => item.id === stale.id)).toMatchObject({ attachment: true });
+    // With an injected clock a day later, the fresh one goes too.
+    expect(sweepUnlinkedAttachments({ nowMs: Date.now() + 25 * 3_600_000 })).toBeGreaterThanOrEqual(1);
+    expect(deletedAt(fresh.id)).toBeTruthy();
+    const event = db.query("SELECT actor_id, metadata_json FROM audit_log WHERE event_type = 'document.delete' AND metadata_json LIKE ?").get(`%${stale.id}%`) as { actor_id: string | null; metadata_json: string };
+    expect(event.actor_id).toBeNull();
+    expect(JSON.parse(event.metadata_json)).toEqual({ documentId: stale.id, reason: "attachment_never_linked" });
+  });
+
+  test("one run bins at most 100", async () => {
+    const { sweepUnlinkedAttachments } = await import("../server/tasks/attachments");
+    const owner = await createUser("Unlinked batch");
+    const old = new Date(Date.now() - 48 * 3_600_000).toISOString();
+    const insert = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, purpose, created_at, updated_at)
+      VALUES (?, ?, NULL, 'f.bin', 'application/octet-stream', 'none', 1, ?, 'task_attachment', ?, ?)`);
+    db.transaction(() => { for (let index = 0; index < 105; index += 1) insert.run(crypto.randomUUID(), owner.userId, "0".repeat(64), old, old); })();
+    // Other tests may leave their own stale rows; only this owner's are counted.
+    let runs = 0;
+    const live = () => (db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ? AND deleted_at IS NULL").get(owner.userId) as { count: number }).count;
+    expect(sweepUnlinkedAttachments()).toBeLessThanOrEqual(100);
+    runs += 1;
+    while (live() > 0 && runs < 5) { sweepUnlinkedAttachments(); runs += 1; }
+    expect(live()).toBe(0);
+    expect(runs).toBeGreaterThanOrEqual(2);
+  });
+});
