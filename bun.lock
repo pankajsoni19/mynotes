@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "mynotes",
+      "name": "nook",
       "dependencies": {
         "@modelcontextprotocol/server": "2.0.0",
         "@tiptap/core": "3.31.3",

@@ -1,4 +1,4 @@
-# MyNotes Claude Code handoff
+# Nook Claude Code handoff
 
 Use this file as the entry point for continuing development in Claude Code. The detailed architecture, security invariants, API contracts, and acceptance tests are already tracked in:
 

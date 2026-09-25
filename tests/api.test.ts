@@ -83,7 +83,7 @@ describe("authorization and version workflow", () => {
     expect(initialized.status).toBe(200);
     expect(initialized.headers.get("cache-control")).toContain("no-store");
     expect(initialized.headers.get("vary")).toContain("Authorization");
-    expect(await initialized.text()).toContain("mynotes");
+    expect(await initialized.text()).toContain("\"nook\"");
 
     const hostileOrigin = await fetch(`${origin}/mcp`, {
       method: "POST",
@@ -140,7 +140,7 @@ describe("authorization and version workflow", () => {
     expect(setupResponse.status).toBe(200);
     const setup = await setupResponse.json() as { secret: string; uri: string };
     expect(setup.uri).toContain("otpauth://totp/");
-    expect(setup.uri).toContain("issuer=MyNotes");
+    expect(setup.uri).toContain("issuer=Nook");
 
     const stored = db.query("SELECT totp_secret FROM users WHERE id = ?").get(owner.userId) as { totp_secret: string };
     expect(stored.totp_secret.startsWith("v1:")).toBe(true);

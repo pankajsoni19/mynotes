@@ -540,7 +540,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   }
 
   // Same contract as the Notes Back button: step back through entries this visit pushed, otherwise
-  // switch panels in place so the in-app Back never leaves MyNotes.
+  // switch panels in place so the in-app Back never leaves Nook.
   function back(fallback: FilesPanel) {
     if (isMobileViewport() && readHistoryDepth(window.history.state) > 0 && readFilesHistorySnapshot(window.history.state, userId)) {
       window.history.back();
@@ -608,7 +608,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   return <main className={`workspace files-workspace${collapsed ? " nav-collapsed" : ""}${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
     <aside className="folder-pane" id="file-folders">
       <header className="sidebar-header">
-        <button className="sidebar-brand sidebar-home-button" onClick={() => leaveFiles(onHome)} aria-label="Open MyNotes home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Files</strong></span></button>
+        <button className="sidebar-brand sidebar-home-button" onClick={() => leaveFiles(onHome)} aria-label="Open Nook home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Files</strong></span></button>
         <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="file-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
       </header>
       <nav className="folder-nav" aria-label="File folders">

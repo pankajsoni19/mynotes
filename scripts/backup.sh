@@ -62,7 +62,7 @@ fi
 
 lock_dir="${BACKUP_DIR}/.backup.lock"
 if ! mkdir -- "${lock_dir}" 2>/dev/null; then
-  echo "Another MyNotes backup is already running." >&2
+  echo "Another Nook backup is already running." >&2
   exit 1
 fi
 
@@ -79,7 +79,7 @@ cleanup() {
   rmdir -- "${lock_dir}" 2>/dev/null || true
   if [[ "${app_was_running}" == true && "${app_was_stopped}" == true ]]; then
     compose up -d app >/dev/null || {
-      echo "WARNING: backup finished but the MyNotes service could not be restarted." >&2
+      echo "WARNING: backup finished but the Nook service could not be restarted." >&2
       status=1
     }
   fi
