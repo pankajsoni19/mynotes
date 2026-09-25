@@ -64,6 +64,8 @@ type BinItem = {
 
 `POST /api/files?folderId=<uuid>`. If `folderId` is omitted, the file goes to the caller's Default folder.
 
+`purpose` (Wave 9, migration 009): every document has `documents.purpose` = `file` (default), `task_attachment`, or `collection_attachment` (reserved for Wave 11). Until Task Boards stage C, the only accepted value of the optional `?purpose=` parameter is `file`; any other value returns 400 `{ error: "Invalid request", details }`.
+
 The request body is `multipart/form-data` with **exactly one** part, named `file`. The part's `filename` parameter becomes the display name after sanitization (DEVELOPMENT_PLAN §6.4). The part's `Content-Type` is ignored for classification.
 
 Optional headers:
@@ -96,7 +98,7 @@ Audit: `document.upload { documentId, size, mimeType }`. The filename is never l
 
 ### List
 
-`GET /api/files?folderId=<uuid>` lists live documents the caller can read, ordered by `updated_at DESC`, with a limit of 500. The `folderId` filter matches `documents.folder_id`.
+`GET /api/files?folderId=<uuid>` lists live documents the caller can read, ordered by `updated_at DESC`, with a limit of 500. The `folderId` filter matches `documents.folder_id`. Only `purpose = 'file'` documents are listed: attachments never appear in Files, not even for their uploader, and they are left out of `GET /api/bin?type=document` (they still count toward the storage quota).
 
 200 → `{ documents: DocumentSummary[] }`
 

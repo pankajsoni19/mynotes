@@ -1108,3 +1108,44 @@ describe("upload body lifecycle", () => {
     }
   });
 });
+
+describe("document purpose", () => {
+  test("attachments (purpose other than file) never appear in Files lists or the Files Bin filter", async () => {
+    const owner = await createUser("Purpose owner");
+    const folderId = defaultFolderOf(owner.userId);
+    const kept = await uploadOk(owner, "a Files item", "kept.txt");
+    const timestamp = now();
+    const insert = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose, deleted_at, purge_after)
+      VALUES (?, ?, ?, ?, 'image/png', 'image', 1, ?, ?, ?, ?, ?, ?)`);
+    const attachmentId = crypto.randomUUID();
+    const foldered = crypto.randomUUID();
+    const binned = crypto.randomUUID();
+    insert.run(attachmentId, owner.userId, null, "attachment.png", "0".repeat(64), timestamp, timestamp, "task_attachment", null, null);
+    // Even a stray attachment with a folder stays out of Files.
+    insert.run(foldered, owner.userId, folderId, "collection.png", "0".repeat(64), timestamp, timestamp, "collection_attachment", null, null);
+    insert.run(binned, owner.userId, null, "binned.png", "0".repeat(64), timestamp, timestamp, "task_attachment", timestamp, timestamp);
+
+    const all = (await (await request("/files", {}, owner)).json()) as { documents: Array<{ id: string; is_owner: number }> };
+    // Other tests share documents with all users; only this owner's own rows matter here.
+    expect(all.documents.filter((document) => document.is_owner === 1).map((document) => document.id)).toEqual([kept.id]);
+    const inFolder = (await (await request(`/files?folderId=${folderId}`, {}, owner)).json()) as { documents: Array<{ id: string }> };
+    expect(inFolder.documents.map((document) => document.id)).toEqual([kept.id]);
+    const binFiles = (await (await request("/bin?type=document", {}, owner)).json()) as { items: Array<{ id: string }> };
+    expect(binFiles.items.map((item) => item.id)).not.toContain(binned);
+  });
+
+  test("uploads reject any purpose other than file for now", async () => {
+    const owner = await createUser("Purpose uploader");
+    const form = () => {
+      const body = new FormData();
+      body.append("file", new Blob(["x"]), "x.txt");
+      return body;
+    };
+    for (const purpose of ["task_attachment", "collection_attachment", "system", ""]) {
+      const response = await request(`/files?purpose=${purpose}`, { method: "POST", body: form() }, owner);
+      expect(response.status).toBe(400);
+    }
+    expect((await request("/files?purpose=file", { method: "POST", body: form() }, owner)).status).toBe(201);
+    expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?").get(owner.userId)).toEqual({ count: 1 });
+  });
+});

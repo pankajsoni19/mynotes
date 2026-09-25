@@ -63,6 +63,7 @@ export type DocumentRow = {
   visibility: "private" | "selected" | "all_users";
   sharing_override: number;
   upload_key: string | null;
+  purpose: "file" | "task_attachment" | "collection_attachment";
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

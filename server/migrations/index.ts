@@ -7,8 +7,9 @@ import { mcpApiKeysMigration } from "./005_mcp_api_keys";
 import { documentsMigration } from "./006_documents";
 import { binMigration } from "./007_bin";
 import { noteSearchMigration } from "./008_note_search";
+import { taskBoardsMigration } from "./009_task_boards";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration];
 
 export function runMigrations(db: Database) {
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");

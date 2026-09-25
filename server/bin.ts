@@ -179,7 +179,8 @@ export function listBin(ownerId: string, type: BinType | null) {
       d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging
     FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
     WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
-  const source = type === "note" ? notes : type === "document" ? documents : `${notes} UNION ALL ${documents}`;
+  // The Files filter shows Files items only; attachments appear under All (WAVES_7-9.md §7).
+  const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'` : `${notes} UNION ALL ${documents}`;
   const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
     .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging"> & { purging: number }>;
   return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1 }));

@@ -219,6 +219,9 @@ function uploadResponse(c: Context<AppEnv>, document: DocumentSummary, replay: b
 
 async function handleUpload(c: Context<AppEnv>) {
   const userId = c.get("user").id;
+  // Attachment uploads (?purpose=task_attachment) arrive with Task Boards stage C.
+  const purpose = c.req.query("purpose");
+  if (purpose !== undefined && purpose !== "file") return c.json({ error: "Invalid request", details: ["purpose must be file"] }, 400);
   const folderParam = c.req.query("folderId");
   const folderId = folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
   if (!ownsFolder(folderId, userId)) return c.json({ error: "Folder not found" }, 404);

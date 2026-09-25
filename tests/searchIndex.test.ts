@@ -139,7 +139,7 @@ describe("search index sync", () => {
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     const result = JSON.parse(output) as Record<string, unknown>;
     expect(result).toMatchObject({
-      migrations: [1, 2, 3, 4, 5, 6, 7, 8],
+      migrations: [1, 2, 3, 4, 5, 6, 7, 8, 9],
       rows: ["binned:published", "both:draft", "both:published", "draftOnly:draft", "published:published"],
       checksumsMatch: true,
       aardvark: ["published:published"],

@@ -76,8 +76,13 @@ export function readableDocumentSummary(documentId: string, userId: string) {
   return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readablePredicate}`).get({ documentId, userId }) as DocumentSummary | null;
 }
 
+/**
+ * The Files list. Only `purpose = 'file'` documents are listed: task and
+ * collection attachments never appear in Files (WAVES_7-9.md §7), even for
+ * their uploader.
+ */
 export function listReadableDocuments(userId: string, folderId: string | null) {
-  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND ($folderId IS NULL OR d.folder_id = $folderId) ORDER BY d.updated_at DESC LIMIT 500`)
+  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND d.purpose = 'file' AND ($folderId IS NULL OR d.folder_id = $folderId) ORDER BY d.updated_at DESC LIMIT 500`)
     .all({ userId, folderId }) as DocumentSummary[];
 }
 

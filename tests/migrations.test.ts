@@ -7,6 +7,7 @@ import { totpRecoveryCodesMigration } from "../server/migrations/004_totp_recove
 import { mcpApiKeysMigration } from "../server/migrations/005_mcp_api_keys";
 import { documentsMigration } from "../server/migrations/006_documents";
 import { binMigration } from "../server/migrations/007_bin";
+import { noteSearchMigration } from "../server/migrations/008_note_search";
 import { runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
@@ -18,15 +19,15 @@ function openDb() {
 }
 
 describe("database migrations", () => {
-  test("a fresh database contains migrations 1 through 8", () => {
+  test("a fresh database contains migrations 1 through 9", () => {
     const db = openDb();
     runMigrations(db);
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     db.close();
   });
 
-  test("a v0.2.2-shaped database upgrades cleanly to migration 8", () => {
+  test("a v0.2.2-shaped database upgrades cleanly to migration 9", () => {
     const db = openDb();
     db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
     for (const migration of legacyMigrations) {
@@ -42,7 +43,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect((db.query("SELECT COUNT(*) AS count FROM notes").get() as { count: number }).count).toBe(2);
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'document%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
     expect(tables).toEqual(["document_shares", "documents"]);
@@ -77,7 +78,7 @@ describe("database migrations", () => {
     const after = Date.now();
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const rows = Object.fromEntries((db.query("SELECT id, deleted_at, deleted_by, purge_after, purge_started_at FROM notes").all() as Array<{
       id: string; deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null;
     }>).map((row) => [row.id, row]));
@@ -110,7 +111,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     // Migration 008 is filesystem-free: existing notes are backfilled at boot, not here.
     expect((db.query("SELECT COUNT(*) AS count FROM note_search_rows").get() as { count: number }).count).toBe(0);
 
@@ -133,6 +134,65 @@ describe("database migrations", () => {
     expect((db.query("SELECT COUNT(*) AS count FROM note_fts").get() as { count: number }).count).toBe(1);
     expect((db.query("SELECT COUNT(*) AS count FROM note_fts WHERE note_fts MATCH ?").get('"cafe"') as { count: number }).count).toBe(0);
     expect((db.query("SELECT COUNT(*) AS count FROM note_fts WHERE note_fts MATCH ?").get('"other"') as { count: number }).count).toBe(1);
+    db.close();
+  });
+  test("a v0.5.0-shaped database upgrades cleanly to migration 9 with task tables and documents.purpose", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u2', 'member@example.test', 'Member', 'x', ?)").run(old);
+    db.query("INSERT INTO folders (id, owner_id, parent_id, name, is_default, created_at, updated_at) VALUES ('f1', 'u1', NULL, 'Default', 1, ?, ?)").run(old, old);
+    db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at)
+      VALUES ('d1', 'u1', 'f1', 'a.txt', 'text/plain', 'text', 1, ?, ?, ?)`).run("a".repeat(64), old, old);
+
+    runMigrations(db);
+
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    // Existing documents are Files items.
+    expect((db.query("SELECT purpose FROM documents WHERE id = 'd1'").get() as { purpose: string }).purpose).toBe("file");
+    const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
+      VALUES (?, 'u1', NULL, 'b.png', 'image/png', 'image', 1, ?, ?, ?, ?)`);
+    insertDocument.run("d2", "b".repeat(64), old, old, "task_attachment");
+    insertDocument.run("d3", "b".repeat(64), old, old, "collection_attachment");
+    expect(() => insertDocument.run("d4", "b".repeat(64), old, old, "system")).toThrow();
+    // No system folder for attachments (director review §7).
+    const folderColumns = (db.query("PRAGMA table_info(folders)").all() as Array<{ name: string }>).map((row) => row.name);
+    expect(folderColumns).not.toContain("system_role");
+
+    const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('boards','board_members','board_columns','cards','card_comments','card_attachments') ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
+    expect(tables).toEqual(["board_columns", "board_members", "boards", "card_attachments", "card_comments", "cards"]);
+
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b1', 'u1', 'Plan', ?, ?)").run(old, old);
+    expect(() => db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b2', 'u1', '', ?, ?)").run(old, old)).toThrow();
+    expect(() => db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at, deleted_at) VALUES ('b3', 'u1', 'Half binned', ?, ?, ?)").run(old, old, old)).toThrow();
+    db.query("INSERT INTO board_members (board_id, user_id, created_at) VALUES ('b1', 'u2', ?)").run(old);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES ('c1', 'b1', 'To do', 1024, ?, ?)").run(old, old);
+    const insertCard = db.query("INSERT INTO cards (id, board_id, column_id, position, title, created_by, created_at, updated_at, deleted_at, purge_after) VALUES (?, 'b1', ?, 1024, ?, 'u1', ?, ?, ?, ?)");
+    insertCard.run("k1", "c1", "First", old, old, null, null);
+    // A live card must have a column; a binned one may lose it.
+    expect(() => insertCard.run("k2", null, "No column", old, old, null, null)).toThrow();
+    insertCard.run("k3", "c1", "Binned", old, old, old, old);
+    db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES ('m1', 'k1', 'u2', 'Hi', ?)").run(old);
+    expect(() => db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES ('m2', 'k1', 'u2', '', ?)").run(old)).toThrow();
+    db.query("INSERT INTO card_attachments (card_id, document_id, comment_id, linked_by, created_at) VALUES ('k1', 'd2', 'm1', 'u2', ?)").run(old);
+
+    expect(() => db.query("DELETE FROM board_columns WHERE id = 'c1'").run()).toThrow();
+    db.query("DELETE FROM cards WHERE id = 'k1'").run();
+    expect((db.query("SELECT COUNT(*) AS count FROM card_comments").get() as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM card_attachments").get() as { count: number }).count).toBe(0);
+    // Unlinking never removes the document itself.
+    expect(db.query("SELECT 1 FROM documents WHERE id = 'd2'").get()).toBeTruthy();
+    db.query("DELETE FROM board_columns WHERE id = 'c1'").run();
+    expect((db.query("SELECT column_id FROM cards WHERE id = 'k3'").get() as { column_id: string | null }).column_id).toBeNull();
+    db.query("DELETE FROM boards WHERE id = 'b1'").run();
+    expect((db.query("SELECT COUNT(*) AS count FROM cards").get() as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM board_members").get() as { count: number }).count).toBe(0);
     db.close();
   });
 });
