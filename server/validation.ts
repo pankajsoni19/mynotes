@@ -45,10 +45,55 @@ export const mcpApiKeySchema = z.object({
   recoveryCode: recoveryCode.optional()
 }).strict().refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
 
+/** Maximum JSON (and MCP) request body, enforced while reading regardless of Content-Length. */
+export const JSON_BODY_LIMIT_BYTES = 2_100_000;
+
+const tooLarge = () => new HTTPException(413, { message: "Request is too large" });
+
+/**
+ * Reads a request body into memory, aborting with 413 as soon as more than
+ * `limit` bytes arrive. A declared Content-Length over the limit is rejected
+ * before anything is read; chunked bodies are counted as they stream.
+ */
+export async function readBoundedBody(request: Request, limit = JSON_BODY_LIMIT_BYTES): Promise<Uint8Array<ArrayBuffer>> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && Number(declared) > limit) throw tooLarge();
+  if (!request.body) return new Uint8Array(new ArrayBuffer(0));
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(new ArrayBuffer(total));
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+/** Returns an equivalent request whose body has been read through `readBoundedBody`. */
+export async function boundedRequest(request: Request, limit = JSON_BODY_LIMIT_BYTES): Promise<Request> {
+  if (request.method === "GET" || request.method === "HEAD" || !request.body) return request;
+  const body = await readBoundedBody(request, limit);
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  return new Request(request.url, { method: request.method, headers, body, signal: request.signal });
+}
+
 export async function parseJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (length > 2_100_000) throw new HTTPException(413, { message: "Request is too large" });
-  return schema.parse(await request.json());
+  const body = await readBoundedBody(request);
+  return schema.parse(JSON.parse(new TextDecoder().decode(body)));
 }
 
 export function deriveNoteTitle(markdown: string) {

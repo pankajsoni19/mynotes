@@ -1,5 +1,15 @@
 import { resolve } from "node:path";
 
+function integerEnv(name: string, fallback: number, min: number, max: number) {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw === "") return fallback;
+  const value = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
 const port = Number(process.env.PORT ?? 2026);
 const dataDir = resolve(process.env.DATA_DIR ?? "/data");
 const appOrigin = process.env.APP_ORIGIN ?? `http://localhost:${port}`;
@@ -48,6 +58,7 @@ export const config = {
   totpEncryptionKey,
   sessionDays: Math.max(1, Number(process.env.SESSION_DAYS ?? 14)),
   maxMarkdownBytes: Math.max(1024, Number(process.env.MAX_MARKDOWN_BYTES ?? 2_000_000)),
+  maxUploadBytes: integerEnv("MAX_UPLOAD_BYTES", 104_857_600, 1_048_576, 2_147_483_648),
   appVersion: process.env.APP_VERSION ?? "0.2.4",
   gitSha: (process.env.GIT_SHA ?? "development").slice(0, 40)
 };

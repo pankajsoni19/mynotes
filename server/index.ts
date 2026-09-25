@@ -14,6 +14,7 @@ import {
   deriveNoteTitle,
   folderSharingSchema,
   folderSchema,
+  JSON_BODY_LIMIT_BYTES,
   loginSchema,
   mcpApiKeySchema,
   noteCreateSchema,
@@ -790,5 +791,6 @@ export default {
   port: config.port,
   hostname: "0.0.0.0",
   fetch: app.fetch,
-  maxRequestBodySize: 2_100_000
+  // Uploads need a larger transport cap; JSON and MCP bodies are bounded separately while reading.
+  maxRequestBodySize: Math.max(config.maxUploadBytes, JSON_BODY_LIMIT_BYTES) + 1_048_576
 };

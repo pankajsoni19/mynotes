@@ -5,7 +5,8 @@ import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, now } from "./db";
 import { readableNote } from "./access";
 import { checksum, storage } from "./storage";
-import { uuid } from "./validation";
+import { HTTPException } from "hono/http-exception";
+import { boundedRequest, uuid } from "./validation";
 
 type McpKeyRow = {
   id: string;
@@ -173,8 +174,15 @@ export async function handleMcpRequest(request: Request) {
   if (activeRequests >= 24) return mcpJsonError("MCP server is busy", 503);
   activeRequests += 1;
   try {
+    let bounded: Request;
+    try {
+      bounded = await boundedRequest(request);
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 413) return mcpJsonError("Request is too large", 413);
+      throw error;
+    }
     const authInfo: AuthInfo = { token, clientId: key.user_id, scopes: ["notes:read"] };
-    const response = await mcpHandler.fetch(request, { authInfo });
+    const response = await mcpHandler.fetch(bounded, { authInfo });
     return mcpResponse(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });
   } finally {
     activeRequests -= 1;
