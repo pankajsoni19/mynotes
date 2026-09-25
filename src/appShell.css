@@ -1,7 +1,11 @@
 .app-home, .app-placeholder { min-height: 100dvh; background: radial-gradient(circle at 82% 0%, #292313 0, #111114 35rem, #09090a 76%); }
 .app-home-header, .app-placeholder-header { height: 76px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(20px, 5vw, 64px); border-bottom: 1px solid rgb(255 255 255 / 7%); }
 .app-home-brand { display: inline-flex; align-items: center; gap: 11px; color: #f4f4f5; }
-.app-home-user { color: #9a9aa1; font-size: .83rem; }
+.app-account { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.app-home-user { min-width: 0; margin-right: 8px; overflow: hidden; color: #9a9aa1; font-size: .83rem; text-overflow: ellipsis; white-space: nowrap; }
+.app-account-button { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 8px 10px; background: transparent; color: #b2b2b8; font-size: .83rem; cursor: pointer; }
+.app-account-button:hover { background: #222225; color: #fff; }
+.app-account-button svg { width: 16px; flex: none; }
 .app-home-content { width: min(1080px, calc(100vw - 40px)); margin: 0 auto; padding: clamp(58px, 10vh, 112px) 0 48px; }
 .app-home-content > h1 { max-width: 760px; margin: 9px 0 12px; color: #fafafa; font-size: clamp(2.2rem, 5vw, 4.4rem); letter-spacing: -.065em; line-height: 1.02; }
 .app-home-content > p { max-width: 590px; margin: 0; color: #a4a4ab; font-size: 1rem; line-height: 1.6; }
@@ -18,6 +22,7 @@
 .app-card-action svg { width: 16px; }
 .app-card-files, .app-card-bin { background: linear-gradient(145deg, #202024, #131315); }
 .app-placeholder-header { justify-content: flex-start; gap: 20px; }
+.app-placeholder-header .app-account { margin-left: auto; }
 .app-home-button { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 9px 10px; background: transparent; color: #b2b2b8; cursor: pointer; }
 .app-home-button:hover { background: #222225; color: #fff; }
 .app-home-button svg { width: 17px; }
@@ -29,5 +34,5 @@
 .app-placeholder-content .primary-button { width: auto; padding: 0 18px; }
 .sidebar-home-button { border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; }
 .sidebar-home-button:hover strong { color: #f5cf79; }
-@media (max-width: 760px) { .app-home-header, .app-placeholder-header { height: 68px; padding: 0 18px; } .app-home-content { width: min(100% - 36px, 540px); padding-top: 54px; } .app-home-content > h1 { font-size: 2.55rem; } .app-card-grid { grid-template-columns: 1fr; margin-top: 40px; } .app-card { min-height: 188px; } .app-card-copy { margin-top: 17px; } .app-placeholder-content { min-height: calc(100dvh - 69px); } }
+@media (max-width: 760px) { .app-home-header, .app-placeholder-header { height: 68px; padding: 0 18px; } .app-placeholder-header { gap: 8px; } .app-home-user { display: none; } .app-account-button { width: 40px; height: 40px; justify-content: center; padding: 0; } .app-account-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .app-home ~ .settings-dialog, .app-placeholder ~ .settings-dialog { bottom: 0; } .app-home ~ .toast, .app-placeholder ~ .toast { bottom: calc(24px + env(safe-area-inset-bottom)); } .app-home-content { width: min(100% - 36px, 540px); padding-top: 54px; } .app-home-content > h1 { font-size: 2.55rem; } .app-card-grid { grid-template-columns: 1fr; margin-top: 40px; } .app-card { min-height: 188px; } .app-card-copy { margin-top: 17px; } .app-placeholder-content { min-height: calc(100dvh - 69px); } }
 @media (prefers-reduced-motion: reduce) { .app-card { transition: none; } }

@@ -1045,6 +1045,16 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   });
 
+  function openSettings() {
+    setPanel(null);
+    setSharingFolder(null);
+    setSettingsOpen(true);
+  }
+
+  function signOut() {
+    logout().catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
+  }
+
   async function logout() {
     await api("/auth/logout", { method: "POST", body: "{}" });
     sessionUserRef.current = null;
@@ -1087,8 +1097,19 @@ export function App() {
     setChecking(false);
   }} />;
 
-  if (activeApp === "home" && !session.totp.setupRequired) return <AppHome displayName={session.user.displayName} onOpen={openApp} />;
-  if ((activeApp === "files" || activeApp === "bin") && !session.totp.setupRequired) return <AppPlaceholder section={activeApp} onHome={() => { void openHome(); }} onOpenNotes={() => openApp("notes")} />;
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+    setSession((current) => current ? { ...current, totp } : current);
+    if (!totp.setupRequired) setSettingsOpen(false);
+  }} />;
+  const toastStatus = toast && <div className="toast" role="status">{toast}</div>;
+  const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
+
+  if (activeApp !== "notes" && !session.totp.setupRequired) return <>
+    {activeApp === "home" ? <AppHome {...account} onOpen={openApp} /> : <AppPlaceholder {...account} section={activeApp} onHome={() => { void openHome(); }} onOpenNotes={() => openApp("notes")} />}
+    {settingsDialog}
+    {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
+    {toastStatus}
+  </>;
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
@@ -1124,11 +1145,11 @@ export function App() {
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
         <footer className="sidebar-footer">
-          <button className="footer-settings" title={session.user.displayName} onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(true); }} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
+          <button className="footer-settings" title={session.user.displayName} onClick={openSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
             <strong>{session.user.displayName}</strong>
             <span><Settings />Settings</span>
           </button>
-          <button className="footer-signout" onClick={logout}><LogOut />Sign out</button>
+          <button className="footer-signout" onClick={signOut}><LogOut />Sign out</button>
         </footer>
       </aside>
 
@@ -1202,14 +1223,11 @@ export function App() {
       {panel === "history" && note && <HistoryPanel note={note} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
       {panel === "share" && note && <SharePanel note={note} onClose={() => setPanel(null)} onChanged={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Sharing updated"); }} />}
       {sharingFolder && <FolderSharePanel folder={sharingFolder} onClose={() => setSharingFolder(null)} onChanged={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder sharing updated"); }} />}
-      {settingsOpen && <SettingsDialog session={session} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
-        setSession((current) => current ? { ...current, totp } : current);
-        if (!totp.setupRequired) setSettingsOpen(false);
-      }} />}
+      {settingsDialog}
       {(panel || sharingFolder || settingsOpen) && (settingsOpen && session.totp.setupRequired
         ? <div className="panel-scrim" aria-hidden="true" />
         : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(false); }} aria-label="Close panel" />)}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {toastStatus}
       <nav className="mobile-tabbar">
         <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => showMobilePanel("folders")}><Menu />Folders</button>
         <button className={mobilePanel === "notes" ? "active" : ""} onClick={() => showMobilePanel("notes")}><Archive />Notes</button>
