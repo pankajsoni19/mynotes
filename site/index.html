@@ -26,7 +26,7 @@
 <body>
   <header class="topbar">
     <a class="wordmark" href="#overview"><span>✦</span><strong>Nook</strong><em>Docs</em></a>
-    <nav class="top-actions"><span class="version">v0.4.1</span><a href="https://github.com/pankajsoni19/nook">GitHub ↗</a><button class="menu-button" aria-label="Open menu" aria-expanded="false">☰</button></nav>
+    <nav class="top-actions"><span class="version">v0.5.0</span><a href="https://github.com/pankajsoni19/nook">GitHub ↗</a><button class="menu-button" aria-label="Open menu" aria-expanded="false">☰</button></nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
@@ -120,7 +120,7 @@ cd nook
 cp .env.example .env
 mkdir -p /srv/mynotes</code></pre><p>Set <code>MYNOTES_DATA_DIR=/srv/mynotes</code>. The directory must be writable by UID 1000.</p></div></article><article><b>2</b><div><h3>Secure trusted accounts</h3><pre><code>ALLOWED_EMAILS=you@example.com,partner@example.com
 TOTP_POLICY=required
-TOTP_ENCRYPTION_KEY=&lt;openssl rand -base64 32&gt;</code></pre><aside class="callout warning"><strong>Keep the encryption key.</strong> It is not included in data backups.</aside></div></article><article><b>3</b><div><h3>Build and start</h3><pre><code>APP_VERSION=0.4.1 GIT_SHA=$(git rev-parse --short HEAD) \
+TOTP_ENCRYPTION_KEY=&lt;openssl rand -base64 32&gt;</code></pre><aside class="callout warning"><strong>Keep the encryption key.</strong> It is not included in data backups.</aside></div></article><article><b>3</b><div><h3>Build and start</h3><pre><code>APP_VERSION=0.5.0 GIT_SHA=$(git rev-parse --short HEAD) \
   docker compose up -d --build</code></pre><p>Open <code>http://localhost:2026</code>. The first account can be created while the database is empty.</p></div></article><article><b>4</b><div><h3>Verify</h3><pre><code>curl http://localhost:2026/api/health
 docker compose ps</code></pre></div></article></div>
         <aside class="callout"><strong>Why “mynotes” in paths?</strong> Internal identifiers such as <code>mynotes.sqlite</code>, the <code>mynotes_session</code> cookie, the <code>mynotes</code> container, <code>MYNOTES_DATA_DIR</code>, and the <code>mynotes-*</code> backup archives keep the original prefix for compatibility with existing installs.</aside>
@@ -144,7 +144,7 @@ docker compose ps</code></pre></div></article></div>
           <tr><td><code>MAX_UPLOAD_BYTES</code></td><td><code>104857600</code> (100 MiB)</td><td>Largest single file; integer from 1 MiB to 2 GiB. JSON bodies stay limited to 2.1 MB.</td></tr>
           <tr><td><code>USER_STORAGE_QUOTA_BYTES</code></td><td><code>10737418240</code> (10 GiB)</td><td>File bytes per user, including the Bin; integer ≥ 0, <code>0</code> is unlimited.</td></tr>
           <tr><td><code>MIN_FREE_DISK_BYTES</code></td><td><code>1073741824</code> (1 GiB)</td><td>Refuse uploads that would leave less free space on the data volume; integer ≥ 0.</td></tr>
-          <tr><td><code>APP_VERSION</code></td><td><code>0.4.1</code></td><td>Build metadata shown in Settings → About and reported by the MCP server.</td></tr>
+          <tr><td><code>APP_VERSION</code></td><td><code>0.5.0</code></td><td>Build metadata shown in Settings → About and reported by the MCP server.</td></tr>
           <tr><td><code>GIT_SHA</code></td><td><code>development</code></td><td>Commit shown in Settings → About (first 40 characters).</td></tr>
         </tbody></table></div>
         <p>Fixed limits: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds, and an hourly sweeper.</p>
@@ -184,7 +184,7 @@ docker compose ps</code></pre><p>Pending migrations run automatically at startup
 docker compose ps
 curl http://localhost:2026/api/health</code></pre></details></div></section>
 
-      <footer><span>Built by <a href="https://github.com/pankajsoni19">Pankaj Soni</a> · <a href="https://github.com/pankajsoni19/nook">Source</a></span><span>Nook v0.4.1</span></footer>
+      <footer><span>Built by <a href="https://github.com/pankajsoni19">Pankaj Soni</a> · <a href="https://github.com/pankajsoni19/nook">Source</a></span><span>Nook v0.5.0</span></footer>
     </main>
   </div>
   <button class="scrim" aria-label="Close menu"></button>
