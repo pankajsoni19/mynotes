@@ -68,17 +68,19 @@ type ConfirmDialogProps = {
   confirmLabel: string;
   danger?: boolean;
   busy?: boolean;
+  /** The action is not possible right now; the message says why. Focus starts on Cancel. */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 };
 
-export function ConfirmDialog({ title, message, confirmLabel, danger = false, busy = false, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ title, message, confirmLabel, danger = false, busy = false, confirmDisabled = false, onConfirm, onCancel }: ConfirmDialogProps) {
   const messageId = useId();
   return <ModalDialog title={title} onClose={onCancel} busy={busy} describedBy={messageId}>
     <p id={messageId} className="file-dialog-copy">{message}</p>
     <footer className="file-dialog-actions">
-      <button className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
-      <button className={danger ? "danger-button" : "primary-button"} onClick={onConfirm} disabled={busy} autoFocus>{busy ? "Working…" : confirmLabel}</button>
+      <button className="secondary-button" onClick={onCancel} disabled={busy} autoFocus={confirmDisabled}>Cancel</button>
+      <button className={danger ? "danger-button" : "primary-button"} onClick={onConfirm} disabled={busy || confirmDisabled} autoFocus={!confirmDisabled}>{busy ? "Working…" : confirmLabel}</button>
     </footer>
   </ModalDialog>;
 }

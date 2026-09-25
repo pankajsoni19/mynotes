@@ -2,7 +2,11 @@ import type { Context, Hono } from "hono";
 import type { AppEnv } from "./auth";
 import { emptyBin, listBin, purgeOwnedItem, restoreItem, type BinListType } from "./bin";
 import { isTaskBinType, purgeTaskItem, restoreTaskItem } from "./tasks/bin";
-import { uuid } from "./validation";
+import { z } from "zod";
+import { readBoundedBody, uuid } from "./validation";
+
+// Optional place for a restored card (Undo remembers its old column and neighbour).
+const cardRestoreSchema = z.object({ columnId: uuid.optional(), afterCardId: uuid.nullable().optional() }).strict();
 
 const isBinType = (value: string | undefined): value is BinListType => value === "note" || value === "document" || value === "card" || value === "board";
 const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: ["type must be note, document, card, or board"] }, 400);
@@ -21,7 +25,9 @@ export function registerBinRoutes(app: Hono<AppEnv>) {
     if (!isBinType(type)) return invalidType(c);
     const id = uuid.parse(c.req.param("id"));
     if (isTaskBinType(type)) {
-      const task = await restoreTaskItem(type, id, c.get("user").id);
+      const raw = new TextDecoder().decode(await readBoundedBody(c.req.raw)).trim();
+      const place = type === "card" && raw ? cardRestoreSchema.parse(JSON.parse(raw)) : {};
+      const task = await restoreTaskItem(type, id, c.get("user").id, place);
       switch (task.status) {
         case "restored":
         case "already_restored":

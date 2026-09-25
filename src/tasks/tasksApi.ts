@@ -121,5 +121,6 @@ export const createCommentWithFiles = (cardId: string, body: string, attachmentI
 
 export const deleteCard = (cardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/cards/${cardId}`, json("DELETE", {}));
 export const deleteBoard = (boardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/boards/${boardId}`, json("DELETE", {}));
-export const restoreTaskItem = (type: "card" | "board", id: string) =>
-  api<{ ok: true; alreadyRestored?: true; boardId: string; boardName: string; columnId: string | null; columnName: string | null }>(`/bin/${type}/${id}/restore`, json("POST", {}));
+/** `place` (cards only) asks for the old column and neighbour; the server falls back to the bottom. */
+export const restoreTaskItem = (type: "card" | "board", id: string, place: { columnId?: string; afterCardId?: string | null } = {}) =>
+  api<{ ok: true; alreadyRestored?: true; boardId: string; boardName: string; columnId: string | null; columnName: string | null }>(`/bin/${type}/${id}/restore`, json("POST", place));

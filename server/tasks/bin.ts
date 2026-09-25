@@ -10,7 +10,8 @@ import { applyRenumber, LIMITS, liveCardsIn, withBoardLock } from "./service";
  * - Listing: a binned board for its owner; a binned card for the board owner and for the member
  *   who deleted it, while that member can still open the board.
  * - Restore: compare-and-swap under the board lock, by the board owner or the card's deleter. A
- *   card whose column was deleted returns to the first column, at the bottom. A card on a binned
+ *   card whose column was deleted returns to the first column, at the bottom; Undo may ask for its
+ *   old column and neighbour, honoured while both are still there. A card on a binned
  *   board is refused with BOARD_IN_BIN.
  * - Purge: board owner only (and the sweeper). Cards and boards have no bytes, so the tombstone and
  *   the delete share one transaction. Attachments that lose their last link move to their
@@ -73,7 +74,10 @@ function columnName(columnId: string | null) {
   return columnId ? (db.query("SELECT name FROM board_columns WHERE id = ?").get(columnId) as { name: string } | null)?.name ?? null : null;
 }
 
-export async function restoreTaskItem(type: TaskBinType, id: string, userId: string): Promise<TaskRestoreOutcome> {
+/** Where a restored card should go: its old column and neighbour, as the Undo toast remembers them. */
+export type CardRestorePlace = { columnId?: string; afterCardId?: string | null };
+
+export async function restoreTaskItem(type: TaskBinType, id: string, userId: string, place: CardRestorePlace = {}): Promise<TaskRestoreOutcome> {
   const boardId = type === "board" ? id : boardOfCard(id);
   if (!boardId) return { status: "not_found" };
   return withBoardLock(boardId, (): TaskRestoreOutcome => {
@@ -99,11 +103,16 @@ export async function restoreTaskItem(type: TaskBinType, id: string, userId: str
     if (card.board_deleted_at) return { status: "board_in_bin" };
     const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(card.board_id) as { count: number }).count;
     if (live >= LIMITS.liveCardsPerBoard) return { status: "limit" };
-    // Its own column if it still exists, otherwise the first one; always at the bottom.
-    const column = (card.column_id ? db.query("SELECT id, name FROM board_columns WHERE id = ? AND board_id = ?").get(card.column_id, card.board_id) : null) as { id: string; name: string } | null
+    // The requested column when it is on this board, else its own column if it still exists, else
+    // the first one. After the requested neighbour when it is still live there, else at the bottom.
+    const boardColumn = (columnId: string | null | undefined) => (columnId ? db.query("SELECT id, name FROM board_columns WHERE id = ? AND board_id = ?").get(columnId, card.board_id) : null) as { id: string; name: string } | null;
+    const requested = boardColumn(place.columnId);
+    const column = requested ?? boardColumn(card.column_id)
       ?? db.query("SELECT id, name FROM board_columns WHERE board_id = ? ORDER BY position, id LIMIT 1").get(card.board_id) as { id: string; name: string } | null;
     if (!column) return { status: "not_found" };
-    const plan = planInsert(liveCardsIn(column.id), undefined)!;
+    const siblings = liveCardsIn(column.id);
+    const anchor = requested && place.afterCardId !== undefined && place.afterCardId !== id ? place.afterCardId : undefined;
+    const plan = planInsert(siblings, anchor) ?? planInsert(siblings, undefined)!;
     return db.transaction((): TaskRestoreOutcome => {
       applyRenumber("cards", plan.renumbered);
       const restored = db.query(`UPDATE cards SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, column_id = ?, position = ?, updated_at = ?

@@ -289,12 +289,16 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
   /** The card dialog asked to bin its card (after its own confirm). */
   async function removeCard(cardId: string) {
     const card = detailRef.current?.cards.find((item) => item.id === cardId);
+    // Remember where it was so Undo can put it back between the same neighbours.
+    const siblings = card ? columnCards(detailRef.current!.cards, card.column_id) : [];
+    const index = siblings.findIndex((item) => item.id === cardId);
+    const place = card ? { columnId: card.column_id, afterCardId: index > 0 ? siblings[index - 1]!.id : null } : {};
     await deleteCard(cardId);
     setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => item.id !== cardId), board: { ...current.board, card_count: Math.max(0, current.board.card_count - 1) } } : current);
     lastOpenCardRef.current = null;
     onCloseCard();
     notify(`Moved “${card?.title ?? "card"}” to the Bin`, { label: "Undo", run: () => {
-      restoreTaskItem("card", cardId).then((result) => {
+      restoreTaskItem("card", cardId, place).then((result) => {
         notify(`Restored to ${result.columnName ?? "the board"}`);
         void load();
       }, (reason) => notify(taskErrorMessage(reason, "Could not restore the card")));
@@ -310,9 +314,10 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       returnFocusRef.current = null;
       notify("Column deleted");
     } catch (reason) {
-      closeDialog();
       const code = taskErrorCode(reason);
-      notify(code === "COLUMN_NOT_EMPTY" ? "Move or delete the cards in this column first" : code === "LAST_COLUMN" ? "A board needs at least one column" : taskErrorMessage(reason, "Could not delete the column"));
+      // Someone added a card meanwhile: stay open; the reload disables Delete and says why.
+      if (code !== "COLUMN_NOT_EMPTY") closeDialog();
+      notify(code === "COLUMN_NOT_EMPTY" ? "This column has cards now. Move or delete them first." : code === "LAST_COLUMN" ? "A board needs at least one column" : taskErrorMessage(reason, "Could not delete the column"));
       void load();
     } finally {
       setDeleting(false);
@@ -418,11 +423,12 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     {dialog?.kind === "deleteColumn" && dialogColumn && <ConfirmDialog
       title="Delete this column?"
       message={columnCards(cards, dialogColumn.id).length
-        ? `“${dialogColumn.name}” still has cards. Move them to another column first.`
+        ? `“${dialogColumn.name}” still has ${cardCountLabel(columnCards(cards, dialogColumn.id).length)}. Move or delete them before deleting the column.`
         : `Delete “${dialogColumn.name}”? This cannot be undone.`}
       confirmLabel="Delete column"
       danger
       busy={deleting}
+      confirmDisabled={columnCards(cards, dialogColumn.id).length > 0}
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}

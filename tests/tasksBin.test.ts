@@ -79,6 +79,40 @@ describe("cards and boards in the Bin", () => {
     expect(first.id).toBeTruthy();
   });
 
+  test("Undo restores a card after its old neighbour, or at the bottom when the anchor is gone", async () => {
+    const { owner, member, boardId, columns, addCard } = await setup("Bin undo");
+    const doing = columns[1]!.id;
+    const titles = async () => ((await tasks(owner, "GET", `/boards/${boardId}`)).body.cards as Array<{ column_id: string; title: string; position: number }>)
+      .filter((item) => item.column_id === doing).sort((a, b) => a.position - b.position).map((item) => item.title);
+    const a = await addCard("A", doing);
+    const b = await addCard("B", doing);
+    await addCard("C", doing);
+    await tasks(member, "DELETE", `/cards/${b.id}`);
+    const back = await call(member, "POST", `/bin/card/${b.id}/restore`, { columnId: doing, afterCardId: a.id });
+    expect(back.body).toMatchObject({ ok: true, columnId: doing });
+    expect(await titles()).toEqual(["A", "B", "C"]);
+
+    // Top of the column.
+    await tasks(member, "DELETE", `/cards/${a.id}`);
+    await call(member, "POST", `/bin/card/${a.id}/restore`, { columnId: doing, afterCardId: null });
+    expect(await titles()).toEqual(["A", "B", "C"]);
+
+    // The neighbour went to the Bin meanwhile: bottom of the column.
+    await tasks(member, "DELETE", `/cards/${b.id}`);
+    await tasks(owner, "DELETE", `/cards/${a.id}`);
+    await call(member, "POST", `/bin/card/${b.id}/restore`, { columnId: doing, afterCardId: a.id });
+    expect(await titles()).toEqual(["C", "B"]);
+
+    // A column from another board is ignored; the card returns to its own column.
+    const foreign = (await tasks(owner, "POST", "/boards", { name: "Elsewhere" })).body.columns[0].id as string;
+    await tasks(member, "DELETE", `/cards/${b.id}`);
+    const kept = await call(member, "POST", `/bin/card/${b.id}/restore`, { columnId: foreign, afterCardId: null });
+    expect(kept.body).toMatchObject({ ok: true, columnId: doing });
+    expect(await titles()).toEqual(["C", "B"]);
+
+    expect((await call(member, "POST", `/bin/card/${b.id}/restore`, { columnId: "nope" })).status).toBe(400);
+  });
+
   test("cards on a binned board return BOARD_IN_BIN until the board is restored", async () => {
     const { owner, member, boardId, addCard } = await setup("Bin board");
     const card = await addCard("On the board");

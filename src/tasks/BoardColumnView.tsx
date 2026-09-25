@@ -42,6 +42,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const others = cards.filter((card) => card.id !== draggingId);
 
   function dragOver(event: ReactDragEvent<HTMLElement>) {
@@ -60,6 +61,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     const check = validateCardTitle(title);
     if (!check.ok) {
       setError(check.error);
@@ -74,6 +76,8 @@ export function BoardColumnView(props: BoardColumnViewProps) {
       setError(reason instanceof Error ? reason.message : "Could not add the card");
     } finally {
       setBusy(false);
+      // Stay in the field so several cards can be added in a row.
+      inputRef.current?.focus();
     }
   }
 
@@ -144,6 +148,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
       {adding
         ? <form className="task-quick-add" onSubmit={submit}>
           <input
+            ref={inputRef}
             autoFocus
             value={title}
             onChange={(event) => { setTitle(event.target.value); setError(null); }}
@@ -152,11 +157,10 @@ export function BoardColumnView(props: BoardColumnViewProps) {
             aria-label={`New card title in ${column.name}`}
             aria-invalid={error ? true : undefined}
             maxLength={200}
-            disabled={busy}
           />
           {error && <p className="file-dialog-error" role="alert">{error}</p>}
           <span className="task-quick-add-actions">
-            <button type="submit" className="primary-button" disabled={busy || !title.trim()}>{busy ? "Adding…" : "Add card"}</button>
+            <button type="submit" className="primary-button" aria-busy={busy || undefined} disabled={!title.trim()}>{busy ? "Adding…" : "Add card"}</button>
             <button type="button" className="secondary-button" onClick={() => { setAdding(false); setTitle(""); setError(null); }}>Done</button>
           </span>
         </form>
