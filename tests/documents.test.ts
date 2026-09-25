@@ -1134,18 +1134,23 @@ describe("document purpose", () => {
     expect(binFiles.items.map((item) => item.id)).not.toContain(binned);
   });
 
-  test("uploads reject any purpose other than file for now", async () => {
+  test("uploads accept only the file and task_attachment purposes", async () => {
     const owner = await createUser("Purpose uploader");
     const form = () => {
       const body = new FormData();
       body.append("file", new Blob(["x"]), "x.txt");
       return body;
     };
-    for (const purpose of ["task_attachment", "collection_attachment", "system", ""]) {
+    // collection_attachment is reserved for Wave 11 and not accepted yet.
+    for (const purpose of ["collection_attachment", "system", ""]) {
       const response = await request(`/files?purpose=${purpose}`, { method: "POST", body: form() }, owner);
       expect(response.status).toBe(400);
     }
     expect((await request("/files?purpose=file", { method: "POST", body: form() }, owner)).status).toBe(201);
-    expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?").get(owner.userId)).toEqual({ count: 1 });
+    expect((await request("/files?purpose=task_attachment", { method: "POST", body: form() }, owner)).status).toBe(201);
+    expect(db.query("SELECT purpose, folder_id IS NULL AS unfiled FROM documents WHERE owner_id = ? ORDER BY purpose").all(owner.userId)).toEqual([
+      { purpose: "file", unfiled: 0 },
+      { purpose: "task_attachment", unfiled: 1 }
+    ]);
   });
 });
