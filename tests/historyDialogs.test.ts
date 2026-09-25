@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { acquireDialogSentinel, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard } from "../src/historyDialogs";
+import { acquireDialogSentinel, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry } from "../src/historyDialogs";
 
 test("a sentinel is pushed only for a phone dialog opened at depth 0", () => {
   expect(needsDialogSentinel(null, { phone: true, active: false })).toBe(true);
@@ -64,4 +64,65 @@ test("Back from the sentinel only closes the dialog, without undoing the move", 
   expect(history.state).toBeNull();
   expect(popStateClosedDialog({ state: null })).toBe(false);
   unregister();
+});
+
+// Like a browser: history.back() only moves (and updates state) when its popstate is delivered.
+function asyncHistory(initial: unknown) {
+  const entries: unknown[] = [initial];
+  let index = 0;
+  let pending = 0;
+  const history = {
+    get state() { return entries[index]; },
+    pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
+    replaceState(state: unknown) { entries[index] = state; },
+    back() { pending += 1; }
+  };
+  const deliver = () => {
+    expect(pending).toBeGreaterThan(0);
+    pending -= 1;
+    index -= 1;
+    return popStateClosedDialog({ state: entries[index] });
+  };
+  return { history, deliver, entries: () => entries.slice(0, index + 1), env: { history: history as unknown as History, href: () => "https://nook.test/", phone: () => true } };
+}
+
+test("a dialog opened before the sentinel's pop lands gets a sentinel once it has", async () => {
+  const { history, deliver, entries, env } = asyncHistory({ route: "home" });
+  const first = acquireDialogSentinel(env);
+  first();
+  await Bun.sleep(5);
+  // history.back() is on its way; the state still reads the old sentinel.
+  expect(isDialogSentinelState(history.state)).toBe(true);
+  const second = acquireDialogSentinel(env);
+  expect(entries()).toHaveLength(2);
+  // The pop lands (ignored), then the new dialog's sentinel is pushed.
+  expect(deliver()).toBe(true);
+  expect(entries()).toEqual([{ route: "home" }, dialogSentinelState({ route: "home" })]);
+  // Back now only closes the second dialog.
+  let open = true;
+  const unregister = registerHistoryDialogGuard(() => { open = false; return false; });
+  history.back();
+  expect(deliver()).toBe(true);
+  expect(open).toBe(false);
+  second();
+  await Bun.sleep(5);
+  expect(entries()).toEqual([{ route: "home" }]);
+  unregister();
+});
+
+test("an in-app navigation from the sentinel replaces it instead of stacking on it", async () => {
+  const { history, entries, env } = asyncHistory({ route: "home", "mynotes.depth": 0 });
+  const release = acquireDialogSentinel(env);
+  expect(takeDialogSentinelEntry({ route: "home" })).toBe(false);
+  // The app's navigation asks first, then replaces the sentinel at its depth.
+  expect(takeDialogSentinelEntry(history.state)).toBe(true);
+  history.replaceState({ route: "note", "mynotes.depth": 1 });
+  expect(entries()).toEqual([{ route: "home", "mynotes.depth": 0 }, { route: "note", "mynotes.depth": 1 }]);
+  // Asked again (or with no sentinel held), it is an ordinary push.
+  expect(takeDialogSentinelEntry(history.state)).toBe(false);
+  release();
+  await Bun.sleep(5);
+  // Closing the dialog pops nothing: the new route stays.
+  expect(entries()).toHaveLength(2);
+  expect(popStateClosedDialog({ state: history.state })).toBe(false);
 });

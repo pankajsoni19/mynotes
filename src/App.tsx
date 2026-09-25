@@ -52,7 +52,7 @@ import { NotificationSettings } from "./notifications/NotificationSettings";
 import { forgetThisDevice } from "./notifications/pushClient";
 import { carriedCalendarState } from "./calendarNavigation";
 import { calendarHomeRoute, localDate } from "./calendarRoute";
-import { popStateClosedDialog } from "./historyDialogs";
+import { popStateClosedDialog, takeDialogSentinelEntry } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
@@ -631,7 +631,8 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
   if (sameEntry && mode === "push") return;
   const depth = readHistoryDepth(current);
   const state = historyStateFor(userId, route, panel, filesPanel, search);
-  if (mode === "push" && !(samePath && !isMobileViewport())) window.history.pushState(withHistoryDepth(state, depth + 1), "", url);
+  // From a dialog's depth-0 sentinel, the new route takes the sentinel's place instead of stacking on it.
+  if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth(state, depth + 1), "", url);
   else window.history.replaceState(withHistoryDepth(state, depth), "", url);
 }
 

@@ -8,7 +8,9 @@
 // no in-app entry below it, so Back would leave Nook before any popstate could close the dialog.
 // Opening a guarded dialog there pushes one sentinel entry (same URL, depth 1, a `mynotes.dialog`
 // hint); Back pops it and only closes the dialog, and closing the dialog any other way pops it again
-// with history.back(), whose popstate is ignored.
+// with history.back(), whose popstate is ignored. A dialog opened before that popstate lands gets its
+// sentinel once it has (the pop cannot be cancelled), and an in-app navigation from the sentinel
+// replaces it instead of pushing a second entry on top (takeDialogSentinelEntry).
 import { useEffect } from "react";
 import { readHistoryDepth, withHistoryDepth } from "./appShellNavigation";
 import { isMobileViewport } from "./mobileNavigation";
@@ -45,6 +47,7 @@ export function popStateClosedDialog(event: { state?: unknown }) {
   if (ignoring > 0) {
     ignoring -= 1;
     consumed.add(event);
+    if (pendingSentinelPop) resolveSentinelPop();
     return true;
   }
   if (sentinelActive && !isDialogSentinelState(event.state)) {
@@ -79,7 +82,7 @@ function ignoreNextPop() {
   ignoring += 1;
   // A move that never fires popstate must not swallow a later, real one.
   if (ignoreTimer) clearTimeout(ignoreTimer);
-  ignoreTimer = setTimeout(() => { ignoring = 0; ignoreTimer = null; }, 1000);
+  ignoreTimer = setTimeout(() => { ignoring = 0; ignoreTimer = null; pendingSentinelPop = null; }, 1000);
 }
 
 /** Moves back to the dialog's entry and ignores the popstate that move causes. */
@@ -111,24 +114,51 @@ export function dialogSentinelState(state: unknown) {
 }
 
 type SentinelHistory = Pick<History, "state" | "pushState" | "back">;
+type SentinelEnv = { history: SentinelHistory; href: () => string; phone: () => boolean };
 let openDialogs = 0;
 let sentinelActive = false;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+// Set while the history.back() that pops the sentinel has not fired its popstate yet: the env of the
+// release, and whether a dialog opened meanwhile and still wants a sentinel.
+let pendingSentinelPop: { env: SentinelEnv } | null = null;
+
+function pushSentinelIfNeeded(env: SentinelEnv) {
+  if (openDialogs > 0 && needsDialogSentinel(env.history.state, { phone: env.phone(), active: sentinelActive })) {
+    env.history.pushState(dialogSentinelState(env.history.state), "", env.href());
+    sentinelActive = true;
+  }
+}
+
+/** The sentinel's pop landed: a dialog opened while it was on its way gets its own sentinel now. */
+function resolveSentinelPop() {
+  const pending = pendingSentinelPop!;
+  pendingSentinelPop = null;
+  pushSentinelIfNeeded(pending.env);
+}
+
+/**
+ * Called by an in-app navigation about to push an entry. True when the current entry is the dialog
+ * sentinel: the navigation must replace it (keeping its depth) rather than push on top, and the
+ * sentinel is no longer held, so closing the dialog later pops nothing.
+ */
+export function takeDialogSentinelEntry(state: unknown) {
+  if (!sentinelActive || !isDialogSentinelState(state)) return false;
+  sentinelActive = false;
+  return true;
+}
 
 /**
  * Marks a guarded dialog open. The first one opened at depth 0 on a phone pushes the sentinel; the
  * returned release pops it once the last dialog closed by any means other than Back. The pop waits a
  * tick so a dialog that replaces another keeps the same sentinel.
  */
-export function acquireDialogSentinel(env: { history: SentinelHistory; href: () => string; phone: () => boolean } = {
+export function acquireDialogSentinel(env: SentinelEnv = {
   history: window.history, href: () => window.location.href, phone: () => typeof window.matchMedia === "function" && isMobileViewport()
 }) {
   openDialogs += 1;
   if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
-  if (openDialogs === 1 && needsDialogSentinel(env.history.state, { phone: env.phone(), active: sentinelActive })) {
-    env.history.pushState(dialogSentinelState(env.history.state), "", env.href());
-    sentinelActive = true;
-  }
+  // history.state still reads the old sentinel until its pop lands; resolveSentinelPop pushes then.
+  if (openDialogs === 1 && !pendingSentinelPop) pushSentinelIfNeeded(env);
   let released = false;
   return () => {
     if (released) return;
@@ -142,6 +172,7 @@ export function acquireDialogSentinel(env: { history: SentinelHistory; href: () 
       // An in-app navigation pushed past the sentinel: it is an ordinary entry now.
       if (!isDialogSentinelState(env.history.state)) return;
       ignoreNextPop();
+      pendingSentinelPop = { env };
       env.history.back();
     }, 0);
   };
