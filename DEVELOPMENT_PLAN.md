@@ -19,6 +19,8 @@ This is the handoff for the rest of the requested work. A new Claude Code sessio
 - Released migrations are append-only. Never edit `001`–`005`. Once `006` or `007` ships, never edit it either.
 - Do not push, deploy, or tag without explicit operator approval for that specific action.
 - Work through the waves with the sequential worker prompts and gates in §15, one step per fresh session.
+- **Mobile-first with browser history parity (operator rule, 2026-09-25).** Every feature must work at 390 px with ≥44 px targets, and every view, panel, sheet, and item must be reachable and unwindable with the browser/OS Back and Forward (swipe): routes in `src/router.ts` via `navigate`, the `mynotes.depth` counter, panel hints in history state, and the dialog guard in `src/historyDialogs.ts`. Back never leaves the web app until the user is on Home at the first entry.
+- **MCP coverage (operator rule, 2026-09-25).** Every module that stores data adds MCP tools under its own scope pair following the Wave 8 conventions (docs/plan/WAVES_7-9.md §4): tools registered per scope and re-checked in handlers, writes are create/update only (deletes go through the Bin or are omitted), audit `{via:"mcp", keyId}`, per-key rate limits.
 
 ---
 
