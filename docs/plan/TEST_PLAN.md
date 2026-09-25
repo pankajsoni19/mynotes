@@ -234,6 +234,8 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] A Files item the linker owns can be linked, stays in the owner's Files, and is never binned on unlink.
 - [x] Rules: viewers 403 `READ_ONLY`; strangers 404; only the caller's own live `file`/`collection_attachment` documents and only file fields; `ALREADY_ATTACHED`; `NOT_LINKER` for editors removing someone else's link, the owner may; 20 per row.
 - [x] IDOR across rows and collections; `restricted` note links never disclose titles or grant access.
+- [x] Files routes: rename, move, and sharing are 404 for a row attachment; stale sharing rows or a shared folder never make it readable; `DELETE /api/files/:id` is 409 `ATTACHMENT_LINKED` while a row links it and works once unlinked.
+- [x] The sweeper bins `collection_attachment` uploads with no row link after 24 hours (`deleted_by` NULL, audit `attachment_never_linked`) and leaves linked, fresh, and Files documents alone.
 
 `tests/collectionsBin.test.ts`:
 

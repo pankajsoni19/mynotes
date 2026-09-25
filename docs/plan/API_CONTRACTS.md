@@ -469,6 +469,8 @@ Views are listed by `GET /:c` for every reader and used through `POST /:c/query 
 | `DELETE /rows/:r/attachments/:d` | editor who linked it, or the owner | 200 `{ row, documentBinned }` | 403 `READ_ONLY` / `NOT_LINKER`, 404 |
 
 - **Access.** A linked document is readable (`GET /api/files/:id`, `/content`) by anyone who can read a live row that links it in a live collection; the check is live, so unsharing, binning the row or collection, or unlinking ends access at once (T58). This path is OR-ed into `readableDocument*` only, never into lists.
+- **Files routes.** Rename, move, and sharing (`PATCH /api/files/:id`, `GET|PUT /api/files/:id/sharing`) are 404 for any document whose `purpose` is not `file`, and sharing rows or folder access never apply to such documents. `DELETE /api/files/:id` on a row attachment that a row still links is 409 `ATTACHMENT_LINKED`.
+- **Never linked.** The hourly sweeper moves `collection_attachment` uploads with no row link that are older than 24 hours to the uploader's Bin (100 per run, `deleted_by = NULL`, audit reason `attachment_never_linked`).
 - **Lifecycle.** When the last link to a `collection_attachment` document is removed (unlink, or a row or collection purge), the document moves to the uploader's Bin (`deleted_by` = actor). Files items that were linked are never binned. Restoring an attachment from the Bin keeps `folder_id = NULL`.
 - **Notes** in `note` fields never grant access: a note the caller cannot read resolves as `{ id, restricted: true }` (T59).
 - Audit: `collection.row_attach` and `collection.row_detach` with `{ collectionId, rowId, documentId }`; a binned upload adds `document.delete { documentId, reason: "attachment_unlinked" }`.

@@ -132,6 +132,57 @@ describe("row attachments", () => {
     expect([full.status, full.body.code]).toEqual([409, "LIMIT_REACHED"]);
   });
 
+  test("Files routes never rename, move, share, or bin a linked row attachment; sharing rows never widen it", async () => {
+    const { owner, member, collection, row, receipt } = await setup("Files rule");
+    const documentId = await upload(owner, "collection_attachment");
+    const folderId = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
+    const json = (method: string, body: unknown) => ({ method, body: JSON.stringify(body) });
+    expect((await request(`/files/${documentId}`, json("PATCH", { name: "renamed.txt" }), owner)).status).toBe(404);
+    expect((await request(`/files/${documentId}`, json("PATCH", { folderId }), owner)).status).toBe(404);
+    expect((await request(`/files/${documentId}/sharing`, {}, owner)).status).toBe(404);
+    expect((await request(`/files/${documentId}/sharing`, json("PUT", { visibility: "all_users", userIds: [] }), owner)).status).toBe(404);
+    // Sharing rows or a folder set before this rule never make an attachment readable.
+    db.query("UPDATE documents SET sharing_override = 1, visibility = 'all_users' WHERE id = ?").run(documentId);
+    expect(await content(member, documentId)).toBe(404);
+    db.query("UPDATE documents SET sharing_override = 0, visibility = 'private', folder_id = ? WHERE id = ?").run(folderId, documentId);
+    db.query("UPDATE folders SET visibility = 'all_users' WHERE id = ?").run(folderId);
+    expect(await content(member, documentId)).toBe(404);
+    db.query("UPDATE folders SET visibility = 'private' WHERE id = ?").run(folderId);
+    db.query("UPDATE documents SET folder_id = NULL WHERE id = ?").run(documentId);
+    // While a row links it, DELETE /api/files is refused; the owner still reads it.
+    expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id })).status).toBe(201);
+    const linked = await request(`/files/${documentId}`, json("DELETE", {}), owner);
+    expect(linked.status).toBe(409);
+    expect(((await linked.json()) as { code: string }).code).toBe("ATTACHMENT_LINKED");
+    expect(await content(owner, documentId)).toBe(200);
+    await shareCollection(owner, collection.id, "all_users");
+    expect(await content(member, documentId)).toBe(200);
+    // Unlinked (here by the owner through the row), the upload is binned; an unlinked upload can be deleted directly.
+    await call(owner, "DELETE", `/rows/${row.id}/attachments/${documentId}`);
+    const spare = await upload(owner, "collection_attachment");
+    expect((await request(`/files/${spare}`, json("DELETE", {}), owner)).status).toBe(200);
+  });
+
+  test("the sweeper bins uploads that were never linked to a row after 24 hours", async () => {
+    const { owner, row, receipt } = await setup("Sweep unlinked");
+    const { sweepUnlinkedRowAttachments } = await import("../server/collections/sweep");
+    const stale = await upload(owner, "collection_attachment", "stale.txt");
+    const linked = await upload(owner, "collection_attachment", "linked.txt");
+    const fresh = await upload(owner, "collection_attachment", "fresh.txt");
+    const fileItem = await upload(owner, "file", "file.txt");
+    await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: linked, fieldId: receipt.id });
+    const old = new Date(Date.now() - 25 * 3_600_000).toISOString();
+    for (const id of [stale, linked, fileItem]) db.query("UPDATE documents SET created_at = ? WHERE id = ?").run(old, id);
+    expect(sweepUnlinkedRowAttachments()).toBeGreaterThanOrEqual(1);
+    const state = (id: string) => db.query("SELECT deleted_at IS NOT NULL AS binned, deleted_by FROM documents WHERE id = ?").get(id) as { binned: number; deleted_by: string | null };
+    expect(state(stale)).toEqual({ binned: 1, deleted_by: null });
+    expect(state(linked).binned).toBe(0);
+    expect(state(fresh).binned).toBe(0);
+    expect(state(fileItem).binned).toBe(0);
+    const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'document.delete' AND metadata_json LIKE ?").get(`%${stale}%`) as { metadata_json: string };
+    expect(JSON.parse(audit.metadata_json)).toEqual({ documentId: stale, reason: "attachment_never_linked" });
+  });
+
   test("IDOR: attachment routes join the row to a readable collection", async () => {
     const first = await setup("IDOR one");
     const second = await setup("IDOR two");
