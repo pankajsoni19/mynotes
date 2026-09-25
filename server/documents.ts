@@ -3,12 +3,13 @@ import { statfs } from "node:fs/promises";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import busboy from "busboy";
-import type { Context, Hono } from "hono";
+import type { Context, Hono, Next } from "hono";
 import { config } from "./config";
 import { audit, db, ensureDefaultFolder, now } from "./db";
 import type { AppEnv } from "./auth";
-import { listReadableDocuments, ownedDocument, ownedDocumentSummary, readableDocumentSummary, type DocumentSummary } from "./documentAccess";
-import { commitStaged, createStagingFile, discardStaged, removeObject } from "./documentStorage";
+import { contentDisposition, parseRange } from "./contentHeaders";
+import { listReadableDocuments, ownedDocument, ownedDocumentSummary, readableDocument, readableDocumentSummary, type DocumentSummary } from "./documentAccess";
+import { commitStaged, createStagingFile, discardStaged, DocumentIntegrityError, openObjectForRead, removeObject } from "./documentStorage";
 import { SNIFF_BYTES, sniff } from "./mimeSniff";
 import { withResourceLock } from "./storage";
 import { documentPatchSchema, parseJson, sanitizeDisplayName, sharingSchema, uuid } from "./validation";
@@ -264,6 +265,94 @@ async function handleUpload(c: Context<AppEnv>) {
   }
 }
 
+/** Matches exactly the content route, whose security headers are set here instead of by secureHeaders. */
+const contentPath = /^\/api\/files\/[^/]+\/content$/;
+export const isContentRequest = (method: string, path: string) => (method === "GET" || method === "HEAD") && contentPath.test(path);
+
+const SANDBOX_CSP = "default-src 'none'; sandbox";
+const PDF_CSP = "default-src 'none'; frame-ancestors 'none'";
+
+function applyContentSecurityHeaders(headers: Headers, csp = SANDBOX_CSP) {
+  headers.set("Content-Security-Policy", csp);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  headers.set("Cache-Control", "private, no-store");
+}
+
+/**
+ * Stands in for the global secureHeaders middleware on the content route, so
+ * that every response there (including 401/403/404/500 from earlier
+ * middleware) carries the strict header set. The route's own CSP wins.
+ */
+export async function contentRouteSecurityHeaders(c: Context, next: Next) {
+  await next();
+  const csp = c.res.headers.get("Content-Security-Policy") === PDF_CSP ? PDF_CSP : SANDBOX_CSP;
+  applyContentSecurityHeaders(c.res.headers, csp);
+}
+
+function contentError(status: 400 | 404 | 500, error: string) {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  applyContentSecurityHeaders(headers);
+  return new Response(JSON.stringify({ error }), { status, headers });
+}
+
+async function handleContent(c: Context<AppEnv>) {
+  const parsedId = uuid.safeParse(c.req.param("id"));
+  if (!parsedId.success) return contentError(400, "Invalid request");
+  const id = parsedId.data;
+  const document = readableDocument(id, c.get("user").id);
+  if (!document) return contentError(404, "File not found");
+
+  let opened: Awaited<ReturnType<typeof openObjectForRead>>;
+  try {
+    opened = await openObjectForRead(id, document.size_bytes);
+  } catch (error) {
+    const reason = error instanceof DocumentIntegrityError ? error.reason : error instanceof Error ? error.name : "unknown";
+    console.error(`Document content integrity error (${reason}) for document ${id}`);
+    return contentError(500, "Something went wrong");
+  }
+
+  let keepHandle = false;
+  try {
+    const inline = c.req.query("disposition") === "inline" && document.preview_kind !== "none";
+    const etag = `"${document.sha256}"`;
+    const headers = new Headers({
+      "Content-Type": inline ? document.mime_type : "application/octet-stream",
+      "Content-Disposition": contentDisposition(inline ? "inline" : "attachment", document.name),
+      "Accept-Ranges": "bytes",
+      ETag: etag,
+      "Last-Modified": new Date(document.updated_at).toUTCString()
+    });
+    applyContentSecurityHeaders(headers, inline && document.preview_kind === "pdf" ? PDF_CSP : SANDBOX_CSP);
+
+    const size = opened.size;
+    const ifRange = c.req.header("If-Range");
+    const range = ifRange !== undefined && ifRange !== etag ? { kind: "none" as const } : parseRange(c.req.header("Range"), size);
+    if (range.kind === "unsatisfiable") {
+      headers.set("Content-Range", `bytes */${size}`);
+      headers.set("Content-Length", "0");
+      return new Response(null, { status: 416, headers });
+    }
+    const start = range.kind === "range" ? range.start : 0;
+    const end = range.kind === "range" ? range.end : size - 1;
+    const length = size === 0 ? 0 : end - start + 1;
+    const status = range.kind === "range" ? 206 : 200;
+    if (range.kind === "range") headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
+    headers.set("Content-Length", String(length));
+    if (c.req.raw.method === "HEAD" || length === 0) return new Response(null, { status, headers });
+
+    // The read stream owns the handle from here: it closes on end, error, or cancel (client abort).
+    const stream = opened.handle.createReadStream({ start, end, highWaterMark: 65_536 });
+    keepHandle = true;
+    const body = Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>;
+    return new Response(body, { status, headers });
+  } finally {
+    if (!keepHandle) await opened.handle.close();
+  }
+}
+
 const notFound = (c: Context<AppEnv>) => c.json({ error: "File not found" }, 404);
 const withDocumentLock = <T>(id: string, operation: () => Promise<T>) => withResourceLock(`document:${id}`, operation);
 
@@ -274,6 +363,8 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
     const folderId = c.req.query("folderId");
     return c.json({ documents: listReadableDocuments(c.get("user").id, folderId === undefined ? null : uuid.parse(folderId)) });
   });
+
+  app.on(["GET", "HEAD"], "/api/files/:id/content", handleContent);
 
   app.get("/api/files/:id", (c) => {
     const id = uuid.parse(c.req.param("id"));

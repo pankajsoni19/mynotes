@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createUser, dataDir, db, origin, port, request, type Session } from "./support/harness";
 
@@ -663,5 +663,225 @@ describe("document metadata and access", () => {
     expect(JSON.parse(events[3]!.metadata_json)).toEqual({ documentId: document.id, visibility: "all_users", recipientCount: 0 });
     const leaked = db.query("SELECT COUNT(*) AS count FROM audit_log WHERE metadata_json LIKE '%audit-secret%'").get();
     expect(leaked).toEqual({ count: 0 });
+  });
+});
+
+const GLOBAL_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const SANDBOX_CSP = "default-src 'none'; sandbox";
+const content = (session: Session | undefined, id: string, options: { query?: string; headers?: Record<string, string>; method?: string; signal?: AbortSignal } = {}) =>
+  request(`/files/${id}/content${options.query ?? ""}`, { method: options.method ?? "GET", headers: options.headers, signal: options.signal }, session);
+
+function expectStrictHeaders(response: Response, csp = SANDBOX_CSP) {
+  expect(response.headers.get("content-security-policy")).toBe(csp);
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(response.headers.get("x-frame-options")).toBe("DENY");
+  expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+}
+
+function openDescriptorsFor(path: string) {
+  let count = 0;
+  for (const fd of readdirSync("/proc/self/fd")) {
+    try {
+      if (readlinkSync(`/proc/self/fd/${fd}`) === path) count += 1;
+    } catch {
+      // The descriptor closed while listing.
+    }
+  }
+  return count;
+}
+
+describe("document content", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+
+  test("serves authenticated content with the exact header set", async () => {
+    const owner = await createUser("Content owner");
+    const reader = await createUser("Content reader");
+    const unrelated = await createUser("Content unrelated");
+    const document = await uploadOk(owner, png, "Photo été.png");
+    await shareDocument(owner, document.id, "selected", [reader.userId]);
+    const row = db.query("SELECT sha256, updated_at FROM documents WHERE id = ?").get(document.id) as { sha256: string; updated_at: string };
+
+    const download = await content(owner, document.id);
+    expect(download.status).toBe(200);
+    expectStrictHeaders(download);
+    expect(download.headers.get("content-type")).toBe("application/octet-stream");
+    expect(download.headers.get("content-disposition")).toBe(`attachment; filename="Photo _t_.png"; filename*=UTF-8''Photo%20%C3%A9t%C3%A9.png`);
+    // Bun sends streamed bodies chunked and drops Content-Length; when present it must be exact.
+    expect([null, String(png.byteLength)]).toContain(download.headers.get("content-length"));
+    expect(download.headers.get("accept-ranges")).toBe("bytes");
+    expect(download.headers.get("etag")).toBe(`"${row.sha256}"`);
+    expect(download.headers.get("last-modified")).toBe(new Date(row.updated_at).toUTCString());
+    expect(download.headers.get("permissions-policy")).toBeNull();
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(png);
+
+    const inline = await content(reader, document.id, { query: "?disposition=inline" });
+    expect(inline.status).toBe(200);
+    expectStrictHeaders(inline);
+    expect(inline.headers.get("content-type")).toBe("image/png");
+    expect(inline.headers.get("content-disposition")).toStartWith("inline; ");
+    await inline.arrayBuffer();
+
+    expect((await content(unrelated, document.id)).status).toBe(404);
+    const anonymous = await content(undefined, document.id);
+    expect(anonymous.status).toBe(401);
+    expectStrictHeaders(anonymous);
+    const missing = await content(owner, crypto.randomUUID());
+    expect(missing.status).toBe(404);
+    expectStrictHeaders(missing);
+    const malformed = await content(owner, "not-a-uuid");
+    expect(malformed.status).toBe(400);
+    expectStrictHeaders(malformed);
+    expect((await content(owner, document.id, { query: "?disposition=bogus" })).headers.get("content-disposition")).toStartWith("attachment; ");
+  });
+
+  test("keeps the global CSP everywhere else", async () => {
+    const owner = await createUser("Global CSP owner");
+    const document = await uploadOk(owner, "a", "a.txt");
+    for (const response of [
+      await request("/health"),
+      await request("/files", {}, owner),
+      await request(`/files/${document.id}`, {}, owner),
+      await request(`/files/${document.id}/content/extra`, {}, owner),
+      await request(`/files/${document.id}/content`, { method: "POST", body: "{}" }, owner),
+      await fetch(`${origin}/`),
+      await fetch(`${origin}/files/${document.id}`)
+    ]) {
+      expect(response.headers.get("content-security-policy")).toBe(GLOBAL_CSP);
+      expect(response.headers.get("x-frame-options")).toBe("DENY");
+    }
+  });
+
+  test("forces attachment for documents without an inline preview and uses the PDF policy for PDFs", async () => {
+    const owner = await createUser("Disposition owner");
+    const html = await uploadOk(owner, "<!doctype html><script>alert(1)</script>", "page.html", { type: "text/html" });
+    expect(html.preview_kind).toBe("none");
+    const forced = await content(owner, html.id, { query: "?disposition=inline" });
+    expectStrictHeaders(forced);
+    expect(forced.headers.get("content-type")).toBe("application/octet-stream");
+    expect(forced.headers.get("content-disposition")).toStartWith("attachment; ");
+    await forced.arrayBuffer();
+
+    const pdf = await uploadOk(owner, "%PDF-1.7\n%âã\n", "doc.pdf");
+    const inlinePdf = await content(owner, pdf.id, { query: "?disposition=inline" });
+    expectStrictHeaders(inlinePdf, "default-src 'none'; frame-ancestors 'none'");
+    expect(inlinePdf.headers.get("content-type")).toBe("application/pdf");
+    await inlinePdf.arrayBuffer();
+    const pdfDownload = await content(owner, pdf.id);
+    expectStrictHeaders(pdfDownload);
+    await pdfDownload.arrayBuffer();
+
+    const text = await uploadOk(owner, "plain words", "notes.md");
+    const inlineText = await content(owner, text.id, { query: "?disposition=inline" });
+    expect(inlineText.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expectStrictHeaders(inlineText);
+    expect(await inlineText.text()).toBe("plain words");
+  });
+
+  test("supports single byte ranges, If-Range, and HEAD", async () => {
+    const owner = await createUser("Range owner");
+    const body = "0123456789abcdefghij";
+    const document = await uploadOk(owner, body, "range.txt");
+    const etag = `"${(db.query("SELECT sha256 FROM documents WHERE id = ?").get(document.id) as { sha256: string }).sha256}"`;
+    const ranged = async (range: string, extra: Record<string, string> = {}) => {
+      const response = await content(owner, document.id, { headers: { Range: range, ...extra } });
+      return { status: response.status, contentRange: response.headers.get("content-range"), length: response.headers.get("content-length"), body: await response.text(), response };
+    };
+
+    const first = await ranged("bytes=0-9");
+    expect(first).toMatchObject({ status: 206, contentRange: "bytes 0-9/20", body: "0123456789" });
+    expect([null, "10"]).toContain(first.length);
+    expectStrictHeaders(first.response);
+    expect(await ranged("bytes=-5")).toMatchObject({ status: 206, contentRange: "bytes 15-19/20", body: "fghij" });
+    expect(await ranged("bytes=15-")).toMatchObject({ status: 206, contentRange: "bytes 15-19/20", body: "fghij" });
+    expect(await ranged("bytes=18-500")).toMatchObject({ status: 206, contentRange: "bytes 18-19/20", body: "ij" });
+    expect(await ranged("bytes=20-")).toMatchObject({ status: 416, contentRange: "bytes */20", body: "" });
+    expect(await ranged("bytes=-0")).toMatchObject({ status: 416, contentRange: "bytes */20" });
+    expect(await ranged("bytes=0-1,4-5")).toMatchObject({ status: 200, contentRange: null, body });
+    expect(await ranged("items=0-1")).toMatchObject({ status: 200, body });
+    expect(await ranged("bytes=5-2")).toMatchObject({ status: 200, body });
+    expect(await ranged("bytes=0-3", { "If-Range": '"stale"' })).toMatchObject({ status: 200, body });
+    expect(await ranged("bytes=0-3", { "If-Range": new Date().toUTCString() })).toMatchObject({ status: 200, body });
+    expect(await ranged("bytes=0-3", { "If-Range": etag })).toMatchObject({ status: 206, body: "0123" });
+
+    const head = await content(owner, document.id, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-length")).toBe("20");
+    expectStrictHeaders(head);
+    expect(await head.text()).toBe("");
+    const headRange = await content(owner, document.id, { method: "HEAD", headers: { Range: "bytes=2-3" } });
+    expect(headRange.status).toBe(206);
+    expect(headRange.headers.get("content-range")).toBe("bytes 2-3/20");
+    expect(await headRange.text()).toBe("");
+
+    const empty = await uploadOk(owner, "", "empty.txt");
+    const emptyFull = await content(owner, empty.id);
+    expect(emptyFull.status).toBe(200);
+    expect(await emptyFull.text()).toBe("");
+    const emptyRange = await content(owner, empty.id, { headers: { Range: "bytes=0-0" } });
+    expect(emptyRange.status).toBe(416);
+    expect(emptyRange.headers.get("content-range")).toBe("bytes */0");
+    expect(openDescriptorsFor(objectPath(document.id))).toBe(0);
+    expect(openDescriptorsFor(objectPath(empty.id))).toBe(0);
+  });
+
+  test("returns 404 for binned documents, including to the owner", async () => {
+    const owner = await createUser("Binned content owner");
+    const reader = await createUser("Binned content reader");
+    const document = await uploadOk(owner, "a", "a.txt");
+    await shareDocument(owner, document.id, "all_users");
+    await (await content(reader, document.id)).text();
+    await deleteDocument(owner, document.id);
+    expect((await content(owner, document.id)).status).toBe(404);
+    expect((await content(reader, document.id)).status).toBe(404);
+    expect((await content(owner, document.id, { method: "HEAD" })).status).toBe(404);
+  });
+
+  test("fails closed with 500 on integrity errors", async () => {
+    const owner = await createUser("Integrity owner");
+    const secret = "outside secret bytes";
+    const outside = join(dataDir, "outside-target.txt");
+    writeFileSync(outside, secret, { mode: 0o600 });
+
+    const linked = await uploadOk(owner, secret, "linked.txt");
+    rmSync(objectPath(linked.id));
+    symlinkSync(outside, objectPath(linked.id));
+    const symlinkResponse = await content(owner, linked.id);
+    expect(symlinkResponse.status).toBe(500);
+    expectStrictHeaders(symlinkResponse);
+    const symlinkBody = await symlinkResponse.text();
+    expect(symlinkBody).toBe(JSON.stringify({ error: "Something went wrong" }));
+    expect(symlinkBody).not.toContain(secret);
+
+    const truncated = await uploadOk(owner, "twelve bytes", "truncated.txt");
+    writeFileSync(objectPath(truncated.id), "short");
+    expect((await content(owner, truncated.id)).status).toBe(500);
+    expect((await content(owner, truncated.id, { method: "HEAD" })).status).toBe(500);
+
+    const missing = await uploadOk(owner, "gone", "missing.txt");
+    rmSync(objectPath(missing.id));
+    expect((await content(owner, missing.id)).status).toBe(500);
+    rmSync(objectPath(linked.id));
+    rmSync(outside);
+  });
+
+  test("closes the file descriptor when the client aborts a download", async () => {
+    const owner = await createUser("Abort download owner");
+    const document = await uploadOk(owner, new Uint8Array(3_000_000).fill(0x63), "large.bin");
+    const path = objectPath(document.id);
+    const controller = new AbortController();
+    const response = await content(owner, document.id, { signal: controller.signal });
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    await reader.read();
+    expect(openDescriptorsFor(path)).toBe(1);
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+    await waitFor(() => openDescriptorsFor(path) === 0);
+
+    const complete = await content(owner, document.id);
+    expect((await complete.arrayBuffer()).byteLength).toBe(3_000_000);
+    await waitFor(() => openDescriptorsFor(path) === 0);
   });
 });

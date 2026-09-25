@@ -9,7 +9,7 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
-import { registerDocumentRoutes } from "./documents";
+import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
   draftSchema,
@@ -92,7 +92,7 @@ function consumeRecoveryCode(user: Pick<UserRow, "id" | "totp_recovery_codes">, 
   }
 }
 
-app.use("*", secureHeaders({
+const globalSecureHeaders = secureHeaders({
   contentSecurityPolicy: {
     defaultSrc: ["'self'"],
     scriptSrc: ["'self'"],
@@ -117,7 +117,13 @@ app.use("*", secureHeaders({
   },
   xContentTypeOptions: "nosniff",
   xFrameOptions: "DENY"
-}));
+});
+
+// secureHeaders overwrites headers after next(), so the document content route (and only it)
+// is excluded and sets its own strict header set, including a sandboxing CSP.
+app.use("*", (c, next) => isContentRequest(c.req.method, c.req.path)
+  ? contentRouteSecurityHeaders(c, next)
+  : globalSecureHeaders(c, next));
 
 app.use("/api/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
