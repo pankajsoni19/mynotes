@@ -4,6 +4,7 @@ export type Route =
   | { app: "home" }
   | { app: "notes"; folder: "all" | "shared" | string; noteId: string | null }
   | { app: "files"; folder: "all" | "shared" | string; documentId: string | null }
+  | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "bin" };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -23,6 +24,23 @@ function parseCollection(segments: string[]): { folder: string; itemId: string |
   return { folder: "all", itemId: null };
 }
 
+const monthPattern = /^(\d{4})-(0[1-9]|1[0-2])$/;
+
+/** A `yyyy-mm` month between 1900 and 2200. */
+export function isRouteMonth(value: string) {
+  const match = monthPattern.exec(value);
+  return match !== null && Number(match[1]) >= 1900 && Number(match[1]) <= 2200;
+}
+
+// /calendar (agenda), /calendar/month/:yyyy-mm, and /calendar/event/:eventId. A malformed month opens
+// the month view at the current month (the app fills it in); anything else malformed opens the agenda.
+function parseCalendar(segments: string[]): Route {
+  const [kind, value] = segments;
+  if (kind === "month" && segments.length <= 2) return { app: "calendar", view: "month", month: value !== undefined && isRouteMonth(value) ? value : null, eventId: null };
+  if (kind === "event" && segments.length === 2 && value !== undefined && isRouteId(value)) return { app: "calendar", view: "agenda", month: null, eventId: value.toLowerCase() };
+  return { app: "calendar", view: "agenda", month: null, eventId: null };
+}
+
 export function parseRoute(pathname: string): Route {
   const segments = pathname.split("/").filter(Boolean);
   const [app, ...rest] = segments;
@@ -34,6 +52,7 @@ export function parseRoute(pathname: string): Route {
     const { folder, itemId } = parseCollection(rest);
     return { app: "files", folder, documentId: itemId };
   }
+  if (app === "calendar") return parseCalendar(rest);
   if (app === "bin" && rest.length === 0) return { app: "bin" };
   return { app: "home" };
 }
@@ -49,6 +68,11 @@ function formatCollection(base: string, folder: string, itemId: string | null) {
 export function formatRoute(route: Route): string {
   if (route.app === "notes") return formatCollection("/notes", route.folder, route.noteId);
   if (route.app === "files") return formatCollection("/files", route.folder, route.documentId);
+  if (route.app === "calendar") {
+    if (route.eventId && isRouteId(route.eventId)) return `/calendar/event/${route.eventId.toLowerCase()}`;
+    if (route.view === "month") return route.month && isRouteMonth(route.month) ? `/calendar/month/${route.month}` : "/calendar/month";
+    return "/calendar";
+  }
   if (route.app === "bin") return "/bin";
   return "/";
 }
