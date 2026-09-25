@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { CollectionRow, FieldDefinition, FieldValue } from "./collectionsApi";
 import { displayValue, inputText, optionById, parseInput } from "./values";
 
@@ -27,8 +27,11 @@ export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant
     return <span className={`cell-readonly cell-${field.type}`} title={shown || undefined}>{field.type === "select" && typeof value === "string" ? <OptionChip field={field} id={value} /> : field.type === "multi_select" && Array.isArray(value) ? <OptionChips field={field} ids={value} /> : shown || <span className="cell-empty" aria-label="Empty">—</span>}</span>;
   }
   switch (field.type) {
-    case "checkbox":
-      return <input type="checkbox" className="cell-checkbox" aria-labelledby={labelId} aria-label={labelId ? undefined : field.name} checked={value === true} onChange={(event) => { void onSave({ [field.id]: event.target.checked }); }} />;
+    case "checkbox": {
+      const box = <input type="checkbox" id={variant === "panel" && labelId ? checkboxInputId(labelId) : undefined} className="cell-checkbox" aria-labelledby={labelId} aria-label={labelId ? undefined : field.name} checked={value === true} onChange={(event) => { void onSave({ [field.id]: event.target.checked }); }} />;
+      // The row panel wraps it in a 44 px label, so the whole line toggles it on a phone.
+      return variant === "panel" ? <label className="cell-checkbox-target">{box}<span aria-hidden="true">{value === true ? "Yes" : "No"}</span></label> : box;
+    }
     case "select":
       return <select className="cell-select" aria-labelledby={labelId} aria-label={labelId ? undefined : field.name} value={typeof value === "string" ? value : ""} onChange={(event) => { void onSave({ [field.id]: event.target.value || null }); }}>
         <option value="">—</option>
@@ -51,12 +54,16 @@ export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant
   }
 }
 
+/** The row panel's checkbox id, so the field's own label can toggle it too. */
+export const checkboxInputId = (labelId: string) => `${labelId}-input`;
+
 const pickerPrompt = (field: FieldDefinition) => field.type === "multi_select" ? "Choose options" : field.type === "note" ? "Link a note" : "Attach files";
 
 function TextCell({ field, value, onSave, variant, labelId }: { field: FieldDefinition; value: FieldValue | undefined; onSave: SaveValues; variant: "table" | "panel"; labelId?: string }) {
   const original = inputText(field, value);
   const [draft, setDraft] = useState(original);
   const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
   const editingRef = useRef(false);
   // Follow the stored value (a save, a reload, or an undo) unless the user is typing.
   useEffect(() => { if (!editingRef.current) setDraft(original); }, [original]);
@@ -97,7 +104,7 @@ function TextCell({ field, value, onSave, variant, labelId }: { field: FieldDefi
     "aria-labelledby": labelId,
     "aria-label": labelId ? undefined : field.name,
     "aria-invalid": error ? true : undefined,
-    title: error ?? undefined,
+    "aria-describedby": error ? errorId : undefined,
     onFocus: () => { editingRef.current = true; },
     onChange: (event: { target: { value: string } }) => { editingRef.current = true; setDraft(event.target.value); setError(null); },
     onBlur: () => { void commit(); },
@@ -106,7 +113,9 @@ function TextCell({ field, value, onSave, variant, labelId }: { field: FieldDefi
   const input = variant === "panel" && field.type === "text"
     ? <textarea {...common} rows={Math.min(8, Math.max(2, draft.split("\n").length))} maxLength={4000} />
     : <input {...common} type={field.type === "date" ? "date" : field.type === "url" ? "url" : "text"} inputMode={field.type === "number" ? "decimal" : undefined} maxLength={field.type === "url" ? 2048 : 4000} placeholder={variant === "panel" ? field.type === "url" ? "https://" : field.number?.unit ?? "" : undefined} />;
-  return variant === "panel" ? <>{input}{error && <span className="file-dialog-error" role="alert">{error}</span>}</> : input;
+  // The message is shown under the input in both layouts, not only as a red border.
+  const message = error && <span id={errorId} className={variant === "panel" ? "file-dialog-error" : "file-dialog-error cell-error"} role="alert">{error}</span>;
+  return message ? <>{input}{message}</> : input;
 }
 
 export function OptionChip({ field, id }: { field: FieldDefinition; id: string }) {

@@ -126,7 +126,7 @@ export function purgeOwnedCalendarItem(type: CalendarBinType, id: string, ownerI
 }
 
 /** Task and attachment columns every Bin item carries (server/bin.ts BinItem); none apply to calendars or events. */
-const providedDefaults = { board_id: null, board_name: null, attachment: false, attachment_of: null } as const;
+const providedDefaults = { board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null } as const;
 
 function listCalendarBin(type: CalendarBinType, userId: string): BinItem[] {
   const rows = db.query(`SELECT * FROM (${calendarBinSources(type)[0]}) ORDER BY deleted_at DESC, id LIMIT 500`)

@@ -3,6 +3,15 @@
 // browser's move with history.go(), whose own popstate is ignored once. Every popstate handler asks
 // first, so the first one to see the event runs the guard and the others skip it. Listener order on
 // window is registration order, which is why this is a shared check instead of a capture-phase listener.
+//
+// The one exception is an entry at depth 0 on a phone (a fresh load of `/` or a deep link): there is
+// no in-app entry below it, so Back would leave Nook before any popstate could close the dialog.
+// Opening a guarded dialog there pushes one sentinel entry (same URL, depth 1, a `mynotes.dialog`
+// hint); Back pops it and only closes the dialog, and closing the dialog any other way pops it again
+// with history.back(), whose popstate is ignored.
+import { useEffect } from "react";
+import { readHistoryDepth, withHistoryDepth } from "./appShellNavigation";
+import { isMobileViewport } from "./mobileNavigation";
 
 /** Receives the state of the entry the browser moved to; returns true when it closed a dialog. */
 type DialogGuard = (poppedState: unknown) => boolean;
@@ -13,6 +22,8 @@ const guards: DialogGuard[] = [];
 let ignoring = 0;
 let ignoreTimer: ReturnType<typeof setTimeout> | null = null;
 const consumed = new WeakSet<object>();
+// While a popstate left the depth-0 sentinel, guards close their dialog but must not undo the move.
+let suppressUndo = 0;
 
 /** Registers a guard for the dialogs of the app on screen (or shared chrome). Returns the unregister function. */
 export function registerHistoryDialogGuard(next: DialogGuard) {
@@ -36,6 +47,14 @@ export function popStateClosedDialog(event: { state?: unknown }) {
     consumed.add(event);
     return true;
   }
+  if (sentinelActive && !isDialogSentinelState(event.state)) {
+    // Back from the sentinel onto the dialog's own entry: close the dialog and stay there.
+    sentinelActive = false;
+    suppressUndo += 1;
+    try { runGuards(event.state); } finally { suppressUndo -= 1; }
+    consumed.add(event);
+    return true;
+  }
   if (!runGuards(event.state)) return false;
   consumed.add(event);
   return true;
@@ -56,11 +75,79 @@ export function dialogPopDirection(openDepth: number, poppedDepth: number): PopD
 /** The history.go() delta that returns to the entry the dialog was opened on. */
 export const undoPopDelta = (direction: PopDirection) => direction === "back" ? 1 : -1;
 
-/** Moves back to the dialog's entry and ignores the popstate that move causes. */
-export function undoDialogPop(direction: PopDirection, go: (delta: number) => void = (delta) => window.history.go(delta)) {
+function ignoreNextPop() {
   ignoring += 1;
   // A move that never fires popstate must not swallow a later, real one.
   if (ignoreTimer) clearTimeout(ignoreTimer);
   ignoreTimer = setTimeout(() => { ignoring = 0; ignoreTimer = null; }, 1000);
+}
+
+/** Moves back to the dialog's entry and ignores the popstate that move causes. */
+export function undoDialogPop(direction: PopDirection, go: (delta: number) => void = (delta) => window.history.go(delta)) {
+  if (suppressUndo > 0) return;
+  ignoreNextPop();
   go(undoPopDelta(direction));
+}
+
+const dialogHintKey = "mynotes.dialog";
+
+/** True for the entry pushed under a dialog opened at depth 0. */
+export function isDialogSentinelState(state: unknown) {
+  return Boolean(state && typeof state === "object" && (state as Record<string, unknown>)[dialogHintKey] === true);
+}
+
+/**
+ * Whether opening a guarded dialog on the entry with `state` must push a sentinel: only on a phone,
+ * only at depth 0, and only when no sentinel is already in place. Deeper entries keep D18 (no entry).
+ */
+export function needsDialogSentinel(state: unknown, options: { phone: boolean; active: boolean }) {
+  return options.phone && !options.active && readHistoryDepth(state) === 0 && !isDialogSentinelState(state);
+}
+
+/** The sentinel entry's state: the current entry's state, one level deeper, with the dialog hint. */
+export function dialogSentinelState(state: unknown) {
+  const base = state && typeof state === "object" ? state as Record<string, unknown> : {};
+  return withHistoryDepth({ ...base, [dialogHintKey]: true }, readHistoryDepth(state) + 1);
+}
+
+type SentinelHistory = Pick<History, "state" | "pushState" | "back">;
+let openDialogs = 0;
+let sentinelActive = false;
+let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Marks a guarded dialog open. The first one opened at depth 0 on a phone pushes the sentinel; the
+ * returned release pops it once the last dialog closed by any means other than Back. The pop waits a
+ * tick so a dialog that replaces another keeps the same sentinel.
+ */
+export function acquireDialogSentinel(env: { history: SentinelHistory; href: () => string; phone: () => boolean } = {
+  history: window.history, href: () => window.location.href, phone: () => typeof window.matchMedia === "function" && isMobileViewport()
+}) {
+  openDialogs += 1;
+  if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
+  if (openDialogs === 1 && needsDialogSentinel(env.history.state, { phone: env.phone(), active: sentinelActive })) {
+    env.history.pushState(dialogSentinelState(env.history.state), "", env.href());
+    sentinelActive = true;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    openDialogs = Math.max(0, openDialogs - 1);
+    if (openDialogs > 0) return;
+    releaseTimer = setTimeout(() => {
+      releaseTimer = null;
+      if (openDialogs > 0 || !sentinelActive) return;
+      sentinelActive = false;
+      // An in-app navigation pushed past the sentinel: it is an ordinary entry now.
+      if (!isDialogSentinelState(env.history.state)) return;
+      ignoreNextPop();
+      env.history.back();
+    }, 0);
+  };
+}
+
+/** Holds the depth-0 sentinel while `open` (see acquireDialogSentinel). */
+export function useDialogSentinel(open: boolean) {
+  useEffect(() => open ? acquireDialogSentinel() : undefined, [open]);
 }

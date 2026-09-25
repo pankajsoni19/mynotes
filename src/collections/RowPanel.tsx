@@ -3,7 +3,7 @@ import { ArrowLeft, Bot, Ellipsis, Eye, RotateCcw, Undo2, X } from "lucide-react
 import { ApiError } from "../api";
 import { relativeTime } from "../files/format";
 import { errorMessage, getRow, type CollectionDetail, type CollectionRow, type FieldDefinition, type FieldValue } from "./collectionsApi";
-import { CellEditor } from "./cells";
+import { CellEditor, checkboxInputId } from "./cells";
 import { openLayerCount, useDialogLayer } from "./dialogLayers";
 import { FieldIcon } from "./icons";
 import { NotePicker } from "./NotePicker";
@@ -109,7 +109,9 @@ export function RowPanel({ collection, rowId, editable, listed, conflict, save, 
       {collection.fields.map((field) => {
         const labelId = `row-field-${field.id}`;
         return <div key={field.id} className={`row-field row-field-${field.type}`}>
-          <span className="row-field-label" id={labelId}><FieldIcon type={field.type} />{field.name}{field.required && <span className="row-field-required" aria-label="required">*</span>}</span>
+          {field.type === "checkbox" && editable && !conflict
+            ? <label className="row-field-label" id={labelId} htmlFor={checkboxInputId(labelId)}><FieldIcon type={field.type} />{field.name}{field.required && <span className="row-field-required" aria-label="required">*</span>}</label>
+            : <span className="row-field-label" id={labelId}><FieldIcon type={field.type} />{field.name}{field.required && <span className="row-field-required" aria-label="required">*</span>}</span>}
           {field.type === "file" && renderFiles
             ? renderFiles(row, field, setRow)
             : <CellEditor field={field} row={row} editable={editable && !conflict} variant="panel" labelId={labelId} onSave={saveValues}

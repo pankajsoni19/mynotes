@@ -49,7 +49,7 @@ const binTypeLabel: Record<string, string> = { note: "Note", document: "File", c
  */
 export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
   tasksDue: { title: "Due soon", empty: "Nothing is due in the next seven days.", app: "Tasks", row: taskRow },
-  tasksMine: { title: "My tasks", empty: "No open cards assigned to you or added by you.", app: "Tasks", row: taskRow },
+  tasksMine: { title: "My tasks", empty: "No other open cards assigned to you or added by you.", app: "Tasks", row: taskRow },
   notesRecent: {
     title: "Recent notes", empty: "No notes yet.", app: "Notes",
     row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: [item.is_owner ? null : item.owner_name, `Updated ${relativeTime(item.updated_at)}`].filter(Boolean).join(" · "), route: noteRoute(item.id) })

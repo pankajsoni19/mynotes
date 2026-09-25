@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Ellipsis, Plus, RotateCcw } from "lucide-react";
 import type { CollectionRow, FieldDefinition } from "./collectionsApi";
-import { cardFields, displayValue, rowTitle } from "./values";
+import { cardFields, displayValue, rowTitle, submitOnEnter } from "./values";
 
 /** True at phone widths (the 760 px breakpoint used everywhere), following resizes. */
 export function useIsPhone() {
@@ -46,7 +46,7 @@ export function CollectionCards({ fields, rows, editable, conflicts, onOpenRow, 
   return <>
     {editable && onAdd && fields[0] && <form className="collection-quick-add collection-card-add" onSubmit={(event) => { void add(event); }}>
       <Plus aria-hidden="true" />
-      <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`New row: ${fields[0].name}`} aria-label={`New row ${fields[0].name}`} maxLength={4000} disabled={adding} />
+      <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`New row: ${fields[0].name}`} aria-label={`New row ${fields[0].name}`} maxLength={4000} onKeyDown={submitOnEnter} readOnly={adding} aria-busy={adding || undefined} />
       <button className="secondary-button" type="submit" disabled={adding || !draft.trim()}>{adding ? "Adding…" : "Add"}</button>
     </form>}
     <ul className="collection-cards" aria-label="Rows">

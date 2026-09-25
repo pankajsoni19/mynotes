@@ -3,6 +3,7 @@ import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon
 import { ApiError } from "../api";
 import { AccountActions } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
+import { useDialogSentinel } from "../historyDialogs";
 import { relativeTime } from "../files/format";
 import type { BinItem } from "../types";
 import { deleteBinItem, emptyBin, listBin, restoreBinItem } from "./binApi";
@@ -81,7 +82,8 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     sheetReturnFocusRef.current = null;
   }, []);
 
-  // The sheet has no history entry of its own, so Back/Forward (and Escape) just close it.
+  // The sheet has no history entry of its own (except the depth-0 sentinel on a phone), so Back/Forward (and Escape) just close it.
+  useDialogSentinel(sheetKey !== null);
   useEffect(() => {
     if (!sheetKey) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeSheet(); };
@@ -247,7 +249,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
             <span className="bin-row-copy">
               <span className="bin-row-title" title={label}><span className="sr-only">{binKindLabel(item)}: </span>{label}</span>
               <span className="bin-row-meta">
-                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" ? `In ${binFolderLabel(item)}` : item.attachment ? (item.attachment_of ? attachmentLabel(item) : `${attachmentLabel(item)} · restores to Default`) : binFolderLabel(item)}</span>
+                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" ? `In ${binFolderLabel(item)}` : item.attachment ? attachmentLabel(item) : binFolderLabel(item)}</span>
                 <time dateTime={item.deleted_at}>Deleted {relativeTime(item.deleted_at)}</time>
                 {item.purging || action === "delete"
                   ? <span className="bin-row-status">Deleting forever…</span>

@@ -83,10 +83,47 @@ describe("row attachments", () => {
     const documentId = await upload(owner, "collection_attachment", "linked.txt");
     expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id })).status).toBe(201);
     db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), owner.userId, new Date(Date.now() + 86_400_000).toISOString(), documentId);
+    const binItem = async () => ((await (await request("/bin", {}, owner)).json()) as { items: Array<{ id: string; attachment: boolean; attachment_of: string | null; attachment_kind: string | null }> }).items.find((item) => item.id === documentId);
+    // The Bin names the row it still belongs to; once the row is binned it is still a row attachment.
+    expect(await binItem()).toMatchObject({ attachment: true, attachment_of: "Fridge", attachment_kind: "row" });
+    db.query("UPDATE collection_rows SET deleted_at = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString(), row.id);
+    expect(await binItem()).toMatchObject({ attachment: true, attachment_of: null, attachment_kind: "row" });
+    db.query("UPDATE collection_rows SET deleted_at = NULL, purge_after = NULL WHERE id = ?").run(row.id);
     expect((await request(`/bin/document/${documentId}/restore`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
     expect(db.query("SELECT purpose, folder_id, deleted_at FROM documents WHERE id = ?").get(documentId)).toEqual({ purpose: "collection_attachment", folder_id: null, deleted_at: null });
     expect(await filesList(owner)).not.toContain(documentId);
     expect(await content(member, documentId)).toBe(200);
+  });
+
+  test("linking and unlinking bump the row revision, and Undo reverts them", async () => {
+    const { owner, row, receipt, item } = await setup("Link undo");
+    const documentId = await upload(owner, "collection_attachment", "undo.txt");
+    const attached = await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id });
+    expect(attached.body.row).toMatchObject({ revision: row.revision + 1, can_undo: true });
+    const stored = db.query("SELECT prev_values_json, prev_revision FROM collection_rows WHERE id = ?").get(row.id) as { prev_values_json: string; prev_revision: number };
+    expect(stored.prev_revision).toBe(row.revision);
+    expect(JSON.parse(stored.prev_values_json)).toEqual({ [item.id]: "Fridge", $attachments: [] });
+    // The stale revision is refused like any other write.
+    expect((await call(owner, "POST", `/rows/${row.id}/undo`, { revision: row.revision })).status).toBe(409);
+
+    // Undo of the link removes it, and the upload no row links any more goes to the Bin.
+    const undone = await call(owner, "POST", `/rows/${row.id}/undo`, { revision: attached.body.row.revision });
+    expect(undone.status).toBe(200);
+    expect(undone.body.row.files[receipt.id] ?? []).toEqual([]);
+    expect(undone.body.row.values).toEqual({ [item.id]: "Fridge" });
+    expect((db.query("SELECT deleted_at FROM documents WHERE id = ?").get(documentId) as { deleted_at: string | null }).deleted_at).not.toBeNull();
+
+    // Unlink, then Undo: the upload comes back from the Bin with its link.
+    const second = await upload(owner, "collection_attachment", "second.txt");
+    const relinked = await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: second, fieldId: receipt.id });
+    const detached = await call(owner, "DELETE", `/rows/${row.id}/attachments/${second}`);
+    expect(detached.body).toMatchObject({ documentBinned: true, row: { revision: relinked.body.row.revision + 1, can_undo: true } });
+    const restored = await call(owner, "POST", `/rows/${row.id}/undo`, { revision: detached.body.row.revision });
+    expect(restored.status).toBe(200);
+    expect(restored.body.row.files[receipt.id].map((file: { id: string }) => file.id)).toEqual([second]);
+    expect(restored.body.row.can_undo).toBe(false);
+    expect(db.query("SELECT deleted_at, purpose FROM documents WHERE id = ?").get(second)).toEqual({ deleted_at: null, purpose: "collection_attachment" });
+    expect(await content(owner, second)).toBe(200);
   });
 
   test("Files items the linker owns can be linked and are never binned on unlink", async () => {

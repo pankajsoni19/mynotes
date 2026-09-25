@@ -622,7 +622,9 @@ export async function undoRow(userId: string, rowId: string, input: { revision: 
     const schema = schemaOf(collection);
     if (row.revision !== input.revision) throw rowChanged(rowId, schema, userId);
     if (row.prev_values_json === null) throw new CollectionError(409, "There is nothing to undo", "NOTHING_TO_UNDO");
-    const restored = readValues(schema, JSON.parse(row.prev_values_json));
+    const previous = JSON.parse(row.prev_values_json) as unknown;
+    const restored = readValues(schema, previous);
+    const links = storedLinks(previous);
     const undoErrors = undoValueErrors(schema, restored, readValues(schema, JSON.parse(row.values_json)), userId);
     if (undoErrors) throw invalidValues(undoErrors);
     db.transaction(() => {
@@ -631,9 +633,10 @@ export async function undoRow(userId: string, rowId: string, input: { revision: 
           updated_by = ?, updated_via_key_id = NULL, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL`)
         .run(JSON.stringify(restored), userId, timestamp, rowId, input.revision);
       if (updated.changes !== 1) throw new Error("Concurrent row update detected");
+      const linkChanges = links ? restoreLinks(rowId, links, userId) : null;
       db.query("UPDATE collections SET updated_at = ? WHERE id = ?").run(timestamp, collection.id);
       rowHooks.afterWrite(rowId, collection);
-      audit(userId, null, "collection.row_undo", { collectionId: collection.id, rowId });
+      audit(userId, null, "collection.row_undo", { collectionId: collection.id, rowId, ...(linkChanges ? { links: linkChanges } : {}) });
     })();
     return { row: rowDetail(rowId, schema, userId)! };
   });
@@ -755,6 +758,70 @@ export function binUnlinkedAttachments(documentIds: string[], actorId: string | 
   return moved;
 }
 
+/**
+ * Links are kept outside values_json, so a link change stores the row's links from before it
+ * under this key of prev_values_json (field ids are `f_…`, so it never collides with a value;
+ * readValues ignores it). Undo then puts those links back (D61).
+ */
+const PREV_LINKS_KEY = "$attachments";
+const PREV_VALUES_MAX_BYTES = 16384;
+type LinkSnapshot = [documentId: string, fieldId: string, linkedBy: string | null, createdAt: string];
+
+function rowLinks(rowId: string): LinkSnapshot[] {
+  return (db.query("SELECT document_id, field_id, linked_by, created_at FROM collection_row_attachments WHERE row_id = ? ORDER BY created_at, document_id").all(rowId) as Array<{ document_id: string; field_id: string; linked_by: string | null; created_at: string }>)
+    .map((link) => [link.document_id, link.field_id, link.linked_by, link.created_at]);
+}
+
+/** A link change is a row write: it bumps the revision and records the links before it for Undo. Call inside its transaction. */
+function recordLinkChange(rowId: string, collection: CollectionRecord, userId: string, before: LinkSnapshot[], timestamp: string) {
+  const current = db.query("SELECT values_json FROM collection_rows WHERE id = ?").get(rowId) as { values_json: string };
+  const previous = JSON.stringify({ ...JSON.parse(current.values_json), [PREV_LINKS_KEY]: before });
+  // A row near the size limit loses its undo step rather than failing the link change.
+  const prevValues = Buffer.byteLength(previous) <= PREV_VALUES_MAX_BYTES ? previous : null;
+  db.query(`UPDATE collection_rows SET prev_values_json = ?, prev_revision = revision, revision = revision + 1,
+      updated_by = ?, updated_via_key_id = NULL, updated_at = ? WHERE id = ?`).run(prevValues, userId, timestamp, rowId);
+  db.query("UPDATE collections SET updated_at = ? WHERE id = ?").run(timestamp, collection.id);
+  rowHooks.afterWrite(rowId, collection);
+}
+
+function storedLinks(prevValues: unknown): LinkSnapshot[] | null {
+  if (!prevValues || typeof prevValues !== "object" || Array.isArray(prevValues)) return null;
+  const links = (prevValues as Record<string, unknown>)[PREV_LINKS_KEY];
+  if (!Array.isArray(links)) return null;
+  return links.filter((link): link is LinkSnapshot => Array.isArray(link) && link.length === 4 && typeof link[0] === "string" && typeof link[1] === "string"
+    && (link[2] === null || typeof link[2] === "string") && typeof link[3] === "string").slice(0, LIMITS.attachmentsPerRow);
+}
+
+/**
+ * Puts a row's links back to `target` (an Undo of attach or unlink). A collection upload the unlink
+ * moved to the Bin comes back with its link; documents purged since, or Files items binned since, are
+ * skipped. Uploads no row links any more go to the Bin, as after an unlink. Call inside a transaction.
+ */
+function restoreLinks(rowId: string, target: LinkSnapshot[], userId: string) {
+  const current = rowLinks(rowId);
+  const wanted = new Set(target.map((link) => link[0]));
+  const present = new Set(current.map((link) => link[0]));
+  const unlinked = current.filter((link) => !wanted.has(link[0])).map((link) => link[0]);
+  for (const documentId of unlinked) db.query("DELETE FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").run(rowId, documentId);
+  let relinked = 0;
+  for (const [documentId, fieldId, linkedBy, createdAt] of target) {
+    if (present.has(documentId)) continue;
+    const document = db.query("SELECT purpose, deleted_at, purge_started_at FROM documents WHERE id = ?").get(documentId) as { purpose: string; deleted_at: string | null; purge_started_at: string | null } | null;
+    if (!document || document.purge_started_at !== null) continue;
+    if (document.deleted_at !== null) {
+      if (document.purpose !== "collection_attachment") continue;
+      const restored = db.query("UPDATE documents SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL WHERE id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL").run(documentId);
+      if (restored.changes !== 1) continue;
+      audit(userId, null, "document.restore", { documentId, reason: "attachment_undo" });
+    }
+    const linker = linkedBy !== null && db.query("SELECT 1 FROM users WHERE id = ?").get(linkedBy) ? linkedBy : null;
+    db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)").run(rowId, documentId, fieldId, linker, createdAt);
+    relinked += 1;
+  }
+  const binned = binUnlinkedAttachments(unlinked, userId);
+  return { unlinked: unlinked.length, relinked, binned };
+}
+
 export async function attachDocument(userId: string, rowId: string, input: { documentId: string; fieldId: string }) {
   const { collection: initial } = requireEditableRow(rowId, userId);
   return withCollectionLock(initial.id, () => {
@@ -772,9 +839,10 @@ export async function attachDocument(userId: string, rowId: string, input: { doc
     if (count >= LIMITS.attachmentsPerRow) throw limitReached(`A row can have up to ${LIMITS.attachmentsPerRow} attachments`);
     db.transaction(() => {
       const timestamp = now();
+      const before = rowLinks(rowId);
       db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)")
         .run(rowId, input.documentId, input.fieldId, userId, timestamp);
-      db.query("UPDATE collection_rows SET updated_at = ?, updated_by = ? WHERE id = ?").run(timestamp, userId, rowId);
+      recordLinkChange(rowId, collection, userId, before, timestamp);
       audit(userId, null, "collection.row_attach", { collectionId: collection.id, rowId, documentId: input.documentId });
     })();
     return { row: rowDetail(rowId, schema, userId)! };
@@ -791,9 +859,10 @@ export async function detachDocument(userId: string, rowId: string, documentId: 
     if (link.linked_by !== userId && collection.owner_id !== userId) throw new CollectionError(403, "Only the person who attached this file or the collection owner can remove it", "NOT_LINKER");
     let binned = 0;
     db.transaction(() => {
+      const before = rowLinks(rowId);
       db.query("DELETE FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").run(rowId, documentId);
-      db.query("UPDATE collection_rows SET updated_at = ?, updated_by = ? WHERE id = ?").run(now(), userId, rowId);
       binned = binUnlinkedAttachments([documentId], userId);
+      recordLinkChange(rowId, collection, userId, before, now());
       audit(userId, null, "collection.row_detach", { collectionId: collection.id, rowId, documentId });
     })();
     return { row: rowDetail(rowId, schemaOf(collection), userId)!, documentBinned: binned > 0 };

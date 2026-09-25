@@ -3,7 +3,7 @@ import { Ellipsis, Maximize2, Plus, RotateCcw } from "lucide-react";
 import type { CollectionRow, FieldDefinition, FieldValue } from "./collectionsApi";
 import { CellEditor } from "./cells";
 import { FieldIcon } from "./icons";
-import { rowTitle } from "./values";
+import { rowTitle, submitOnEnter } from "./values";
 
 type CollectionTableProps = {
   fields: FieldDefinition[];
@@ -62,7 +62,7 @@ export function CollectionTable({ fields, rows, editable, conflicts, activeRowId
     </table>
     {editable && onAdd && primary && <form className="collection-quick-add" onSubmit={(event) => { void add(event); }}>
       <Plus aria-hidden="true" />
-      <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`New row: ${primary.name}`} aria-label={`New row ${primary.name}`} maxLength={4000} disabled={adding} />
+      <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`New row: ${primary.name}`} aria-label={`New row ${primary.name}`} maxLength={4000} onKeyDown={submitOnEnter} readOnly={adding} aria-busy={adding || undefined} />
       <button className="secondary-button" type="submit" disabled={adding || !draft.trim()}>{adding ? "Adding…" : "Add row"}</button>
     </form>}
   </div>;
