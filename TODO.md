@@ -113,12 +113,21 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Mobile panels, action sheet, Move sheet, and browser history
 - [x] Home Files card live; desktop/mobile manual QA and accessibility check; released v0.4.0
 
+### Wave 7 — Full-text search (in progress, target v0.5.0)
+
+- [x] Implemented in `2ec8129` (migration 008), `f7fcdb1` (projection + query builder), `2692068` (transactional index + boot reconcile), `b399cf0` (ACL-safe API with 429), `35defa8` (full-text Notes search UI with keyboard, live region, mobile history hint), `601c88b` (docs). FTS5 confirmed in Bun 1.4.2 and the pinned image. 224 tests at the wave's end; Docker verify passes on the merged tree.
+- [x] Deviations: threat rows numbered T29–T32 (T28 was taken); Indic combining marks count as word characters; title kept out of the body index; folder filter matches the masked folder id.
+- [x] Independent review (fresh session, live probing): injection, ACL parity, highlight safety, transactional sync, rate limit, UI, and Notes regressions all pass. **High:** `searchText` regexes quadratic on bracket-heavy lines (2 MB draft could stall the server for hours) — fix in progress. Lows: 300 ms debounce and no re-search on autosave; clear the search hint on sign-out; opening a draft from a search hit and leaving publishes it (existing finalize behaviour; **must change before Wave 9 MCP draft writes: publish only on session edits or explicit Publish**).
+- [x] Director QA on the isolated instance: highlighted results with live count; injection attempts neutralised.
+- [ ] Fix commits, then release v0.5.0 together with the Files views and the Nook rebrand
+
 ### Wave 5b — Files views and header polish (operator feedback 2026-09-25, in progress)
 
-- [ ] List and thumbnail (grid) views in Files with a persisted toggle; image tiles use the inline content URL
-- [ ] Files list takes the full width until a file is selected; the preview/details pane opens on selection with a Close control, URL-driven (`/files/:id`)
-- [ ] App headers show only the icon plus the app name (the "MYNOTES" eyebrow read as "Notes"); product name stays on the login page and in the tab title
-- [ ] Review, QA, release with v0.5.0 or as v0.4.2
+- [x] List and thumbnail (grid) views in Files with a persisted toggle; image tiles use the inline content URL
+- [x] Files list takes the full width until a file is selected; the preview/details pane opens on selection with a Close control, URL-driven (`/files/:id`)
+- [x] App headers show only the icon plus the app name (the "MYNOTES" eyebrow read as "Notes"); product name stays on the login page and in the tab title
+- [x] Implemented on branch `files-views` (`59fe67f` list/grid, `e1c6b26` selection-driven preview pane, `011a49c` header), merged in `main`; independent review: releasable, lows only (thumbnails load full images; Close leaves two identical entries in history). Director QA: grid with lazy thumbnails, per-user persistence, pane on select with URL, Close returns the folder route.
+- [ ] Release with v0.5.0
 
 ### Rebrand — MyNotes → Nook (operator decision 2026-09-25, queued behind the in-flight waves)
 
