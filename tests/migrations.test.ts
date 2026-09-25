@@ -8,6 +8,7 @@ import { mcpApiKeysMigration } from "../server/migrations/005_mcp_api_keys";
 import { documentsMigration } from "../server/migrations/006_documents";
 import { binMigration } from "../server/migrations/007_bin";
 import { noteSearchMigration } from "../server/migrations/008_note_search";
+import { taskBoardsMigration } from "../server/migrations/009_task_boards";
 import { mcpKeyScopesMigration } from "../server/migrations/010_mcp_key_scopes";
 import { registeredMigrationIds, runMigrations } from "../server/migrations";
 
@@ -15,12 +16,12 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not later migrations (for example 009 and 011) are present,
+ * holds whether or not later migrations (for example 012 and 013) are present,
  * and pins the ids this branch depends on.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  expect(ids).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7, 8, 10]));
+  expect(ids).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
 }
 
 function openDb() {
@@ -233,6 +234,45 @@ describe("database migrations", () => {
     expect(() => db.query("UPDATE notes SET draft_mcp_key_id = 'missing' WHERE id = 'n1'").run()).toThrow();
     db.query("DELETE FROM mcp_api_keys WHERE id = 'k1'").run();
     expect((db.query("SELECT draft_mcp_key_id FROM notes WHERE id = 'n1'").get() as { draft_mcp_key_id: string | null }).draft_mcp_key_id).toBeNull();
+    db.close();
+  });
+  test("a v0.6.0-shaped database upgrades to migration 11 with due dates, assignees, and backfilled done columns", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u2', 'member@example.test', 'Member', 'x', ?)").run(old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b1', 'u1', 'Plan', ?, ?)").run(old, old);
+    const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES (?, 'b1', ?, ?, ?, ?)");
+    insertColumn.run("c1", "To do", 1024, old, old);
+    insertColumn.run("c2", "Done", 2048, old, old);
+    insertColumn.run("c3", "done", 3072, old, old);
+    insertColumn.run("c4", "Done soon", 4096, old, old);
+    insertColumn.run("c5", "DONE", 5120, old, old);
+    db.query("INSERT INTO cards (id, board_id, column_id, position, title, created_by, created_at, updated_at) VALUES ('k1', 'b1', 'c1', 1024, 'First', 'u1', ?, ?)").run(old, old);
+
+    runMigrations(db);
+
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    const done = Object.fromEntries((db.query("SELECT id, is_done FROM board_columns").all() as Array<{ id: string; is_done: number }>).map((row) => [row.id, row.is_done]));
+    expect(done).toEqual({ c1: 0, c2: 1, c3: 1, c4: 0, c5: 1 });
+    expect(db.query("SELECT due_on, assignee_id FROM cards WHERE id = 'k1'").get()).toEqual({ due_on: null, assignee_id: null });
+
+    db.query("UPDATE cards SET due_on = '2026-09-30', assignee_id = 'u2' WHERE id = 'k1'").run();
+    expect(() => db.query("UPDATE cards SET due_on = '30/09/2026' WHERE id = 'k1'").run()).toThrow();
+    expect(() => db.query("UPDATE cards SET due_on = '2026-9-30' WHERE id = 'k1'").run()).toThrow();
+    expect(() => db.query("UPDATE cards SET assignee_id = 'missing' WHERE id = 'k1'").run()).toThrow();
+    expect(() => db.query("UPDATE board_columns SET is_done = 2 WHERE id = 'c1'").run()).toThrow();
+    db.query("DELETE FROM users WHERE id = 'u2'").run();
+    expect((db.query("SELECT assignee_id FROM cards WHERE id = 'k1'").get() as { assignee_id: string | null }).assignee_id).toBeNull();
+
+    const indexes = (db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_cards_due','idx_cards_assignee','idx_cards_creator') ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
+    expect(indexes).toEqual(["idx_cards_assignee", "idx_cards_creator", "idx_cards_due"]);
     db.close();
   });
 });
