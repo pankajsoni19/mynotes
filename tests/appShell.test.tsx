@@ -52,5 +52,5 @@ test("Home opens Tasks as a live app", () => {
   const tasks = markup.match(/<button class="app-card app-card-tasks">(.*?)<\/button>/)?.[1] ?? "";
   expect(tasks).toContain("Plan work on shared boards with draggable cards");
   expect(tasks).toContain("Open Tasks");
-  expect([...markup.matchAll(/class="app-card app-card-(\w+)"/g)].map((match) => match[1])).toEqual(["notes", "files", "tasks", "bin"]);
+  expect([...markup.matchAll(/class="app-card app-card-(\w+)"/g)].map((match) => match[1])).toEqual(["notes", "files", "tasks", "collections", "bin"]);
 });

@@ -217,6 +217,11 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] Note links: only readable notes can be linked; a note binned later reads as `{ id, restricted: true }`.
 - [x] Caps: 100 collections, 10,000 live rows (`LIMIT_REACHED`); CSRF, Origin, and JSON rules.
 
+`tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
+
+- [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.
+- [x] Home shows a live Collections card ("Track anything in typed tables"); the list renders its loading state and New collection; values display and parse per type; viewers get read-only cells; multi-line text is never edited in a single-line cell; field drafts mirror the schema rules and build the `PUT /schema` body.
+
 `tests/migrations.test.ts`:
 
 - [x] Migration 012 adds `collections`, `collection_members`, `collection_rows`, `collection_views`, `collection_row_attachments`, `collection_row_search`, and `collection_row_fts`; name, JSON, share-role, and Bin CHECKs hold; `values_json` is capped at 16,384 bytes; purging a collection cascades to rows, search rows, and (through the trigger) FTS rows.

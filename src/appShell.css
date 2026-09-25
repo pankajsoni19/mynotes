@@ -11,7 +11,7 @@
 .app-home-content { width: min(1080px, calc(100vw - 40px)); margin: 0 auto; padding: clamp(58px, 10vh, 112px) 0 48px; }
 .app-home-content > h1 { max-width: 760px; margin: 9px 0 12px; color: #fafafa; font-size: clamp(2.2rem, 5vw, 4.4rem); letter-spacing: -.065em; line-height: 1.02; }
 .app-home-content > p { max-width: 590px; margin: 0; color: #a4a4ab; font-size: 1rem; line-height: 1.6; }
-.app-card-grid { display: grid; grid-template-columns: 1.16fr 1fr 1fr 1fr; gap: 14px; margin-top: clamp(38px, 7vh, 72px); }
+.app-card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: clamp(38px, 7vh, 72px); }
 .app-card { min-height: 278px; display: flex; flex-direction: column; align-items: flex-start; border: 1px solid #303035; border-radius: 18px; padding: 22px; background: linear-gradient(145deg, rgb(34 34 38 / 96%), #151517); color: inherit; text-align: left; cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease; }
 .app-card:hover { transform: translateY(-3px); border-color: #6f5928; background: linear-gradient(145deg, #30291c, #181719); }
 .app-card-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 13px; background: #2d281b; color: #f4ca67; }
@@ -22,7 +22,7 @@
 .app-card-copy > span { color: #9b9ba2; font-size: .84rem; line-height: 1.55; }
 .app-card-action { display: flex; align-items: center; gap: 7px; margin-top: auto; color: #efc866; font-size: .8rem; font-weight: 700; }
 .app-card-action svg { width: 16px; }
-.app-card-files, .app-card-tasks, .app-card-bin { background: linear-gradient(145deg, #202024, #131315); }
+.app-card-files, .app-card-tasks, .app-card-collections, .app-card-bin { background: linear-gradient(145deg, #202024, #131315); }
 .app-page-header { justify-content: flex-start; gap: 20px; }
 .app-page-header .app-account { margin-left: auto; }
 .app-home-button { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 9px 10px; background: transparent; color: #b2b2b8; cursor: pointer; }
