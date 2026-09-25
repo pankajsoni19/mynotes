@@ -70,6 +70,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .folder-nav > button { width: 100%; display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 10px; border: 0; padding: 9px 10px; border-radius: 9px; background: transparent; color: #c2c2c6; text-align: left; cursor: pointer; }
 .folder-nav > button:hover { background: #171719; }
 .folder-nav > button.active { background: #242118; color: #ffe4a4; }
+.folder-nav > button.nav-home { color: #9c9ca3; margin-bottom: 10px; border-bottom: 1px solid #1f1f22; border-radius: 9px 9px 0 0; padding-bottom: 12px; }
+.folder-nav > button.nav-home:hover { color: #fff; }
 .folder-entry { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; }
 .folder-link { width: 100%; min-width: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 0; padding: 9px 10px; border-radius: 9px; background: transparent; color: #c2c2c6; text-align: left; cursor: pointer; }
 .folder-link:hover { background: #171719; }

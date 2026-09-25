@@ -29,7 +29,7 @@ const cards: Array<{ section: Exclude<AppSection, "home">; icon: typeof Archive;
 export function AppHome({ displayName, onOpen, onSettings, onSignOut }: ShellProps) {
   return <main className="app-home">
     <header className="app-home-header">
-      <div className="app-home-brand"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></div>
+      <div className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>Home</strong></span></div>
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
     <section className="app-home-content" aria-labelledby="app-home-title">
@@ -54,7 +54,7 @@ export function AppPlaceholder({ section, onHome, onOpenNotes, ...account }: Acc
     : "Deleted notes and documents will be recoverable here for 30 days once the shared Bin arrives.";
   const Icon = section === "files" ? FileText : Trash2;
   return <main className="app-placeholder">
-    <header className="app-placeholder-header"><button className="app-home-button" onClick={onHome}><House />Home</button><span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></span><AccountActions {...account} /></header>
+    <header className="app-placeholder-header"><button className="app-home-button" onClick={onHome}><House />Home</button><span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>{title}</strong></span></span><AccountActions {...account} /></header>
     <section className="app-placeholder-content"><span className="app-placeholder-icon"><Icon /></span><span className="eyebrow">Foundation in progress</span><h1>{title}</h1><p>{detail}</p><button className="primary-button" onClick={onOpenNotes}>Open Notes</button></section>
   </main>;
 }
