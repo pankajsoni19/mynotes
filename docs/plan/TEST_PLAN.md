@@ -194,6 +194,14 @@ Manual QA (desktop and 390×844, two users):
 - [ ] 390×844: one column at a time with swipe snapping, the tab strip follows and taps scroll; the column survives Back/Forward and reload; Move sheet is full-screen; every target is at least 44 px; no horizontal page scroll.
 - [ ] Back: card URL → board → list → Home; Back with a dialog or sheet open only closes it.
 
+## Wave 11: Collections
+
+Waves land on separate branches, so the migration assertion is tolerant: `[1..9]` and `12` are applied, ids are unique and ascending (010, 011, and 013 may be absent on this branch).
+
+`tests/migrations.test.ts`:
+
+- [x] Migration 012 adds `collections`, `collection_members`, `collection_rows`, `collection_views`, `collection_row_attachments`, `collection_row_search`, and `collection_row_fts`; name, JSON, share-role, and Bin CHECKs hold; `values_json` is capped at 16,384 bytes; purging a collection cascades to rows, search rows, and (through the trigger) FTS rows.
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.

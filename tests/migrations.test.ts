@@ -12,6 +12,17 @@ import { runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
 
+/**
+ * Waves land on separate branches (migrations 010, 011, and 013 may be absent here), so the
+ * assertion is tolerant: 1–9 and 12 are applied, ids are unique and ascending, and every applied
+ * id is a registered migration.
+ */
+function expectApplied(ids: number[]) {
+  expect(ids).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7, 8, 9, 12]));
+  expect([...ids].sort((a, b) => a - b)).toEqual(ids);
+  expect(new Set(ids).size).toBe(ids.length);
+}
+
 function openDb() {
   const db = new Database(":memory:", { strict: true });
   db.exec("PRAGMA foreign_keys = ON");
@@ -19,11 +30,11 @@ function openDb() {
 }
 
 describe("database migrations", () => {
-  test("a fresh database contains migrations 1 through 9", () => {
+  test("a fresh database contains migrations 1 through 9 and 12", () => {
     const db = openDb();
     runMigrations(db);
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectApplied(ids);
     db.close();
   });
 
@@ -43,7 +54,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectApplied(ids);
     expect((db.query("SELECT COUNT(*) AS count FROM notes").get() as { count: number }).count).toBe(2);
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'document%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
     expect(tables).toEqual(["document_shares", "documents"]);
@@ -78,7 +89,7 @@ describe("database migrations", () => {
     const after = Date.now();
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectApplied(ids);
     const rows = Object.fromEntries((db.query("SELECT id, deleted_at, deleted_by, purge_after, purge_started_at FROM notes").all() as Array<{
       id: string; deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null;
     }>).map((row) => [row.id, row]));
@@ -111,7 +122,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectApplied(ids);
     // Migration 008 is filesystem-free: existing notes are backfilled at boot, not here.
     expect((db.query("SELECT COUNT(*) AS count FROM note_search_rows").get() as { count: number }).count).toBe(0);
 
@@ -153,7 +164,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expectApplied(ids);
     // Existing documents are Files items.
     expect((db.query("SELECT purpose FROM documents WHERE id = 'd1'").get() as { purpose: string }).purpose).toBe("file");
     const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
@@ -193,6 +204,39 @@ describe("database migrations", () => {
     db.query("DELETE FROM boards WHERE id = 'b1'").run();
     expect((db.query("SELECT COUNT(*) AS count FROM cards").get() as { count: number }).count).toBe(0);
     expect((db.query("SELECT COUNT(*) AS count FROM board_members").get() as { count: number }).count).toBe(0);
+    db.close();
+  });
+
+  test("migration 012 adds the collection tables with byte caps, Bin checks, and a row FTS cascade", () => {
+    const db = openDb();
+    runMigrations(db);
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectApplied(ids);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 12").get() as { name: string }).name).toBe("collections");
+    const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'collection%' AND name NOT LIKE 'collection_row_fts_%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
+    expect(tables).toEqual(["collection_members", "collection_row_attachments", "collection_row_fts", "collection_row_search", "collection_rows", "collection_views", "collections"]);
+
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    const insertCollection = db.query("INSERT INTO collections (id, owner_id, name, schema_json, created_at, updated_at, deleted_at, purge_after) VALUES (?, 'u1', ?, ?, ?, ?, ?, ?)");
+    insertCollection.run("c1", "Inventory", '{"fields":[]}', old, old, null, null);
+    expect(() => insertCollection.run("c2", "", "{}", old, old, null, null)).toThrow();
+    expect(() => insertCollection.run("c3", "Bad", "not json", old, old, null, null)).toThrow();
+    expect(() => insertCollection.run("c4", "Half binned", "{}", old, old, old, null)).toThrow();
+    expect(() => db.query("INSERT INTO collections (id, owner_id, name, schema_json, created_at, updated_at, share_role) VALUES ('c5', 'u1', 'X', '{}', ?, ?, 'admin')").run(old, old)).toThrow();
+
+    const insertRow = db.query("INSERT INTO collection_rows (id, collection_id, position, values_json, created_at, updated_at) VALUES (?, 'c1', 1024, ?, ?, ?)");
+    insertRow.run("r1", '{"f_aaaaaaaa":"Mug"}', old, old);
+    expect(() => insertRow.run("r2", JSON.stringify({ f_aaaaaaaa: "é".repeat(8200) }), old, old)).toThrow();
+    expect(() => insertRow.run("r3", "{", old, old)).toThrow();
+
+    const mapping = Number(db.query("INSERT INTO collection_row_search (row_id, source_revision, schema_version, indexed_at) VALUES ('r1', 1, 1, ?)").run(old).lastInsertRowid);
+    db.query("INSERT INTO collection_row_fts (rowid, title, body) VALUES (?, 'Mug', 'Kitchen')").run(mapping);
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_row_fts WHERE collection_row_fts MATCH ?").get('"kitchen"') as { count: number }).count).toBe(1);
+    db.query("DELETE FROM collections WHERE id = 'c1'").run();
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_rows").get() as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_row_search").get() as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_row_fts").get() as { count: number }).count).toBe(0);
     db.close();
   });
 });
