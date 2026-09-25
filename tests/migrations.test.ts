@@ -6,6 +6,7 @@ import { totpMigration } from "../server/migrations/003_totp";
 import { totpRecoveryCodesMigration } from "../server/migrations/004_totp_recovery_codes";
 import { mcpApiKeysMigration } from "../server/migrations/005_mcp_api_keys";
 import { documentsMigration } from "../server/migrations/006_documents";
+import { binMigration } from "../server/migrations/007_bin";
 import { runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
@@ -17,15 +18,15 @@ function openDb() {
 }
 
 describe("database migrations", () => {
-  test("a fresh database contains migrations 1 through 7", () => {
+  test("a fresh database contains migrations 1 through 8", () => {
     const db = openDb();
     runMigrations(db);
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     db.close();
   });
 
-  test("a v0.2.2-shaped database upgrades cleanly to migration 7", () => {
+  test("a v0.2.2-shaped database upgrades cleanly to migration 8", () => {
     const db = openDb();
     db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
     for (const migration of legacyMigrations) {
@@ -41,7 +42,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect((db.query("SELECT COUNT(*) AS count FROM notes").get() as { count: number }).count).toBe(2);
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'document%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
     expect(tables).toEqual(["document_shares", "documents"]);
@@ -76,7 +77,7 @@ describe("database migrations", () => {
     const after = Date.now();
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     const rows = Object.fromEntries((db.query("SELECT id, deleted_at, deleted_by, purge_after, purge_started_at FROM notes").all() as Array<{
       id: string; deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null;
     }>).map((row) => [row.id, row]));
@@ -92,6 +93,46 @@ describe("database migrations", () => {
 
     const indexes = (db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_notes_%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
     expect(indexes).toEqual(expect.arrayContaining(["idx_notes_bin", "idx_notes_purge"]));
+    db.close();
+  });
+  test("migration 008 adds the note search tables, and deleting a note cascades to its FTS rows", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO notes (id, owner_id, folder_id, title, current_version, created_at, updated_at) VALUES ('n1', 'u1', NULL, 'One', 1, ?, ?)").run(old, old);
+    db.query("INSERT INTO notes (id, owner_id, folder_id, title, current_version, created_at, updated_at) VALUES ('n2', 'u1', NULL, 'Two', 1, ?, ?)").run(old, old);
+
+    runMigrations(db);
+
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // Migration 008 is filesystem-free: existing notes are backfilled at boot, not here.
+    expect((db.query("SELECT COUNT(*) AS count FROM note_search_rows").get() as { count: number }).count).toBe(0);
+
+    const insertRow = db.query("INSERT INTO note_search_rows (note_id, kind, source_checksum, indexed_at) VALUES (?, ?, ?, ?)");
+    const insertFts = db.query("INSERT INTO note_fts (rowid, title, body) VALUES (?, ?, ?)");
+    for (const [noteId, kind, text] of [["n1", "published", "Café crème"], ["n1", "draft", "Café draft"], ["n2", "published", "Other words"]] as const) {
+      const rowid = Number(insertRow.run(noteId, kind, "a".repeat(64), old).lastInsertRowid);
+      insertFts.run(rowid, noteId, text);
+    }
+    expect(() => insertRow.run("n2", "published", "a".repeat(64), old)).toThrow();
+    expect(() => insertRow.run("n2", "draft", "short", old)).toThrow();
+    expect(() => insertRow.run("n2", "other", "a".repeat(64), old)).toThrow();
+    // remove_diacritics 2 folds accents and case.
+    expect((db.query("SELECT COUNT(*) AS count FROM note_fts WHERE note_fts MATCH ?").get('"cafe"') as { count: number }).count).toBe(2);
+    expect((db.query("SELECT COUNT(*) AS count FROM note_fts WHERE note_fts MATCH ?").get('"cr"*') as { count: number }).count).toBe(1);
+
+    db.query("DELETE FROM notes WHERE id = 'n1'").run();
+
+    expect((db.query("SELECT COUNT(*) AS count FROM note_search_rows WHERE note_id = 'n1'").get() as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM note_fts").get() as { count: number }).count).toBe(1);
+    expect((db.query("SELECT COUNT(*) AS count FROM note_fts WHERE note_fts MATCH ?").get('"cafe"') as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM note_fts WHERE note_fts MATCH ?").get('"other"') as { count: number }).count).toBe(1);
     db.close();
   });
 });
