@@ -38,7 +38,7 @@ These facts were checked against git and the running container when this plan wa
 | Tags | None exist. Releases are identified by version bump commits and `GIT_SHA` build metadata. |
 | Package version | `0.2.2` (bumped in `8cfd9a1`; `0efb975` is a fix released under the same version) |
 | Deployed service | Docker container `mynotes` is healthy and reports `APP_VERSION=0.2.2`, `GIT_SHA=0efb975` |
-| Migrations | `001_initial` … `005_mcp_api_keys` are released. The next free id is **6**. |
+| Migrations | `001_initial` … `005_mcp_api_keys` were released at baseline. Since then: 006 documents, 007 bin, 008 note search (v0.5.0); 009 task boards, 010 MCP key scopes, 012 collections, 013 calendar are in flight (ids pre-assigned in docs/plan/WAVES_*.md); 011 task dates is next for Wave 10. |
 | Tests | `tests/api.test.ts` (API/integration; asserts migration ids `[1,2,3,4,5]`), `tests/mobileNavigation.test.ts`, `tests/appShellNavigation.test.ts` |
 
 ### Wave history
@@ -59,7 +59,7 @@ These facts were checked against git and the running container when this plan wa
 - **Storage:** `server/storage.ts` validates UUIDs, confines paths to `DATA_DIR`, and rejects symlinks via `lstat`, `realpath`, and `O_NOFOLLOW`. Writes are atomic (temp file, fsync, rename, directory fsync) with files at `0600` and directories at `0700`. `withNoteLock` serializes work per note id. Layout: `notes/<uuid>/{current.md,draft.md,versions/000001.md}`.
 - **ACL:**
   - Notes: owner OR (`sharing_override=1` and note visibility/`note_shares`) OR (`sharing_override=0` and the **immediate** folder's visibility/`folder_shares`).
-  - The same predicate is duplicated in `server/access.ts`, the `GET /api/notes` query, and `server/mcp.ts`.
+  - The predicate is `readableNotePredicate` in `server/access.ts` (extracted in Wave 7); `GET /api/notes` still has an inline copy, and the MCP tools in `server/mcpTools.ts` use the shared one.
   - Recipients never see a shared folder's `parent_id`. Folder sharing does **not** cascade to subfolders.
   - Only owners mutate anything. Missing and forbidden both return 404.
 - **Deletion today:**
