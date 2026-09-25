@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LayoutGrid, List as ListIcon, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LayoutGrid, List as ListIcon, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Trash2, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
@@ -57,6 +57,8 @@ type FilesAppProps = {
   navigate: FilesNavigate;
   flash: (message: string) => void;
   onHome: () => void;
+  /** Opens the Bin; the rail footer entry is hidden when the host does not wire it. */
+  onBin?: () => void;
   onSettings: () => void;
   onSignOut: () => void;
 };
@@ -88,7 +90,7 @@ function browserStorage(): Storage | null {
 
 const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", uploading: "Uploading", done: "Uploaded", failed: "Failed", canceled: "Canceled" };
 
-export function FilesApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut }: FilesAppProps) {
+export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, onSettings, onSignOut }: FilesAppProps) {
   const [data, setData] = useState<LoadedData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -638,6 +640,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           <strong>{displayName}</strong>
           <span><Settings />Settings</span>
         </button>
+        {onBin && <button className="footer-bin" onClick={() => leaveFiles(onBin)}><Trash2 />Bin</button>}
         <button className="footer-signout" onClick={() => leaveFiles(onSignOut)}><LogOut />Sign out</button>
       </footer>
     </aside>

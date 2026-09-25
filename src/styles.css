@@ -97,9 +97,9 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .footer-settings strong { overflow-wrap: anywhere; font-size: .88rem; line-height: 1.25; }
 .footer-settings span { display: flex; align-items: center; gap: 6px; color: #85858c; font-size: .74rem; }
 .footer-settings span svg { width: 14px; height: 14px; flex: none; }
-.footer-signout { display: flex; align-items: center; gap: 9px; padding: 9px 10px; color: #77777f; text-align: left; }
-.footer-signout:hover { background: #171719; color: #ddd; }
-.footer-signout svg { width: 16px; }
+.footer-signout, .footer-bin { display: flex; align-items: center; gap: 9px; padding: 9px 10px; color: #77777f; text-align: left; }
+.footer-signout:hover, .footer-bin:hover { background: #171719; color: #ddd; }
+.footer-signout svg, .footer-bin svg { width: 16px; }
 
 .note-pane { display: flex; flex-direction: column; background: #111113; border-right: 1px solid var(--border); }
 .note-pane-header { padding: 22px 18px 14px; position: relative; }
@@ -345,6 +345,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 @media (max-width: 760px) {
   body { overflow: hidden; }
+  .footer-bin, .footer-signout { min-height: 44px; }
   .workspace, .workspace.nav-collapsed { display: block; position: relative; height: 100dvh; padding-bottom: 61px; }
   .folder-pane, .note-pane, .editor-pane { position: absolute; inset: 0 0 61px; width: 100%; border: 0; visibility: hidden; transform: translateX(12px); opacity: 0; pointer-events: none; transition: opacity .16s ease, transform .16s ease; }
   .workspace[data-mobile-panel="folders"] .folder-pane, .workspace[data-mobile-panel="notes"] .note-pane, .workspace[data-mobile-panel="editor"] .editor-pane { visibility: visible; transform: none; opacity: 1; pointer-events: auto; }

@@ -4,7 +4,7 @@ This guide covers the apps a signed-in user sees. For installing, configuring, b
 
 ## Home and URLs
 
-Signing in lands on **Home**, which links to Notes, Files, Tasks, and the Bin; each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
+Signing in lands on **Home**, which links to Notes, Files, and Tasks, with the Bin next to Settings and Sign out at the top (a small count shows when it holds items); each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
 
 | URL | View |
 | --- | --- |
@@ -85,7 +85,7 @@ Tasks holds kanban boards. A new board starts with **To do**, **Doing**, and **D
 
 ## Bin
 
-Deleting a note, a file, a card, or a board moves it to the shared **Bin** (Home → Bin, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists your own deleted items, newest first, with the days left for each; filter by notes, files, or tasks.
+Deleting a note, a file, a card, or a board moves it to the shared **Bin** (the **Bin** button next to Settings on Home, the **Bin** entry in the Notes and Files sidebar footers, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists only your own deleted items, newest first, with the days left for each; filter by notes, files, or tasks.
 
 - **Cards and boards.** A deleted board is listed for its owner. A deleted card is listed for the board's owner and for the person who deleted it (while they can still open the board); either can restore it, but only the owner can delete it forever. A restored card returns to the bottom of its column, or of the first column if its column was deleted. A card on a deleted board can be restored only after the board. Deleting a card or a board from Tasks offers **Undo** in the toast.
 - **Attachments.** When a card or board is deleted forever, or a file is removed from the last card that used it, the file moves to its uploader's Bin, labelled as a card attachment. Restoring it puts it in Files, in your Default folder.

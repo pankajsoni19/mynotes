@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AppHome } from "../src/AppShell";
+import { AccountActions, AppHome } from "../src/AppShell";
 import { BinApp } from "../src/bin/BinApp";
 
 const account = { displayName: "Ada Lovelace", onSettings: () => undefined, onSignOut: () => undefined };
@@ -10,16 +10,29 @@ function accountButtons(markup: string) {
   return [...group.matchAll(/<button[^>]*>/g)].map(([tag]) => tag);
 }
 
-test("Home offers Settings and Sign out in its header", () => {
+test("Home offers Settings, Bin, and Sign out in its header", () => {
   const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
   // The header names the section only; the product name lives on the login page and the document title.
   expect(markup).toContain('<span class="brand-text"><strong>Home</strong></span>');
   expect(markup).not.toContain("<small>Nook</small>");
   const buttons = accountButtons(markup);
-  expect(buttons).toHaveLength(2);
+  expect(buttons).toHaveLength(3);
   expect(buttons[0]).toContain('aria-controls="account-settings-dialog"');
   expect(buttons[0]).toContain('aria-label="Open settings for Ada Lovelace"');
-  expect(buttons[1]).toContain('title="Sign out"');
+  expect(buttons[1]).toContain('title="Bin"');
+  expect(buttons[1]).toContain('aria-label="Bin"');
+  expect(buttons[2]).toContain('title="Sign out"');
+  // The count badge waits for the lazy Bin fetch, so the first render has none.
+  expect(markup).not.toContain("app-account-badge");
+});
+
+test("the Home Bin button shows a count badge only when the Bin has items", () => {
+  const empty = renderToStaticMarkup(<AccountActions {...account} onBin={() => undefined} binCount={0} />);
+  expect(empty).not.toContain("app-account-badge");
+  const full = renderToStaticMarkup(<AccountActions {...account} onBin={() => undefined} binCount={3} />);
+  expect(full).toContain('aria-label="Bin, 3 items"');
+  expect(full).toContain('<span class="app-account-badge" aria-hidden="true">3</span>');
+  expect(renderToStaticMarkup(<AccountActions {...account} onBin={() => undefined} binCount={140} />)).toContain(">99+</span>");
 });
 
 test("the Bin app offers Home and the same account actions", () => {
@@ -35,16 +48,14 @@ test("the Bin app offers Home and the same account actions", () => {
   for (const label of ["All", "Notes", "Files"]) expect(markup).toContain(`>${label}</button>`);
 });
 
-test("Home opens Files and Bin as live apps", () => {
+test("Home opens Files as a live app and keeps the Bin out of the grid", () => {
   const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
   const files = markup.match(/<button class="app-card app-card-files">(.*?)<\/button>/)?.[1] ?? "";
   expect(files).toContain("Your workspace");
   expect(files).toContain("Upload, preview, and organize documents next to your notes.");
   expect(files).toContain("Open Files");
-  const bin = markup.match(/<button class="app-card app-card-bin">(.*?)<\/button>/)?.[1] ?? "";
-  expect(bin).toContain("Restore deleted notes and files for 30 days");
-  expect(bin).toContain("Open Bin");
-  expect(bin).not.toContain("Coming next");
+  expect(markup).not.toContain("app-card-bin");
+  expect(markup).not.toContain("Open Bin");
 });
 
 test("Home opens Tasks as a live app", () => {
@@ -52,5 +63,5 @@ test("Home opens Tasks as a live app", () => {
   const tasks = markup.match(/<button class="app-card app-card-tasks">(.*?)<\/button>/)?.[1] ?? "";
   expect(tasks).toContain("Plan work on shared boards with draggable cards");
   expect(tasks).toContain("Open Tasks");
-  expect([...markup.matchAll(/class="app-card app-card-(\w+)"/g)].map((match) => match[1])).toEqual(["notes", "files", "tasks", "bin"]);
+  expect([...markup.matchAll(/class="app-card app-card-(\w+)"/g)].map((match) => match[1])).toEqual(["notes", "files", "tasks"]);
 });
