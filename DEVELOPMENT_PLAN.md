@@ -10,6 +10,7 @@ This is the handoff for the rest of the requested work. A new Claude Code sessio
 | [docs/plan/TEST_PLAN.md](docs/plan/TEST_PLAN.md) | Automated and manual tests each wave must add or pass |
 | [TODO.md](TODO.md) | Checklist that tracks wave status |
 | [docs/plan/WAVES_7-9.md](docs/plan/WAVES_7-9.md) | Planned follow-on waves: full-text search, Task Boards, MCP scopes (added 2026-09-25) |
+| [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md) | Planned follow-on waves: Today dashboard, Collections, Calendar and reminders (added 2026-09-25) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current architecture. Update it when a wave ships. |
 
 **Rules for implementers**
