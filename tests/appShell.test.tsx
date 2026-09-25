@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AccountActions, AppHome } from "../src/AppShell";
+import { AccountActions } from "../src/AppShell";
+import { TodayHome } from "../src/today/TodayHome";
+import { storageText, TODAY_SECTIONS } from "../src/today/todaySections";
 import { BinApp } from "../src/bin/BinApp";
 
 const account = { displayName: "Ada Lovelace", onSettings: () => undefined, onSignOut: () => undefined };
+const home = () => renderToStaticMarkup(<TodayHome {...account} userId="u1" onOpen={() => undefined} onOpenRoute={() => undefined} />);
 
 function accountButtons(markup: string) {
   const group = markup.match(/<div class="app-account" role="group" aria-label="Account">(.*?)<\/div>/)?.[1] ?? "";
@@ -11,7 +14,7 @@ function accountButtons(markup: string) {
 }
 
 test("Home offers Settings, Bin, and Sign out in its header", () => {
-  const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
+  const markup = home();
   // The header names the section only; the product name lives on the login page and the document title.
   expect(markup).toContain('<span class="brand-text"><strong>Home</strong></span>');
   expect(markup).not.toContain("<small>Nook</small>");
@@ -48,22 +51,36 @@ test("the Bin app offers Home and the same account actions", () => {
   for (const label of ["All", "Notes", "Files"]) expect(markup).toContain(`>${label}</button>`);
 });
 
-test("Home opens Files as a live app and keeps the Bin out of the grid", () => {
-  const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
-  const files = markup.match(/<button class="app-card app-card-files">(.*?)<\/button>/)?.[1] ?? "";
-  expect(files).toContain("Your workspace");
-  expect(files).toContain("Upload, preview, and organize documents next to your notes.");
-  expect(files).toContain("Open Files");
-  expect(markup).not.toContain("app-card-bin");
-  expect(markup).not.toContain("Open Bin");
+test("Today keeps the greeting and a launcher row of real links, without the Bin", () => {
+  const markup = home();
+  expect(markup).toContain("Good to see you, Ada.");
+  const launcher = markup.match(/<nav class="today-launcher" aria-label="Apps">(.*?)<\/nav>/)?.[1] ?? "";
+  expect([...launcher.matchAll(/<a class="today-app today-app-(\w+)" href="([^"]+)"/g)].map((match) => [match[1], match[2]])).toEqual([["notes", "/notes"], ["files", "/files"], ["tasks", "/tasks"]]);
+  expect(launcher).not.toContain("Bin");
+  expect(markup).not.toContain("app-card");
 });
 
-test("Home opens Tasks as a live app", () => {
-  const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
-  const tasks = markup.match(/<button class="app-card app-card-tasks">(.*?)<\/button>/)?.[1] ?? "";
-  expect(tasks).toContain("Plan work on shared boards with draggable cards");
-  expect(tasks).toContain("Open Tasks");
-  expect([...markup.matchAll(/class="app-card app-card-(\w+)"/g)].map((match) => match[1])).toEqual(["notes", "files", "tasks"]);
+test("Today starts with busy skeleton sections, each labelled by its heading", () => {
+  const markup = home();
+  expect(markup).toContain('<div class="today-grid" aria-busy="true">');
+  const sections = [...markup.matchAll(/<section class="today-section today-section-(\w+)" aria-labelledby="today-(\w+)"/g)];
+  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "binSoon", "storage"]);
+  for (const [, name] of sections) expect(markup).toContain(`<h2 id="today-${name}">${TODAY_SECTIONS[name!]!.title}</h2>`);
+  expect(markup).toContain('class="today-skeleton" aria-hidden="true"');
+  expect(markup).toContain('role="status" aria-live="polite"');
+  expect(markup).toContain(">Refresh</button>");
+});
+
+test("Today rows link to their app routes and show due and storage copy", () => {
+  const due = TODAY_SECTIONS.tasksDue!.row!({ cardId: "c", boardId: "b", boardName: "Home", title: "Pay rent", dueOn: "2026-09-20", overdue: true }, "2026-09-25");
+  expect(due).toMatchObject({ label: "Pay rent", tone: "overdue", route: { app: "tasks", boardId: "b", cardId: "c" } });
+  expect(due.meta).toContain("Home · Overdue");
+  expect(TODAY_SECTIONS.tasksMine!.row!({ cardId: "c", boardId: "b", boardName: "Home", title: "x", dueOn: null, reason: "assigned" }, "2026-09-25").meta).toBe("Home · Assigned to you");
+  expect(TODAY_SECTIONS.notesRecent!.row!({ id: "n", title: "", is_owner: 0, owner_name: "Bo", updated_at: new Date().toISOString() }, "").label).toBe("Untitled");
+  expect(TODAY_SECTIONS.binSoon!.row!({ type: "document", id: "d", title: "a.pdf", purge_after: new Date(Date.now() + 86_400_000).toISOString() }, "").route).toEqual({ app: "bin" });
+  expect(TODAY_SECTIONS.drafts!.row!({ id: "n", title: "T", neverPublished: true, updated_at: new Date().toISOString() }, "").meta).toContain("Never published");
+  expect(storageText({ usedBytes: 3.2 * 1024 ** 3, binnedBytes: 0, quotaBytes: 10 * 1024 ** 3 }).summary).toBe("3.2 GB of 10 GB");
+  expect(storageText({ usedBytes: 0, binnedBytes: 0, quotaBytes: null })).toEqual({ summary: "0 B used", detail: "No storage limit" });
 });
 
 test("account buttons have 44px hit areas on phones without growing the icon", async () => {

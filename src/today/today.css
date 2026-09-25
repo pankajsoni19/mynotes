@@ -1,0 +1,50 @@
+/* Today (WAVES_10-12.md §2.3). Home keeps its header and background from appShell.css. */
+/* The body never scrolls (styles.css); Today scrolls inside its own page. */
+.today-home { height: 100dvh; overflow-y: auto; overscroll-behavior: contain; }
+.today-home .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.today-content { width: min(1180px, calc(100vw - 40px)); margin: 0 auto; padding: clamp(36px, 7vh, 72px) 0 56px; }
+.today-intro h1 { max-width: 760px; margin: 9px 0 22px; color: #fafafa; font-size: clamp(2rem, 4.4vw, 3.6rem); letter-spacing: -.06em; line-height: 1.04; }
+.today-launcher ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 10px; }
+.today-app { min-height: 48px; display: inline-flex; align-items: center; gap: 10px; border: 1px solid #303035; border-radius: 14px; padding: 6px 18px 6px 7px; background: linear-gradient(145deg, rgb(34 34 38 / 96%), #151517); color: #f2f2f3; font-size: .92rem; font-weight: 650; text-decoration: none; transition: border-color .16s ease, background .16s ease; }
+.today-app:hover { border-color: #6f5928; background: linear-gradient(145deg, #30291c, #181719); }
+.today-app:focus-visible, .today-row:focus-visible, .today-view-all:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.today-app-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: #2d281b; color: #f4ca67; }
+.today-app-icon svg { width: 17px; }
+.today-toolbar { display: flex; align-items: center; gap: 10px; margin: clamp(30px, 5vh, 48px) 0 14px; }
+.today-toolbar-title { flex: 1; min-width: 0; margin: 0; color: #c9c9ce; font-size: .82rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.today-refresh, .today-retry, .today-customize { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; font-size: .82rem; font-weight: 600; }
+.today-refresh svg, .today-retry svg, .today-customize svg { width: 15px; }
+.today-refresh .spinning { animation: today-spin 1s linear infinite; }
+@keyframes today-spin { to { transform: rotate(360deg); } }
+.today-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+.today-section { min-width: 0; border: 1px solid #28282d; border-radius: 16px; padding: 16px 16px 12px; background: #131315; }
+.today-section-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.today-section h2 { margin: 0; color: #f2f2f3; font-size: 1rem; letter-spacing: -.02em; }
+.today-view-all { min-height: 32px; display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 0 6px; color: #efc866; font-size: .78rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.today-view-all:hover { background: #211d14; }
+.today-view-all svg { width: 14px; }
+.today-list { margin: 0 -8px; padding: 0; list-style: none; display: grid; }
+.today-row { min-height: 40px; display: grid; align-content: center; gap: 1px; border-radius: 9px; padding: 6px 8px; color: #e8e8ea; text-decoration: none; }
+.today-row:hover { background: #1c1c1f; }
+.today-row-label { overflow: hidden; font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; }
+.today-row-meta { overflow: hidden; color: #85858c; font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+.today-row.overdue .today-row-meta { color: #ffb4a8; }
+.today-row.today .today-row-meta, .today-row.soon .today-row-meta { color: #d9bf7e; }
+.today-empty, .today-more { margin: 4px 0; color: #85858c; font-size: .84rem; }
+.today-more { margin-top: 8px; font-size: .76rem; }
+.today-skeleton { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.today-skeleton li { height: 30px; border-radius: 8px; background: linear-gradient(90deg, #1a1a1d, #222226, #1a1a1d); background-size: 200% 100%; animation: today-shimmer 1.4s ease infinite; }
+@keyframes today-shimmer { to { background-position: -200% 0; } }
+.today-section-error { display: grid; justify-items: start; gap: 8px; }
+.today-section-error p { margin: 0; color: #ffb4a8; font-size: .84rem; }
+.today-load-error { display: grid; justify-items: start; gap: 8px; border: 1px solid #3a2522; border-radius: 16px; padding: 20px; background: #171112; }
+.today-load-error h2, .today-load-error p { margin: 0; }
+.today-load-error p { color: #b9a4a1; }
+.today-load-error .primary-button { display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; }
+.today-storage { display: grid; gap: 8px; }
+.today-storage-summary { margin: 0; color: #f2f2f3; font-size: 1.2rem; font-weight: 650; letter-spacing: -.02em; }
+.today-meter { height: 8px; overflow: hidden; border-radius: 999px; background: #232327; }
+.today-meter span { display: block; height: 100%; border-radius: inherit; background: var(--yellow); }
+.today-meter.high span { background: #ff8c7a; }
+.today-storage-detail { margin: 0; color: #85858c; font-size: .78rem; }
+@media (prefers-reduced-motion: reduce) { .today-app { transition: none; } .today-skeleton li, .today-refresh .spinning { animation: none; } }

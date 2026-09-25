@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
-import { AppHome } from "./AppShell";
+import { TodayHome } from "./today/TodayHome";
 import { BinApp } from "./bin/BinApp";
 import { FilesApp } from "./files/FilesApp";
 import { TasksApp } from "./tasks/TasksApp";
@@ -1145,13 +1145,13 @@ export function App() {
 
   // Applies a Notes URL reached through Back/Forward. The browser has already moved, so on failure
   // the entry is rewritten to the note that is still open.
-  async function restoreNotesRoute(route: NotesRoute, snapshot: MobileNavigationSnapshot | null) {
+  async function restoreNotesRoute(route: NotesRoute, snapshot: MobileNavigationSnapshot | null, data: { folders: Folder[]; notes: NoteSummary[] } = { folders, notes }) {
     if (!session) return;
     if (switchingRef.current) {
       navigate(routeForApp(activeApp), { replace: true });
       return;
     }
-    const resolved = resolveNotesRoute(route, { folders, notes }, { snapshot, lastFolder: selectedFolder });
+    const resolved = resolveNotesRoute(route, data, { snapshot, lastFolder: selectedFolder });
     const targetPanel = resolveNotesPanel(resolved, snapshot);
     const selectionChanged = resolved.folder !== selectedFolder || resolved.noteId !== selectedNoteId;
     switchingRef.current = true;
@@ -1228,6 +1228,28 @@ export function App() {
 
   function openHome() {
     return openApp("home");
+  }
+
+  // A link on Today opens its route as a new entry (depth + 1), so Back returns to Today. Notes
+  // reloads its lists first so an item Today just listed is known to the Notes view.
+  async function openTodayRoute(route: Route) {
+    if (!session || activeApp !== "home" || route.app === "home") return;
+    if (route.app !== "notes") {
+      navigate(route);
+      setActiveApp(route.app);
+      return;
+    }
+    const panel = route.noteId ? "editor" : "folders";
+    navigate(route, { panel });
+    try {
+      const data = await loadNavigation();
+      if (data.stale) return;
+      await restoreNotesRoute(route, null, data);
+    } catch (reason) {
+      flash(reason instanceof Error ? reason.message : "Could not open your notes");
+      // Step back to the Today entry this link pushed.
+      window.history.back();
+    }
   }
 
   async function leaveNotesFromHistory(route: Route) {
@@ -1441,7 +1463,7 @@ export function App() {
   const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
 
   if (activeApp !== "notes" && !session.totp.setupRequired) return <>
-    {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
+    {activeApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}

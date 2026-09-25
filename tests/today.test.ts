@@ -142,6 +142,8 @@ describe("GET /api/today", () => {
     expect(validTimeZone("Etc/GMT+12")).toBe("Etc/GMT+12");
     expect(validTimeZone("UTC")).toBe("UTC");
     expect(validTimeZone("Mars/Olympus")).toBeNull();
+    // An alias a browser still reports is accepted as sent.
+    expect(validTimeZone("Asia/Calcutta")).toBe("Asia/Calcutta");
     // 10:00Z is midnight on the 26th at UTC+14; 12:00Z is midnight on the 25th at UTC-12.
     expect(dateInZone(new Date("2026-09-25T10:00:00Z"), "Pacific/Kiritimati")).toBe("2026-09-26");
     expect(dateInZone(new Date("2026-09-25T09:59:59Z"), "Pacific/Kiritimati")).toBe("2026-09-25");

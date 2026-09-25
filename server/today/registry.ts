@@ -85,15 +85,18 @@ export async function loadToday(context: TodayContext, only?: readonly string[])
 const supportedZones = new Set(Intl.supportedValuesOf("timeZone"));
 
 /**
- * The zone if it is one of `Intl.supportedValuesOf("timeZone")` (or an alias
- * that canonicalizes to one, such as a browser's older name), else null.
+ * The zone if it is one of `Intl.supportedValuesOf("timeZone")`, or an alias
+ * the same ICU data accepts. Browsers still report older names (Chrome says
+ * "Asia/Calcutta" while the list has only "Asia/Kolkata"), and JavaScriptCore
+ * does not canonicalize them, so an alias is kept as sent. Anything else is
+ * refused before it reaches a formatter (T71).
  */
 export function validTimeZone(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 64 || !/^[A-Za-z][A-Za-z0-9_+\-/]*$/.test(value)) return null;
   if (supportedZones.has(value)) return value;
   try {
-    const canonical = new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone;
-    return supportedZones.has(canonical) ? canonical : null;
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return value;
   } catch {
     return null;
   }
