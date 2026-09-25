@@ -35,8 +35,12 @@ export function deleteForeverConfirm(title: string) {
   return `Permanently delete “${title}”? This can't be undone.`;
 }
 
+/** GET /api/bin returns at most this many items; a full page may mean there are more. */
+export const BIN_LIST_LIMIT = 500;
+
 export function emptyBinConfirm(count: number) {
-  return `Permanently delete ${count === 1 ? "1 item" : `${count} items`} in the Bin? This can't be undone.`;
+  const items = count >= BIN_LIST_LIMIT ? `all ${BIN_LIST_LIMIT}+ items` : count === 1 ? "1 item" : `${count} items`;
+  return `Permanently delete ${items} in the Bin? This can't be undone.`;
 }
 
 const sharedSuffix: Record<Visibility, string> = { private: "", selected: " · shared with selected people", all_users: " · shared with everyone" };

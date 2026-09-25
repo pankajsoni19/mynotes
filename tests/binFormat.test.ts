@@ -56,6 +56,8 @@ describe("Bin labels and copy", () => {
     expect(deleteForeverConfirm("Plan")).toBe("Permanently delete “Plan”? This can't be undone.");
     expect(emptyBinConfirm(1)).toBe("Permanently delete 1 item in the Bin? This can't be undone.");
     expect(emptyBinConfirm(4)).toBe("Permanently delete 4 items in the Bin? This can't be undone.");
+    expect(emptyBinConfirm(499)).toBe("Permanently delete 499 items in the Bin? This can't be undone.");
+    expect(emptyBinConfirm(500)).toBe("Permanently delete all 500+ items in the Bin? This can't be undone.");
     expect(restoredMessage("Projects", "private")).toBe("Restored to Projects");
     expect(restoredMessage("Default", "all_users")).toBe("Restored to Default · shared with everyone");
     expect(restoredMessage("Team", "selected")).toBe("Restored to Team · shared with selected people");

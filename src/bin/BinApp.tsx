@@ -51,6 +51,9 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
   const [sheetKey, setSheetKey] = useState<string | null>(null);
   const loadGenerationRef = useRef(0);
   const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
+  // Items whose Delete forever request failed or is still finishing. A 404 on the next
+  // attempt then means the earlier one completed.
+  const retriedDeletesRef = useRef(new Set<string>());
 
   const load = useCallback(async () => {
     const generation = ++loadGenerationRef.current;
@@ -71,7 +74,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     sheetReturnFocusRef.current = null;
   }, []);
 
-  // D18: Back/Forward closes an open action sheet before anything else happens.
+  // The sheet has no history entry of its own, so Back/Forward (and Escape) just close it.
   useEffect(() => {
     if (!sheetKey) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeSheet(); };
@@ -126,19 +129,29 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     try {
       const result = await deleteBinItem(item);
       if (result.pending) {
+        retriedDeletesRef.current.add(itemKey(item));
         setItems((current) => current?.map((entry) => itemKey(entry) === itemKey(item) ? { ...entry, purging: true } : entry) ?? current);
         flash("Deleting forever. This will finish shortly.");
       } else {
+        retriedDeletesRef.current.delete(itemKey(item));
         removeItem(item);
         flash("Deleted forever");
       }
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 404) {
-        // Already gone, for example after an earlier attempt that finished.
+      const retry = retriedDeletesRef.current.has(itemKey(item));
+      if (reason instanceof ApiError && reason.status === 404 && retry) {
+        // An earlier attempt finished after all.
+        retriedDeletesRef.current.delete(itemKey(item));
         removeItem(item);
         flash("Deleted forever");
       } else {
-        flash(errorCode(reason) === "NOT_IN_BIN" ? "This item was already restored" : reason instanceof Error ? reason.message : "Could not delete this item");
+        if (reason instanceof ApiError && reason.status === 404) flash("This item is no longer in the Bin");
+        else if (errorCode(reason) === "NOT_IN_BIN") flash("This item was already restored");
+        else {
+          // The request may or may not have reached the server; a later 404 means it did.
+          retriedDeletesRef.current.add(itemKey(item));
+          flash(reason instanceof Error ? reason.message : "Could not delete this item");
+        }
         void load();
       }
     } finally {
