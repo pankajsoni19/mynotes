@@ -34,8 +34,10 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
+import { AppHome, AppPlaceholder } from "./AppShell";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
+import { createAppHistoryState, readAppHistorySection, type AppSection } from "./appShellNavigation";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
@@ -564,6 +566,7 @@ function FolderSharePanel({ folder, onClose, onChanged }: { folder: Folder; onCl
 export function App() {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [checking, setChecking] = useState(true);
+  const [activeApp, setActiveApp] = useState<AppSection>("home");
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<FolderSelection>("all");
@@ -592,6 +595,7 @@ export function App() {
   const switchingRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
   const historyInitialisedRef = useRef(false);
+  const appHistoryInitialisedRef = useRef(false);
   const newlyCreatedNoteIdRef = useRef<string | null>(null);
 
   const flash = useCallback((message: string) => {
@@ -630,6 +634,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!session || appHistoryInitialisedRef.current || !isMobileViewport()) return;
+    window.history.replaceState(createAppHistoryState(session.user.id, "home", window.history.state), "");
+    appHistoryInitialisedRef.current = true;
+  }, [session]);
+
+  useEffect(() => {
     if (!session) return;
     if (session.totp.setupRequired) setSettingsOpen(true);
     else {
@@ -650,13 +660,13 @@ export function App() {
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
-  }, [selectedFolder, selectedNoteId, selectionOwner, session]);
+  }, [activeApp, selectedFolder, selectedNoteId, selectionOwner, session]);
   useEffect(() => {
-    if (!session || selectionOwner !== session.user.id || historyInitialisedRef.current || !isMobileViewport()) return;
+    if (!session || activeApp !== "notes" || selectionOwner !== session.user.id || historyInitialisedRef.current || !isMobileViewport()) return;
     const snapshot: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
-    window.history.replaceState(createHistoryState(session.user.id, snapshot, window.history.state), "");
+    window.history.replaceState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, snapshot, window.history.state)), "");
     historyInitialisedRef.current = true;
-  }, [selectedFolder, selectedNoteId, selectionOwner, session]);
+  }, [activeApp, selectedFolder, selectedNoteId, selectionOwner, session]);
   useEffect(() => {
     if (selectedNoteId) loadNote(selectedNoteId);
     else {
@@ -747,7 +757,7 @@ export function App() {
     let current = readHistorySnapshot(window.history.state, session.user.id);
     if (!current) {
       const initial: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
-      window.history.replaceState(createHistoryState(session.user.id, initial, window.history.state), "");
+      window.history.replaceState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, initial, window.history.state)), "");
       current = initial;
     }
     if (current && sameSnapshot(current, snapshot)) return;
@@ -951,6 +961,28 @@ export function App() {
     }
   }
 
+  function openApp(section: AppSection) {
+    if (!session) return;
+    if (section === "notes") {
+      setMobilePanel("folders");
+      historyInitialisedRef.current = false;
+      if (isMobileViewport()) {
+        const snapshot: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
+        window.history.pushState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, snapshot, window.history.state)), "");
+        historyInitialisedRef.current = true;
+      }
+    } else if (isMobileViewport()) {
+      window.history.pushState(createAppHistoryState(session.user.id, section, window.history.state), "");
+    }
+    setActiveApp(section);
+  }
+
+  function openHome() {
+    if (!session) return;
+    if (isMobileViewport()) window.history.pushState(createAppHistoryState(session.user.id, "home", window.history.state), "");
+    setActiveApp("home");
+  }
+
   function mobileBack(fallback: MobilePanel) {
     if (session && isMobileViewport() && readHistorySnapshot(window.history.state, session.user.id)) {
       window.history.back();
@@ -963,12 +995,15 @@ export function App() {
     if (!session) return;
     const onPopState = (event: PopStateEvent) => {
       if (!isMobileViewport()) return;
+      const section = readAppHistorySection(event.state, session.user.id);
+      if (section && section !== activeApp) setActiveApp(section);
+      if (section && section !== "notes") return;
       const snapshot = readHistorySnapshot(event.state, session.user.id);
       if (snapshot) void restoreMobileHistory(snapshot);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [folders, hasPublishableDelta, notes, selectedFolder, selectedNoteId, session, flash]);
+  }, [activeApp, folders, hasPublishableDelta, notes, selectedFolder, selectedNoteId, session, flash]);
 
   async function logout() {
     await api("/auth/logout", { method: "POST", body: "{}" });
@@ -986,7 +1021,9 @@ export function App() {
     revisionRef.current = null;
     loadedRef.current = "";
     historyInitialisedRef.current = false;
+    appHistoryInitialisedRef.current = false;
     newlyCreatedNoteIdRef.current = null;
+    setActiveApp("home");
     setSession(null);
   }
 
@@ -1005,15 +1042,19 @@ export function App() {
     revisionRef.current = null;
     loadedRef.current = "";
     newlyCreatedNoteIdRef.current = null;
+    setActiveApp("home");
     setSession(result);
     setChecking(false);
   }} />;
+
+  if (activeApp === "home" && !session.totp.setupRequired) return <AppHome displayName={session.user.displayName} onOpen={openApp} />;
+  if ((activeApp === "files" || activeApp === "bin") && !session.totp.setupRequired) return <AppPlaceholder section={activeApp} onHome={openHome} onOpenNotes={() => openApp("notes")} />;
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
         <header className="sidebar-header">
-          <div className="sidebar-brand"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></div>
+          <button className="sidebar-brand sidebar-home-button" onClick={openHome} aria-label="Open MyNotes home"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></button>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">

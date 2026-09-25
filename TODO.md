@@ -21,6 +21,9 @@
 - [x] API tests for authorization, CSRF, sharing, concurrency, permissions, recovery, and symlink safety
 
 ## Frontend
+- [x] Authenticated Home app selector for Notes, Files, and Bin foundations
+- [ ] Secure documents/files workspace: uploads, previews, download, rename, folder moves, and retention bin
+- [ ] Shared 30-day Bin for restoring deleted notes and documents
 
 - [x] Minimal login / registration landing page
 - [x] Wide account settings dialog with responsive security navigation
