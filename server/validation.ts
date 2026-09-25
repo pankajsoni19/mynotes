@@ -114,3 +114,52 @@ export function deriveNoteTitle(markdown: string) {
   }
   return "New note";
 }
+
+const MAX_DISPLAY_NAME_BYTES = 255;
+const MAX_PRESERVED_EXTENSION_BYTES = 32;
+// C0 and C1 controls, DEL, bidi embeddings/overrides/isolates/marks, and zero-width characters.
+const strippedCharacters = /[\u0000-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+const utf8Length = (value: string) => Buffer.byteLength(value, "utf8");
+const cleanEdges = (value: string) => value.replace(/^[\s.]+|[\s.]+$/g, "");
+
+function truncateUtf8(value: string, maxBytes: number) {
+  let result = "";
+  let bytes = 0;
+  for (const codePoint of value) {
+    const size = utf8Length(codePoint);
+    if (bytes + size > maxBytes) break;
+    result += codePoint;
+    bytes += size;
+  }
+  return result;
+}
+
+/**
+ * Sanitizes a document display name (DEVELOPMENT_PLAN §6.4). The result is
+ * only ever stored in SQLite and never used in a filesystem path.
+ *
+ * - "upload": falls back to "Untitled" and truncates to 255 UTF-8 bytes,
+ *   keeping a short extension when possible.
+ * - "rename": returns null when the result is empty or longer than 255 bytes.
+ */
+export function sanitizeDisplayName(input: string, mode: "upload" | "rename"): string | null {
+  const cleaned = cleanEdges(
+    input
+      .replace(/\p{Cs}/gu, "")
+      .normalize("NFC")
+      .replace(strippedCharacters, "")
+      .replace(/[/\\:]/g, "-")
+      .replace(/\s+/g, " ")
+  );
+  const valid = cleaned !== "" && cleaned !== "." && cleaned !== "..";
+  if (mode === "rename") return valid && utf8Length(cleaned) <= MAX_DISPLAY_NAME_BYTES ? cleaned : null;
+  if (!valid) return "Untitled";
+  if (utf8Length(cleaned) <= MAX_DISPLAY_NAME_BYTES) return cleaned;
+  const dot = cleaned.lastIndexOf(".");
+  const extension = dot > 0 ? cleaned.slice(dot) : "";
+  if (extension && utf8Length(extension) <= MAX_PRESERVED_EXTENSION_BYTES && !/\s/.test(extension)) {
+    const base = cleanEdges(truncateUtf8(cleaned.slice(0, dot), MAX_DISPLAY_NAME_BYTES - utf8Length(extension)));
+    if (base) return `${base}${extension}`;
+  }
+  return cleanEdges(truncateUtf8(cleaned, MAX_DISPLAY_NAME_BYTES)) || "Untitled";
+}

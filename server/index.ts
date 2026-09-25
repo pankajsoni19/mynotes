@@ -8,6 +8,7 @@ import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from 
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
 import { ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
+import { startSweeper } from "./sweeper";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
   draftSchema,
@@ -786,6 +787,7 @@ async function reconcilePublishedMirrors() {
 }
 
 await reconcilePublishedMirrors();
+startSweeper();
 
 export default {
   port: config.port,

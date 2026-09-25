@@ -5,21 +5,23 @@ import { dirname, join, resolve, sep } from "node:path";
 import { config } from "./config";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const noteQueues = new Map<string, Promise<void>>();
+const resourceQueues = new Map<string, Promise<void>>();
+
+export const isStorageId = (value: string) => uuidPattern.test(value);
 
 function safeNoteId(noteId: string) {
   if (!uuidPattern.test(noteId)) throw new Error("Invalid note id");
   return noteId;
 }
 
-function withinDataRoot(path: string) {
+export function withinDataRoot(path: string) {
   const root = resolve(config.dataDir);
   const target = resolve(path);
   if (target !== root && !target.startsWith(root + sep)) throw new Error("Unsafe storage path");
   return target;
 }
 
-async function ensureDirectory(path: string) {
+export async function ensureDirectory(path: string) {
   const target = withinDataRoot(path);
   await mkdir(target, { recursive: true, mode: 0o700 });
   const info = await lstat(target);
@@ -71,7 +73,7 @@ async function atomicWrite(path: string, content: string) {
   await syncDirectory(dirname(path));
 }
 
-async function syncDirectory(path: string) {
+export async function syncDirectory(path: string) {
   try {
     const handle = await open(path, constants.O_RDONLY);
     try {
@@ -108,20 +110,27 @@ async function writeVersionExclusive(path: string, content: string, replaceOrpha
 
 export const checksum = (content: string) => createHash("sha256").update(content).digest("hex");
 
-export async function withNoteLock<T>(noteId: string, operation: () => Promise<T>): Promise<T> {
-  safeNoteId(noteId);
-  const previous = noteQueues.get(noteId) ?? Promise.resolve();
+/**
+ * Serializes async work per resource key. Notes and documents share one queue
+ * map, keyed `note:<id>` and `document:<id>`.
+ */
+export async function withResourceLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = resourceQueues.get(key) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolvePromise) => { release = resolvePromise; });
   const queued = previous.then(() => current);
-  noteQueues.set(noteId, queued);
+  resourceQueues.set(key, queued);
   await previous;
   try {
     return await operation();
   } finally {
     release();
-    if (noteQueues.get(noteId) === queued) noteQueues.delete(noteId);
+    if (resourceQueues.get(key) === queued) resourceQueues.delete(key);
   }
+}
+
+export async function withNoteLock<T>(noteId: string, operation: () => Promise<T>): Promise<T> {
+  return withResourceLock(`note:${safeNoteId(noteId)}`, operation);
 }
 
 export const storage = {
