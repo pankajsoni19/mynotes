@@ -8,7 +8,7 @@ import { config } from "./config";
 import { audit, db, ensureDefaultFolder, now } from "./db";
 import type { AppEnv } from "./auth";
 import { contentDisposition, parseRange } from "./contentHeaders";
-import { listReadableDocuments, ownedDocument, ownedDocumentSummary, readableDocument, readableDocumentSummary, type DocumentSummary } from "./documentAccess";
+import { listReadableDocuments, ownedDocument, ownedDocumentSummary, ownedFileDocument, readableDocument, readableDocumentSummary, type DocumentSummary } from "./documentAccess";
 import { commitStaged, createStagingFile, discardStaged, DocumentIntegrityError, openObjectForRead, removeObject } from "./documentStorage";
 import { SNIFF_BYTES, sniff } from "./mimeSniff";
 import { withResourceLock } from "./storage";
@@ -424,7 +424,7 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
     const userId = c.get("user").id;
     const body = await parseJson(c.req.raw, documentPatchSchema);
     return withDocumentLock(id, async () => {
-      if (!ownedDocument(id, userId)) return notFound(c);
+      if (!ownedFileDocument(id, userId)) return notFound(c);
       let name: string | null = null;
       if (body.name !== undefined) {
         name = sanitizeDisplayName(body.name, "rename");
@@ -447,7 +447,7 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
 
   app.get("/api/files/:id/sharing", (c) => {
     const id = uuid.parse(c.req.param("id"));
-    const document = ownedDocument(id, c.get("user").id);
+    const document = ownedFileDocument(id, c.get("user").id);
     if (!document) return notFound(c);
     const users = db.query("SELECT u.id, u.display_name FROM document_shares s JOIN users u ON u.id = s.user_id WHERE s.document_id = ? ORDER BY u.display_name")
       .all(id);
@@ -457,7 +457,7 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
   app.put("/api/files/:id/sharing", async (c) => {
     const id = uuid.parse(c.req.param("id"));
     const userId = c.get("user").id;
-    if (!ownedDocument(id, userId)) return notFound(c);
+    if (!ownedFileDocument(id, userId)) return notFound(c);
     const body = await parseJson(c.req.raw, sharingSchema);
     if (body.userIds.includes(userId)) return c.json({ error: "The owner cannot be added as a recipient" }, 400);
     const uniqueIds = [...new Set(body.userIds)];
@@ -468,7 +468,7 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
       if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
     }
     return withDocumentLock(id, async () => {
-      if (!ownedDocument(id, userId)) return notFound(c);
+      if (!ownedFileDocument(id, userId)) return notFound(c);
       db.transaction(() => {
         db.query("DELETE FROM document_shares WHERE document_id = ?").run(id);
         if (body.visibility === "selected") {
@@ -491,6 +491,10 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
       const document = ownedDocument(id, userId, { includeDeleted: true });
       if (!document) return notFound(c);
       if (document.deleted_at) return c.json({ ok: true, alreadyDeleted: true, purgeAfter: document.purge_after });
+      // A card attachment is removed from its cards (Tasks), which bins it once no card uses it.
+      if (document.purpose !== "file" && db.query("SELECT 1 FROM card_attachments WHERE document_id = ?").get(id)) {
+        return c.json({ error: "Remove this file from its cards first", code: "ATTACHMENT_LINKED" }, 409);
+      }
       const deletedAt = new Date();
       const purgeAfter = purgeAfterFrom(deletedAt);
       db.transaction(() => {

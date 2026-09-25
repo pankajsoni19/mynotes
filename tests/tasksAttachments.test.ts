@@ -242,3 +242,39 @@ describe("never-linked attachments", () => {
     expect(runs).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("Files routes and attachments", () => {
+  test("rename, move, and sharing return 404 for attachments; delete needs the file unlinked", async () => {
+    const { owner, stranger, cardId } = await setup("Files routes");
+    const linked = await uploadAttachment(owner, "linked.png");
+    const loose = await uploadAttachment(owner, "loose.png");
+    await call(owner, "POST", `/cards/${cardId}/attachments`, { documentId: linked.id });
+    const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
+    const files = (method: string, path: string, body?: unknown) => request(`/files${path}`, { method, body: JSON.stringify(body ?? {}) }, owner);
+
+    expect((await files("PATCH", `/${linked.id}`, { name: "renamed.png" })).status).toBe(404);
+    expect((await files("PATCH", `/${linked.id}`, { folderId: defaultFolder })).status).toBe(404);
+    expect((await files("PUT", `/${linked.id}/sharing`, { visibility: "all_users", userIds: [] })).status).toBe(404);
+    expect((await request(`/files/${linked.id}/sharing`, {}, owner)).status).toBe(404);
+    expect(db.query("SELECT name, folder_id, sharing_override FROM documents WHERE id = ?").get(linked.id)).toEqual({ name: "linked.png", folder_id: null, sharing_override: 0 });
+    expect((await content(stranger, linked.id)).status).toBe(404);
+
+    const refused = await files("DELETE", `/${linked.id}`);
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { code: string }).code).toBe("ATTACHMENT_LINKED");
+    expect(deletedAt(linked.id)).toBeNull();
+    // An unlinked attachment may be binned directly.
+    expect((await files("DELETE", `/${loose.id}`)).status).toBe(200);
+    expect(deletedAt(loose.id)).toBeTruthy();
+  });
+
+  test("sharing rows on an attachment never widen its audience", async () => {
+    const { owner, stranger } = await setup("Stale sharing");
+    const document = await uploadAttachment(owner, "old.png");
+    // As an attachment could have been shared before this fix.
+    db.query("UPDATE documents SET sharing_override = 1, visibility = 'all_users' WHERE id = ?").run(document.id);
+    expect((await content(stranger, document.id)).status).toBe(404);
+    expect((await request(`/files/${document.id}`, {}, stranger)).status).toBe(404);
+    expect((await content(owner, document.id)).status).toBe(200);
+  });
+});
