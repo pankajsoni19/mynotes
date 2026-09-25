@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, Ellipsis, File as FileIcon, House, KanbanSquare, NotebookText, RotateCcw, Sparkles, SquareCheck, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArchiveRestore, Ellipsis, File as FileIcon, House, KanbanSquare, NotebookText, RotateCcw, Rows3, Sparkles, SquareCheck, Table2, Trash2, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { AccountActions } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
@@ -37,10 +37,11 @@ const filters: Array<{ value: BinFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "note", label: "Notes" },
   { value: "document", label: "Files" },
-  { value: "tasks", label: "Tasks" }
+  { value: "tasks", label: "Tasks" },
+  { value: "collections", label: "Collections" }
 ];
 
-const itemIcons = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare } as const;
+const itemIcons = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare, collection: Table2, collection_row: Rows3 } as const;
 
 const itemKey = (item: Pick<BinItem, "type" | "id">) => `${item.type}:${item.id}`;
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -121,7 +122,8 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     } catch (reason) {
       if (errorCode(reason) === "PURGING") flash("This item is being deleted forever and can't be restored");
       else if (errorCode(reason) === "BOARD_IN_BIN") flash(`Restore the board ${item.board_name ? `“${item.board_name}” ` : ""}first`);
-      else if (errorCode(reason) === "LIMIT_REACHED") flash(reason instanceof Error ? reason.message : "That board is full");
+      else if (errorCode(reason) === "PARENT_IN_BIN") flash(`Restore “${item.folder_name ?? "its collection"}” from the Bin first`);
+      else if (errorCode(reason) === "LIMIT_REACHED") flash(reason instanceof Error ? reason.message : "Limit reached");
       else if (reason instanceof ApiError && reason.status === 404) flash("This item is no longer in the Bin");
       else flash(reason instanceof Error ? reason.message : "Could not restore this item");
       void load();
@@ -187,7 +189,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     setSheetKey(itemKey(item));
   }
 
-  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "tasks" ? "No cards or boards in the Bin." : "Nothing in the Bin.";
+  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "tasks" ? "No cards or boards in the Bin." : filter === "collections" ? "No collections or rows in the Bin." : "Nothing in the Bin.";
 
   return <main className="app-page bin-app">
     <header className="app-page-header">
@@ -201,7 +203,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
         <div>
           <span className="eyebrow">Bin</span>
           <h1 id="bin-title">Bin</h1>
-          <p>Deleted notes, files, cards, and boards stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
+          <p>Deleted notes, files, cards, boards, collections, and rows stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
         </div>
         <button className="bin-empty-button" onClick={() => { void emptyAll(); }} disabled={!all.length || busy}><Trash2 />{emptying ? "Emptying…" : "Empty Bin"}</button>
       </div>
@@ -227,7 +229,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
       {!loadError && items && !visible.length && <div className="bin-state">
         <span className="bin-state-icon"><Trash2 /></span>
         <h2>{emptyCopy}</h2>
-        <p>Deleted notes, files, cards, and boards stay here for 30 days.</p>
+        <p>Deleted items stay here for 30 days.</p>
       </div>}
 
       {!loadError && visible.length > 0 && <ul className="bin-list" aria-label="Items in the Bin">

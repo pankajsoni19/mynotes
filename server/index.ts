@@ -16,6 +16,8 @@ import { createDraftNote, hasDraftDelta, writeDraftLocked } from "./noteDrafts";
 import { registerSearchRoutes } from "./searchRoutes";
 import { registerTaskRoutes } from "./tasks/routes";
 import { registerTodayRoutes } from "./today/routes";
+import { registerCollectionRoutes } from "./collections/routes";
+import { reconcileCollectionSearchIndex } from "./collections/search";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -804,6 +806,7 @@ registerBinRoutes(app);
 registerSearchRoutes(app);
 registerTaskRoutes(app);
 registerTodayRoutes(app);
+registerCollectionRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
@@ -843,6 +846,11 @@ try {
   await reconcileSearchIndex();
 } catch (error) {
   console.error("Search index reconcile failed", errorClass(error));
+}
+try {
+  reconcileCollectionSearchIndex();
+} catch (error) {
+  console.error("Collection search index reconcile failed", errorClass(error));
 }
 startSweeper();
 

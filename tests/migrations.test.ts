@@ -16,12 +16,12 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not later migrations (for example 012 and 013) are present,
+ * holds whether or not later migrations (for example 013) are present,
  * and pins the ids this branch depends on.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  expect(ids).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
+  expect(ids).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
 }
 
 function openDb() {
@@ -273,6 +273,39 @@ describe("database migrations", () => {
 
     const indexes = (db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_cards_due','idx_cards_assignee','idx_cards_creator') ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
     expect(indexes).toEqual(["idx_cards_assignee", "idx_cards_creator", "idx_cards_due"]);
+    db.close();
+  });
+
+  test("migration 012 adds the collection tables with byte caps, Bin checks, and a row FTS cascade", () => {
+    const db = openDb();
+    runMigrations(db);
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 12").get() as { name: string }).name).toBe("collections");
+    const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'collection%' AND name NOT LIKE 'collection_row_fts_%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
+    expect(tables).toEqual(["collection_members", "collection_row_attachments", "collection_row_fts", "collection_row_search", "collection_rows", "collection_views", "collections"]);
+
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    const insertCollection = db.query("INSERT INTO collections (id, owner_id, name, schema_json, created_at, updated_at, deleted_at, purge_after) VALUES (?, 'u1', ?, ?, ?, ?, ?, ?)");
+    insertCollection.run("c1", "Inventory", '{"fields":[]}', old, old, null, null);
+    expect(() => insertCollection.run("c2", "", "{}", old, old, null, null)).toThrow();
+    expect(() => insertCollection.run("c3", "Bad", "not json", old, old, null, null)).toThrow();
+    expect(() => insertCollection.run("c4", "Half binned", "{}", old, old, old, null)).toThrow();
+    expect(() => db.query("INSERT INTO collections (id, owner_id, name, schema_json, created_at, updated_at, share_role) VALUES ('c5', 'u1', 'X', '{}', ?, ?, 'admin')").run(old, old)).toThrow();
+
+    const insertRow = db.query("INSERT INTO collection_rows (id, collection_id, position, values_json, created_at, updated_at) VALUES (?, 'c1', 1024, ?, ?, ?)");
+    insertRow.run("r1", '{"f_aaaaaaaa":"Mug"}', old, old);
+    expect(() => insertRow.run("r2", JSON.stringify({ f_aaaaaaaa: "é".repeat(8200) }), old, old)).toThrow();
+    expect(() => insertRow.run("r3", "{", old, old)).toThrow();
+
+    const mapping = Number(db.query("INSERT INTO collection_row_search (row_id, source_revision, schema_version, indexed_at) VALUES ('r1', 1, 1, ?)").run(old).lastInsertRowid);
+    db.query("INSERT INTO collection_row_fts (rowid, title, body) VALUES (?, 'Mug', 'Kitchen')").run(mapping);
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_row_fts WHERE collection_row_fts MATCH ?").get('"kitchen"') as { count: number }).count).toBe(1);
+    db.query("DELETE FROM collections WHERE id = 'c1'").run();
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_rows").get() as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_row_search").get() as { count: number }).count).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM collection_row_fts").get() as { count: number }).count).toBe(0);
     db.close();
   });
 });

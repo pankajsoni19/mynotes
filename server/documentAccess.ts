@@ -1,6 +1,7 @@
 import { db, type DocumentRow } from "./db";
 import { readableBoardPredicate } from "./tasks/access";
 import type { PreviewKind } from "./mimeSniff";
+import { readableCollectionPredicate } from "./collections/access";
 
 export type Visibility = "private" | "selected" | "all_users";
 
@@ -53,7 +54,7 @@ export function ownedDocumentSummary(documentId: string, userId: string) {
  * row); or, when inheriting, the immediate folder's visibility and shares.
  * Folder sharing does not cascade to subfolders. Binned rows never match.
  * Sharing and folder access apply to Files documents only: an attachment is
- * readable by its owner and through its card links (below), nothing else.
+ * readable by its owner and through its card and row links (below), nothing else.
  */
 const readablePredicate = `
   d.deleted_at IS NULL AND (
@@ -84,12 +85,26 @@ const attachedToReadableCard = `(
   )
 )`;
 
+/**
+ * A document linked to a live row of a collection `$userId` can read
+ * (WAVES_10-12.md §3.2, D58). OR-ed into readableDocument* only, never into
+ * lists: attachments stay out of Files, and access ends with the link, the
+ * row, the collection, or the share (T58).
+ */
+const collectionAttachmentPredicate = `EXISTS (
+  SELECT 1 FROM collection_row_attachments a
+  JOIN collection_rows r ON r.id = a.row_id AND r.deleted_at IS NULL
+  JOIN collections c ON c.id = r.collection_id
+  WHERE a.document_id = d.id AND ${readableCollectionPredicate}
+)`;
+const readableSinglePredicate = `(${readablePredicate} OR ${attachedToReadableCard} OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate}))`;
+
 export function readableDocument(documentId: string, userId: string) {
-  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND (${readablePredicate} OR ${attachedToReadableCard})`).get({ documentId, userId }) as DocumentRow | null;
+  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentRow | null;
 }
 
 export function readableDocumentSummary(documentId: string, userId: string) {
-  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND (${readablePredicate} OR ${attachedToReadableCard})`).get({ documentId, userId }) as DocumentSummary | null;
+  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentSummary | null;
 }
 
 /**

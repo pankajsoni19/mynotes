@@ -1,15 +1,17 @@
 import type { Context, Hono } from "hono";
 import type { AppEnv } from "./auth";
-import { emptyBin, listBin, purgeOwnedItem, restoreItem, type BinListType } from "./bin";
-import { isTaskBinType, purgeTaskItem, restoreTaskItem } from "./tasks/bin";
+import { BIN_TYPES, emptyBin, listBin, purgeOwnedItem, restoreItem, type BinListType } from "./bin";
+import { isTaskBinType, purgeTaskItem, restoreTaskItem, type TaskBinType } from "./tasks/bin";
 import { z } from "zod";
 import { readBoundedBody, uuid } from "./validation";
 
 // Optional place for a restored card (Undo remembers its old column and neighbour).
 const cardRestoreSchema = z.object({ columnId: uuid.optional(), afterCardId: uuid.nullable().optional() }).strict();
 
-const isBinType = (value: string | undefined): value is BinListType => value === "note" || value === "document" || value === "card" || value === "board";
-const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: ["type must be note, document, card, or board"] }, 400);
+const TASK_BIN_TYPES: readonly TaskBinType[] = ["card", "board"];
+const LIST_TYPES: readonly BinListType[] = [...BIN_TYPES, ...TASK_BIN_TYPES];
+const isBinType = (value: string | undefined): value is BinListType => LIST_TYPES.includes(value as BinListType);
+const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: [`type must be one of ${LIST_TYPES.join(", ")}`] }, 400);
 const notFound = (c: Context<AppEnv>) => c.json({ error: "Item not found" }, 404);
 
 /** Bin API (docs/plan/API_CONTRACTS.md § Bin). Every endpoint is scoped to the caller's own items. */
@@ -48,6 +50,10 @@ export function registerBinRoutes(app: Hono<AppEnv>) {
         return c.json({ ok: true, folderId: outcome.folderId, folderName: outcome.folderName, visibility: outcome.visibility });
       case "already_restored":
         return c.json({ ok: true, alreadyRestored: true, folderId: outcome.folderId, folderName: outcome.folderName });
+      case "parent_in_bin":
+        return c.json({ error: "Restore its collection from the Bin first", code: "PARENT_IN_BIN" }, 409);
+      case "limit_reached":
+        return c.json({ error: outcome.message, code: "LIMIT_REACHED" }, 409);
       case "purging":
         return c.json({ error: "This item is being permanently deleted", code: "PURGING" }, 409);
       default:

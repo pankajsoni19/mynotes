@@ -275,6 +275,89 @@ Manual QA (desktop and 390×844):
 - [ ] The card view sets and clears Due and Assignee; the chip turns red when overdue; marking a column done removes its cards from Today
 - [ ] axe (or the browser accessibility tree) shows labelled sections, headings, links, and the storage meter
 
+## Wave 11: Collections
+
+Migration ids are asserted against the registered list and pin 1–12.
+
+`tests/collectionsSchema.test.ts` (no server):
+
+- [x] Schema: ids are generated (`f_` + 8, `o_` + 6) and client-invented ids are refused; `__proto__`/`constructor` keys at any depth are rejected; 51 fields, duplicate names (case-insensitive), a non-text primary field, unknown keys or types, 61-character names, control characters, 101 options, duplicate option labels, and 7 decimals are refused; only text ↔ url and select → multi_select type changes pass; the five templates and the default fields build.
+- [x] Values: text normalisation and the 4000-character cap; number, date (real dates only), checkbox, select, multi_select, url (`http(s)` only), note (readable at write time), and file rules; strict writes (unknown fields, required fields, 16 KiB rows); lenient reads (removed fields and options, wrong types, select → multi_select).
+
+`tests/collectionsQuery.test.ts` (no server; runs the compiled SQL on an in-memory table):
+
+- [x] Every operator family filters correctly (a wrong JSON type never matches a comparison; binned attachments do not count); `q` matches text and url fields; sorts put empty values last and order select fields by option order; unknown fields, mismatched operators, bad values, unsortable types, and a field sorted twice are refused; lenient mode drops stale view clauses; hostile values and field ids never appear in the SQL text; cursors round-trip and reject tampering.
+
+`tests/collectionsApi.test.ts`:
+
+- [x] Create from fields, a template, or the default; templates list; strict schema validation over HTTP (51 fields, duplicate names, client ids, unknown types, `__proto__` bodies, bad icons).
+- [x] A stranger gets 404 on every collection and row route and never sees row text.
+- [x] Rows: bottom/top/after placement and stale anchors; `INVALID_VALUES` with per-field errors; revision CAS (`ROW_CHANGED` carries the row); one-step undo (`NOTHING_TO_UNDO` after); bin; audit metadata never contains values.
+- [x] Schema: `INCOMPATIBLE_TYPE_CHANGE`; version CAS (`SCHEMA_CHANGED`); lenient reads after text → url and select → multi_select; removed values are dropped on the row's next write, and undo does not bring them back.
+- [x] Query: filters, sort, and `q`; cursor paging; a cursor from another spec is `INVALID_CURSOR`, and after a schema change `SCHEMA_CHANGED`; unknown fields, operators, injected ids, and over-limit specs are 400.
+- [x] Note links: only readable notes can be linked; a note binned later reads as `{ id, restricted: true }`.
+- [x] Caps: 100 collections, 10,000 live rows (`LIMIT_REACHED`); CSRF, Origin, and JSON rules.
+
+`tests/collectionsSharing.test.ts`:
+
+- [x] Role matrix: viewers read and query; every row write is 403 `READ_ONLY` for a viewer-role audience; with the editor role, members create, edit, and undo rows; every owner-only route (rename, delete, schema, sharing) is 403 `OWNER_ONLY` to members and 404 to strangers; the list shows each member's role; audit records visibility, role, and a recipient count.
+- [x] Sharing rules (owner not a recipient, `selected` needs users, unknown users, ≤ 100, bad visibility or role); `all_users` gives everyone the viewer role; switching to private revokes at once.
+
+`tests/collectionsViews.test.ts`:
+
+- [x] Views save sort, filters, and hidden fields; `query { viewId }` applies them and request clauses override; rename and reconfigure; a field removed later drops out of the view; delete.
+- [x] Configs are checked against the schema (unknown fields, mismatched operators, injected ids, the primary field hidden, stored `q`, prototype keys, 61-character names); 20-view cap; owner-only for editors (403) and strangers (404); editors still query through views.
+- [x] IDOR: a view id never works through another collection, and another owner's view cannot be renamed or deleted.
+
+`tests/collectionsAttachments.test.ts` (and `tests/documents.test.ts` for the upload purpose):
+
+- [x] A `collection_attachment` upload has `folder_id = NULL`; linked, it is readable (metadata and content, `no-store`) by collection readers only, never listed in `GET /api/files`, and 404 after unshare, row bin, collection bin, and unlink; the last unlink bins it for the uploader; a Bin restore keeps it out of every folder.
+- [x] A Files item the linker owns can be linked, stays in the owner's Files, and is never binned on unlink.
+- [x] Rules: viewers 403 `READ_ONLY`; strangers 404; only the caller's own live `file`/`collection_attachment` documents and only file fields; `ALREADY_ATTACHED`; `NOT_LINKER` for editors removing someone else's link, the owner may; 20 per row.
+- [x] IDOR across rows and collections; `restricted` note links never disclose titles or grant access.
+- [x] Files routes: rename, move, and sharing are 404 for a row attachment; stale sharing rows or a shared folder never make it readable; `DELETE /api/files/:id` is 409 `ATTACHMENT_LINKED` while a row links it and works once unlinked.
+- [x] The sweeper bins `collection_attachment` uploads with no row link after 24 hours (`deleted_by` NULL, audit `attachment_never_linked`) and leaves linked, fresh, and Files documents alone.
+
+`tests/collectionsBin.test.ts`:
+
+- [x] A binned collection is unreadable to members, listed (and filterable) for its owner only, restored with a CAS (sharing kept), 409 `NOT_IN_BIN` when live, and 409 `LIMIT_REACHED` past 100 live collections; unknown Bin types are 400.
+- [x] A binned row is listed for the owner and its deleter (`can_purge` false for the deleter); strangers and non-deleters cannot restore; 409 `PARENT_IN_BIN` while the collection is binned; a deleter who lost edit access gets 404; only the owner purges.
+- [x] Purging a row bins uploads no other row links; the sweeper purges collections (rows and all, binning the last attachment) and rows past retention; Empty Bin purges the owner's collections and rows.
+
+`tests/collectionsSearch.test.ts`:
+
+- [x] Indexed text: the primary field is the title; other values and option labels are the body, controls stripped; note links and files are never indexed.
+- [x] Parity: a reader sees nothing before sharing, their own hits within `limit=2` despite 30 matches in a hidden collection (ACL before LIMIT), option-label hits, and nothing after unsharing; a binned row drops out and returns on restore; `collection=<id>` filters, and a bad id is 400; FTS rows equal mapping rows.
+- [x] Writes, undo, and an option rename (schema change) keep the index in step (`source_revision`, `schema_version`); boot reconcile rebuilds missing and stale entries, removes orphan FTS rows, and is idempotent.
+
+`tests/collectionsCsv.test.ts` (no server):
+
+- [x] RFC 4180: quotes, doubled quotes, commas and line breaks inside quotes, literal quotes in unquoted fields, CRLF/LF/CR, BOM, empty records skipped; unterminated quotes and text after a closing quote fail with the line; row and 50-column caps; 50,000 cells parse in well under 1.5 s.
+- [x] Writing: BOM, CRLF, quoting only when needed, round-trips through the parser; `= + - @ \t \r` starts are neutralized with `'` (and restored on import), nothing else is.
+
+`tests/collectionsImport.test.ts`:
+
+- [x] Dry run: header mapping by name (BOM, case-insensitive, unknown columns skipped), preview values, per-cell errors (required, number, date, checkbox, option, multi-option) with row numbers, nothing written; the real import with errors is 400 `IMPORT_INVALID` and writes nothing; a clean import inserts every row in order and audits a count.
+- [x] Explicit mappings (wrong length, duplicate, unknown, file field, all skipped) are `INVALID_MAPPING`; bad CSV is `INVALID_CSV`; prototype keys are refused.
+- [x] Viewers 403, strangers 404, 2 MB → 413, 5001 rows and 51 columns → 400, the 10,000-row cap → 409 with nothing written, 5000 rows import, and the sixth import in a minute → 429.
+- [x] Export: BOM, `text/csv`, attachment, `no-store`; formulas neutralized in names, text, and option labels but not in numbers; note titles only for readers who can read the note; 404 after unsharing; the export imports back unchanged; an export through a view equals the view's query (rows, order, shown fields) and a view of another collection is 404.
+
+`tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
+
+- [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.
+- [x] Today's launcher has a Collections entry (`/collections`); the list renders its loading state and New collection; values display and parse per type; viewers get read-only cells; multi-line text is never edited in a single-line cell; field drafts mirror the schema rules and build the `PUT /schema` body.
+- [x] Phone cards show the primary field plus up to three fields with values and a 44 px actions button; the row panel labels one editor per field (a textarea for text) and shows "View only" with no inputs to viewers; filters are sent only when complete.
+
+Manual QA (desktop and 390×844, two users; the scratch click-through for commits 4–5 covered the unchecked rows marked *):
+
+- [ ] Today → Collections → New collection (template) → table; edit cells (blur saves; an invalid link is flagged and not saved); a second session's change makes the next edit show Reload*, and Reload shows their value*.
+- [ ] 390×844: cards are ≥ 56 px with no horizontal scroll*; tap → full-screen row panel with ≥ 44 px editors*; the sort/filter sheet filters and sorts*; ⋯ → Undo / Copy link / Move to Bin.
+- [ ] Back: row → collection → list → Home*; with a picker open over the row panel, Back closes only the picker, and the next Back leaves the row*; Forward restores the row*.
+
+`tests/migrations.test.ts`:
+
+- [x] Migration 012 adds `collections`, `collection_members`, `collection_rows`, `collection_views`, `collection_row_attachments`, `collection_row_search`, and `collection_row_fts`; name, JSON, share-role, and Bin CHECKs hold; `values_json` is capped at 16,384 bytes; purging a collection cascades to rows, search rows, and (through the trigger) FTS rows.
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.

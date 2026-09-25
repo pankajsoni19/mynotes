@@ -226,16 +226,16 @@ function uploadResponse(c: Context<AppEnv>, document: DocumentSummary, replay: b
 
 async function handleUpload(c: Context<AppEnv>) {
   const userId = c.get("user").id;
-  // Task attachments (WAVES_7-9.md §7) have no folder and never appear in Files; they become
-  // readable to a board once linked to one of its cards. collection_attachment is not accepted yet.
+  // Attachments (WAVES_7-9.md §7, WAVES_10-12.md D58) have no folder and never appear in Files;
+  // they become readable to a board or collection once linked to one of its cards or rows.
   const purposeParam = c.req.query("purpose");
-  if (purposeParam !== undefined && purposeParam !== "file" && purposeParam !== "task_attachment") {
-    return c.json({ error: "Invalid request", details: ["purpose must be file or task_attachment"] }, 400);
+  if (purposeParam !== undefined && purposeParam !== "file" && purposeParam !== "task_attachment" && purposeParam !== "collection_attachment") {
+    return c.json({ error: "Invalid request", details: ["purpose must be file, task_attachment, or collection_attachment"] }, 400);
   }
   const purpose = purposeParam ?? "file";
   const folderParam = c.req.query("folderId");
-  if (purpose === "task_attachment" && folderParam !== undefined) return c.json({ error: "Invalid request", details: ["Attachments have no folder"] }, 400);
-  const folderId = purpose === "task_attachment" ? null : folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
+  if (purpose !== "file" && folderParam !== undefined) return c.json({ error: "Invalid request", details: ["Attachments have no folder"] }, 400);
+  const folderId = purpose !== "file" ? null : folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
   if (folderId !== null && !ownsFolder(folderId, userId)) return c.json({ error: "Folder not found" }, 404);
 
   const keyHeader = c.req.header("Idempotency-Key");
@@ -498,9 +498,12 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
       const document = ownedDocument(id, userId, { includeDeleted: true });
       if (!document) return notFound(c);
       if (document.deleted_at) return c.json({ ok: true, alreadyDeleted: true, purgeAfter: document.purge_after });
-      // A card attachment is removed from its cards (Tasks), which bins it once no card uses it.
+      // An attachment is removed from its cards (Tasks) or rows (Collections), which bins it once nothing uses it.
       if (document.purpose !== "file" && db.query("SELECT 1 FROM card_attachments WHERE document_id = ?").get(id)) {
         return c.json({ error: "Remove this file from its cards first", code: "ATTACHMENT_LINKED" }, 409);
+      }
+      if (document.purpose !== "file" && db.query("SELECT 1 FROM collection_row_attachments WHERE document_id = ?").get(id)) {
+        return c.json({ error: "Remove this file from its rows first", code: "ATTACHMENT_LINKED" }, 409);
       }
       const deletedAt = new Date();
       const purgeAfter = purgeAfterFrom(deletedAt);

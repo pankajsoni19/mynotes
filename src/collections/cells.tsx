@@ -1,0 +1,120 @@
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import type { CollectionRow, FieldDefinition, FieldValue } from "./collectionsApi";
+import { displayValue, inputText, optionById, parseInput } from "./values";
+
+export type SaveValues = (values: Record<string, FieldValue | null>) => Promise<boolean>;
+
+type CellProps = {
+  field: FieldDefinition;
+  row: CollectionRow;
+  editable: boolean;
+  onSave: SaveValues;
+  /** Multi-select, note, and file fields are edited in a picker or the row panel. */
+  onOpenPicker: (field: FieldDefinition) => void;
+  /** Mobile row panel editors are taller (≥ 44 px) and labelled. */
+  variant?: "table" | "panel";
+  labelId?: string;
+};
+
+/**
+ * One value editor. Text-like inputs save on blur (Enter blurs, Escape reverts); checkboxes and
+ * selects save on change. The caller sends the change with the row's revision (CAS).
+ */
+export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant = "table", labelId }: CellProps) {
+  const value = row.values[field.id];
+  const shown = displayValue(field, row);
+  if (!editable) {
+    return <span className={`cell-readonly cell-${field.type}`} title={shown || undefined}>{field.type === "select" && typeof value === "string" ? <OptionChip field={field} id={value} /> : field.type === "multi_select" && Array.isArray(value) ? <OptionChips field={field} ids={value} /> : shown || <span className="cell-empty" aria-label="Empty">—</span>}</span>;
+  }
+  switch (field.type) {
+    case "checkbox":
+      return <input type="checkbox" className="cell-checkbox" aria-labelledby={labelId} aria-label={labelId ? undefined : field.name} checked={value === true} onChange={(event) => { void onSave({ [field.id]: event.target.checked }); }} />;
+    case "select":
+      return <select className="cell-select" aria-labelledby={labelId} aria-label={labelId ? undefined : field.name} value={typeof value === "string" ? value : ""} onChange={(event) => { void onSave({ [field.id]: event.target.value || null }); }}>
+        <option value="">—</option>
+        {(field.options ?? []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>;
+    case "multi_select":
+    case "note":
+    case "file":
+      return <button type="button" className={`cell-picker cell-${field.type}`} aria-labelledby={labelId} aria-haspopup="dialog" onClick={() => onOpenPicker(field)} title={shown || undefined}>
+        {field.type === "multi_select" && Array.isArray(value) && value.length ? <OptionChips field={field} ids={value} /> : shown || <span className="cell-empty">{variant === "panel" ? pickerPrompt(field) : "—"}</span>}
+      </button>;
+    case "text":
+      // A single-line input would drop line breaks, so multi-line text is edited in the row panel.
+      if (variant === "table" && typeof value === "string" && value.includes("\n")) {
+        return <button type="button" className="cell-picker cell-text" onClick={() => onOpenPicker(field)} title={value}>{value.split("\n")[0]}…</button>;
+      }
+      return <TextCell field={field} value={value} onSave={onSave} variant={variant} labelId={labelId} />;
+    default:
+      return <TextCell field={field} value={value} onSave={onSave} variant={variant} labelId={labelId} />;
+  }
+}
+
+const pickerPrompt = (field: FieldDefinition) => field.type === "multi_select" ? "Choose options" : field.type === "note" ? "Link a note" : "Attach files";
+
+function TextCell({ field, value, onSave, variant, labelId }: { field: FieldDefinition; value: FieldValue | undefined; onSave: SaveValues; variant: "table" | "panel"; labelId?: string }) {
+  const original = inputText(field, value);
+  const [draft, setDraft] = useState(original);
+  const [error, setError] = useState<string | null>(null);
+  const editingRef = useRef(false);
+  // Follow the stored value (a save, a reload, or an undo) unless the user is typing.
+  useEffect(() => { if (!editingRef.current) setDraft(original); }, [original]);
+
+  async function commit() {
+    editingRef.current = false;
+    if (draft === original) {
+      setError(null);
+      return;
+    }
+    const parsed = parseInput(field, draft);
+    if (!parsed.ok) {
+      setError(parsed.error);
+      return;
+    }
+    setError(null);
+    const saved = await onSave({ [field.id]: parsed.value });
+    if (!saved) setDraft(original);
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setDraft(original);
+      setError(null);
+      editingRef.current = false;
+      event.currentTarget.blur();
+    } else if (event.key === "Enter" && !event.nativeEvent.isComposing && (event.currentTarget.tagName === "INPUT" || event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  }
+
+  const common = {
+    className: `cell-input cell-${field.type}${error ? " invalid" : ""}`,
+    value: draft,
+    "aria-labelledby": labelId,
+    "aria-label": labelId ? undefined : field.name,
+    "aria-invalid": error ? true : undefined,
+    title: error ?? undefined,
+    onFocus: () => { editingRef.current = true; },
+    onChange: (event: { target: { value: string } }) => { editingRef.current = true; setDraft(event.target.value); setError(null); },
+    onBlur: () => { void commit(); },
+    onKeyDown
+  };
+  const input = variant === "panel" && field.type === "text"
+    ? <textarea {...common} rows={Math.min(8, Math.max(2, draft.split("\n").length))} maxLength={4000} />
+    : <input {...common} type={field.type === "date" ? "date" : field.type === "url" ? "url" : "text"} inputMode={field.type === "number" ? "decimal" : undefined} maxLength={field.type === "url" ? 2048 : 4000} placeholder={variant === "panel" ? field.type === "url" ? "https://" : field.number?.unit ?? "" : undefined} />;
+  return variant === "panel" ? <>{input}{error && <span className="file-dialog-error" role="alert">{error}</span>}</> : input;
+}
+
+export function OptionChip({ field, id }: { field: FieldDefinition; id: string }) {
+  const option = optionById(field, id);
+  if (!option) return null;
+  return <span className={`option-chip color-${option.color}`}>{option.label}</span>;
+}
+
+export function OptionChips({ field, ids }: { field: FieldDefinition; ids: string[] }) {
+  return <span className="option-chips">{ids.map((id) => <OptionChip key={id} field={field} id={id} />)}</span>;
+}

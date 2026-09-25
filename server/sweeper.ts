@@ -2,6 +2,7 @@ import { sweepBin, type BinSweepCounts } from "./bin";
 import { db } from "./db";
 import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 import { sweepUnlinkedAttachments } from "./tasks/attachments";
+import { sweepUnlinkedRowAttachments } from "./collections/sweep";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -44,6 +45,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (unlinked) console.info(`Attachment sweep: ${unlinked} never-linked attachments moved to the Bin`);
       } catch (error) {
         console.error("Attachment sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      // Row attachments never linked to a row move to the Bin after a day (and purge 30 days later).
+      try {
+        const unlinked = sweepUnlinkedRowAttachments({ nowMs: options.nowMs });
+        if (unlinked) console.info(`Row attachment sweep: ${unlinked} never-linked attachments moved to the Bin`);
+      } catch (error) {
+        console.error("Row attachment sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       // Bin purges run even when the file sweep failed, so retention never stalls on it.
       let bin: BinSweepCounts | null = null;

@@ -38,7 +38,7 @@ async function setup(label: string) {
 }
 
 describe("card attachments", () => {
-  test("attachment uploads have no folder, are never listed in Files, and only accept task_attachment", async () => {
+  test("attachment uploads have no folder, are never listed in Files, and reject unknown purposes", async () => {
     const owner = await createUser("Attachment uploader");
     const document = await uploadAttachment(owner);
     expect(document.folder_id).toBeNull();
@@ -47,7 +47,7 @@ describe("card attachments", () => {
     expect(listed.documents.some((item) => item.id === document.id)).toBe(false);
     const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
     expect((await upload(owner, `?purpose=task_attachment&folderId=${defaultFolder}`)).status).toBe(400);
-    expect((await upload(owner, "?purpose=collection_attachment")).status).toBe(400);
+    expect((await upload(owner, "?purpose=board_attachment")).status).toBe(400);
     // The uploader can read their own attachment.
     expect((await content(owner, document.id)).status).toBe(200);
   });

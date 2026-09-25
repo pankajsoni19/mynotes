@@ -111,6 +111,22 @@ Rows T50, T51, and T74 of [WAVES_10-12.md](WAVES_10-12.md) §5.
 | T51 | **Today cost amplification** | Each provider fetches at most 11 rows (ten plus `more`) using the 011 indexes; titles and ids only, no bodies or counts; 30 requests a minute per user; no caching or polling (a refetch on tab focus only after 60 s) | Done (Wave 10) |
 | T74 | **`get_today` bypasses module scopes** | `get_today` needs `today:read` and returns only sections whose module read scope the key also holds (notes, files, tasks); Bin and storage need `today:read` alone. Registered per scope and re-checked in the handler; `tests/mcpToday.test.ts` | Done (Wave 10) |
 
+### Collections (Wave 11)
+
+Rows T52–T60 of [WAVES_10-12.md](WAVES_10-12.md) §5. The MCP rows (T72–T75) arrive with Stage E; T76 (history) is covered by the Collections route and dialog-guard tests.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T52 | **IDOR across collections, rows, views, attachments** | Every path id is joined to its collection and checked against the live `readableCollectionPredicate` in the service; non-readers get 404, a view id from another collection is 404 in query and export, and attachment routes join the row first. Tests cover strangers on every route and cross-collection ids. | Required |
+| T53 | **Abuse of schema or value JSON** | Strict zod everywhere, prototype keys rejected at any depth, server-generated field and option ids, 50 fields / 100 options / 20 multi-select values, 4000-character text, 16 KiB rows and 64 KiB schemas enforced in code and by CHECK constraints. | Required |
+| T54 | **SQL injection through sort or filter** | Operators come from a per-type enum, field ids must exist in the schema, and values and JSON paths are bound parameters (`json_extract(r.values_json, ?)`); unit tests assert hostile input never reaches the SQL text. | Required |
+| T55 | **CSV formula injection** | Export prefixes `'` to text cells (names, text, links, option labels, note titles, file names) starting with `= + - @ \t \r`; numbers and dates are written as-is. Import strips the prefix again. | Required |
+| T56 | **Import exhaustion** | JSON-wrapped text ≤ 2 MB, header + 5000 rows, 50 columns, one transaction, all or nothing, 5 imports per minute per user, 10,000-row cap checked before writing. | Required |
+| T57 | **A viewer writes** | `requireEditable*` in the shared services refuses every row, attachment, and import write with 403 `READ_ONLY`; owner-only actions return `OWNER_ONLY`. The role matrix is tested. MCP writes will call the same services. | Required |
+| T58 | **An attachment stays reachable after unshare or bin** | Attachment access is a live predicate on a live row in a live, readable collection, OR-ed into `readableDocument*` only (never lists); content is `no-store`. Files routes refuse attachments, and folder or sharing access never applies to them. Tests cover unshare, row bin, collection bin, and unlink. | Required |
+| T59 | **Links disclose unreadable titles** | Note links resolve per viewer to `{ id, restricted: true }`, only readable notes can be linked, note titles are never indexed, and export writes titles only for readers who can read the note. | Required |
+| T60 | **Row search leaks** | The collection access rule is inside the search query, before `LIMIT`; binned rows and collections never match; parity and unshare tests. | Required |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

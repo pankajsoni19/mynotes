@@ -227,6 +227,17 @@ Clients treat a 404 on a **retry** as success.
 
 `DELETE /api/bin` with body `{}` → 200 `{ ok: true, purged: number, pending: number }`. Items are processed in batches. Failures stay marked for the sweeper. It includes the caller's binned boards and the binned cards on boards they own, never cards on other people's boards.
 
+### Collections and rows (Wave 11, D68)
+
+`:type` also accepts `collection` and `collection_row`, and `GET /api/bin?type=` takes either. Collection items come from a provider registered by `server/collections/bin.ts`; `BinItem` gains an optional `can_purge`.
+
+| Type | Listed for | `title` / `folder_*` | Restore | Delete forever |
+| --- | --- | --- | --- | --- |
+| `collection` | its owner | name / null | owner; 409 `LIMIT_REACHED` at 100 live collections | owner |
+| `collection_row` | the collection owner and whoever binned it | primary field / the collection's id and name | owner or deleter while they can still edit the collection (404 otherwise); 409 `PARENT_IN_BIN` while the collection is binned; 409 `LIMIT_REACHED` at 10,000 live rows | collection owner only (`can_purge: false` for others) |
+
+A purge is one transaction (nothing lives outside SQLite) and cascades to rows, members, views, links, and search rows; documents it leaves unlinked with `purpose = 'collection_attachment'` move to the uploader's Bin. The sweeper purges collections and rows past `purge_after`, and Empty Bin purges the owner's collections and the binned rows of collections they own. Audit: `collection.restore`, `collection.purge { collectionId, reason, rowCount, binnedDocuments }`, `collection.row_restore`, `collection.row_purge`.
+
 > **Implementation notes (shipped in v0.3.1):**
 > - Purge audit events (`note.purge`, `document.purge`) record `reason`: `user`, `blank`, `retention`, or `resumed`. `resumed` marks a purge the sweeper finished after an interruption; the original reason is not stored.
 > - The sweeper's Bin step has two separate budgets per table and run: up to 50 interrupted purges resumed, then up to 100 items past `purge_after`. Retention is re-checked under the lock, so an item restored and deleted again mid-run is not purged. Remaining items wait for the next hourly run.
@@ -264,6 +275,16 @@ type NoteSearchHit = {
 | 429 | More than 20 searches in 10 seconds by this user | `{ error, code: "RATE_LIMITED" }` with `Retry-After` in seconds |
 
 Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT`: a note's owner searches their draft when one exists and the published version otherwise; everyone else searches the published version of notes they can read. Binned notes never match; restoring one makes it searchable again, and purging removes its index rows. The index holds the published version and the owner's draft, built from checksum-verified files in the same transaction as each change.
+
+### Collection rows (Wave 11)
+
+`GET /api/search?scope=collections&q=&collection=all|<uuid>&limit=20` uses the same query builder, rate limit, limit bounds, and segments. `folder` is ignored; a `collection` that is neither `all` nor a UUID is 400.
+
+```ts
+type RowSearchHit = { rowId: string; collectionId: string; collectionName: string; title: Segment[]; snippet: Segment[]; updated_at: string };
+```
+
+→ 200 `{ results: RowSearchHit[], truncated }`. The live `readableCollection` rule is applied in the query before `LIMIT` (T60); binned rows and rows of binned collections never match. The title is the primary field; the body is the other text, url, number, and date values and chosen option labels. Note titles and file names are never indexed (T59). Rows are indexed in the transaction that writes them (`collection_row_search` + `collection_row_fts`), a schema change reindexes its collection, and boot reconciles entries whose `source_revision` or `schema_version` is stale.
 
 ## Tasks (Wave 9)
 
@@ -476,6 +497,160 @@ Note writes are audited as `mcp.note_create` and `mcp.note_draft_update` (`{ via
 - `GET /api/notes/:id` gains `draftMcpKeyName: string | null` (owner only); `draft_mcp_key_id` is never returned.
 - `POST /api/notes/:id/publish` takes `{ revision }`, the draft revision the client last saw; the app always sends it. A different revision returns 409 `{ code: "DRAFT_CHANGED", currentRevision }` and publishes nothing. Omitting it is allowed only when no MCP key wrote the draft (older clients); otherwise 400.
 - Publishing, discarding the draft, and restoring a version to the draft clear `notes.draft_mcp_key_id`. A human autosave keeps it, because the draft still holds the key's text.
+
+## Collections (Wave 11)
+
+Typed tables ([WAVES_10-12.md](WAVES_10-12.md) §3). Every endpoint is under `/api/collections`, takes and returns JSON (except CSV export), and inherits the global session, Origin, CSRF, `Content-Type: application/json`, and TOTP rules. Path ids are UUIDs (400 otherwise). Request bodies containing `__proto__`, `constructor`, or `prototype` keys at any depth are rejected with 400.
+
+### Schema
+
+```ts
+type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "multi_select" | "url" | "note" | "file";
+type SelectOption = { id: string /* o_[a-z0-9]{6} */; label: string /* 1–60, unique per field, case-insensitive */; color: "gray" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" };
+type FieldDefinition = {
+  id: string;                          // f_[a-z0-9]{8}, generated by the server
+  name: string;                        // 1–60 characters, unique case-insensitive
+  type: FieldType;
+  required?: true;                     // never on file fields
+  number?: { decimals: number /* 0–6 */; unit: string /* ≤ 8 */ };   // number fields only
+  options?: SelectOption[];            // select and multi_select only, ≤ 100
+};
+type CollectionSchema = { fields: FieldDefinition[] };   // 1–50 fields; fields[0] is text (the primary field, the row title); ≤ 65,536 bytes
+type FieldInput = Omit<FieldDefinition, "id" | "options" | "required"> & { id?: string; required?: boolean; options?: Array<{ id?: string; label: string; color?: string }> };
+```
+
+- Ids are assigned by the server. An input `id` must name a field (or option) that already exists; fields and options without one are new.
+- Allowed type changes: text ↔ url and select → multi_select. Anything else is 400 `INCOMPATIBLE_TYPE_CHANGE`; other schema errors are 400 `INVALID_SCHEMA`.
+
+**Values** are keyed by field id. Writes are strict (400 `INVALID_VALUES { fieldErrors: { [fieldId]: message } }`); reads are lenient (values of removed fields or options, or of a now-incompatible type, read as empty and are dropped on the next write). `null` or an empty value clears a field.
+
+| Type | Stored value |
+| --- | --- |
+| `text` | string ≤ 4000 characters: NFC, CRLF → LF, controls (other than tab and newline) and bidi overrides stripped, trimmed |
+| `number` | finite JSON number |
+| `date` | `YYYY-MM-DD`, a real calendar date |
+| `checkbox` | `true` (false clears) |
+| `select` | one option id |
+| `multi_select` | ≤ 20 distinct option ids |
+| `url` | `http:` or `https:` URL, ≤ 2048 characters |
+| `note` | a note uuid the writer can read at write time |
+| `file` | never stored; derived from attachment links |
+
+A row's values JSON is at most 16,384 bytes. Required fields must be set on create and cannot be cleared.
+
+**Templates** (`GET /templates`): `inventory`, `subscriptions`, `expenses`, `recipes`, `contacts`. A template's fields are copied into the new collection with fresh ids.
+
+### Roles
+
+A collection's readers are its owner, its members when `visibility = 'selected'`, and every user when `visibility = 'all_users'`. The audience has one role, `share_role` (`viewer` or `editor`, D54): editors create, edit, undo, and bin rows. Only the owner edits the name, icon, schema, views, and sharing, and deletes. A caller who cannot read the collection gets **404** on every route (path ids are always joined to their collection); a viewer writing a row gets **403** `READ_ONLY`; a non-owner calling an owner-only route gets **403** `OWNER_ONLY`. Binned collections and rows are unreadable for everyone.
+
+**Caps** (409 `LIMIT_REACHED`): 100 live collections per owner, 10,000 live rows per collection, 20 views per collection, 20 attachments per row.
+
+```ts
+type CollectionSummary = {
+  id: string; name: string /* 1–120 */; icon: string /* [a-z0-9-]{1,32} */;
+  owner_id: string; owner_name: string; is_owner: 0 | 1;
+  role: "owner" | "editor" | "viewer";
+  visibility: Visibility; share_role: "viewer" | "editor";
+  row_count: number; field_count: number; template_id: string | null;
+  created_at: string; updated_at: string;
+};
+type CollectionDetail = CollectionSummary & { fields: FieldDefinition[]; schema_version: number };
+type NoteLink = { id: string; title: string } | { id: string; restricted: true };
+type RowSummary = {
+  id: string; collection_id: string; position: number;
+  title: string;                          // the primary field's text
+  values: Record<string, FieldValue>;     // lenient read against the current schema
+  links: Record<string, NoteLink>;        // note fields, resolved for the caller (never an unreadable title)
+  revision: number; can_undo: boolean;
+  created_by: string | null; created_by_name: string | null; updated_by_name: string | null;
+  updated_via_key_id: string | null;      // set by MCP writes (Stage E)
+  created_at: string; updated_at: string;
+};
+```
+
+### Collections and rows
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /` | any | 200 `{ collections: CollectionSummary[] }`: owned first, then shared, each by name (limit 500) | |
+| `GET /templates` | any | 200 `{ templates: [{ id, name, icon, description, fields: [{ name, type }] }] }` | |
+| `POST / { name, icon?, templateId?, fields? }` | any | 201 `{ collection: CollectionDetail }`. Neither `templateId` nor `fields` gives Name + Notes. | 400 (`INVALID_SCHEMA`, unknown template, both given), 409 `LIMIT_REACHED` |
+| `GET /:c` | reader | 200 `{ collection, role, views }` | 404 |
+| `PATCH /:c { name?, icon? }` | owner | 200 `{ collection }` | 400, 403, 404 |
+| `DELETE /:c` | owner | 200 `{ ok: true, purgeAfter }`: to the Bin with its rows | 403, 404 |
+| `PUT /:c/schema { fields: FieldInput[], schemaVersion }` | owner | 200 `{ collection }` with `schema_version + 1` | 400 `INVALID_SCHEMA` / `INCOMPATIBLE_TYPE_CHANGE`, 403, 404, 409 `{ code: "SCHEMA_CHANGED", collection }` |
+| `POST /:c/query { viewId?, sort?, filters?, q?, cursor?, limit? }` | reader | 200 `{ rows: RowSummary[], nextCursor: string \| null, schemaVersion, total }` | 400 `INVALID_QUERY` / `INVALID_CURSOR`, 404, 409 `SCHEMA_CHANGED` |
+| `POST /:c/rows { values, afterRowId? }` | editor | 201 `{ row }`. Omitted `afterRowId` = bottom, `null` = top. | 400 `INVALID_VALUES`, 403 `READ_ONLY`, 404 (collection, or an anchor not in it), 409 `LIMIT_REACHED` |
+| `GET /rows/:r` | reader | 200 `{ row, role, schemaVersion }` | 404 |
+| `PATCH /rows/:r { values, revision }` | editor | 200 `{ row }`: `values` is merged; `revision + 1`; the previous values are kept for undo | 400, 403, 404, 409 `{ code: "ROW_CHANGED", row }` |
+| `POST /rows/:r/undo { revision }` | editor | 200 `{ row }`: the previous values, projected onto the current schema; undo is one step | 403, 404, 409 `ROW_CHANGED` or `NOTHING_TO_UNDO` |
+| `DELETE /rows/:r` | editor | 200 `{ ok: true, purgeAfter }`: to the Bin | 403, 404 |
+
+### Saved views
+
+```ts
+type ViewConfig = { sort?: SortSpec[] /* ≤ 3 */; filters?: FilterSpec[] /* ≤ 10 */; hiddenFieldIds?: string[] /* never the primary field */ };
+type CollectionView = { id: string; collection_id: string; name: string /* 1–60 */; kind: "table"; config: ViewConfig; position: number; created_at: string; updated_at: string };
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /:c/views { name, kind?: "table", config }` | owner | 201 `{ view }` (appended) | 400 `INVALID_QUERY` (config does not compile against the schema, unknown hidden field) or over 8 KiB, 403, 404, 409 `LIMIT_REACHED` (20) |
+| `PATCH /views/:v { name?, config? }` | owner | 200 `{ view }` | 400, 403, 404 |
+| `DELETE /views/:v` | owner | 200 `{ ok: true }` | 403, 404 |
+
+Views are listed by `GET /:c` for every reader and used through `POST /:c/query { viewId }`; a view id from another collection is 404. `q` is never stored. `kind: "board"` is reserved. Audit: `collection.view_create`, `collection.view_update`, `collection.view_delete` with `{ collectionId, viewId }`.
+
+### Row attachments
+
+`file` values are derived from links (D58): `RowSummary.files` is `{ [fieldId]: AttachmentSummary[] }` with `AttachmentSummary = { id, name, mime_type, preview_kind, size_bytes, linked_by, created_at }`, live documents only. Uploads for rows use `POST /api/files?purpose=collection_attachment` (no `folderId`, 400 otherwise): the document is stored with `folder_id = NULL`, counts against the uploader's quota, and never appears in `GET /api/files`, folder counts, or the Files Bin filter.
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /rows/:r/attachments { documentId, fieldId }` | editor that owns the document | 201 `{ row }` | 400 (not a file field), 403 `READ_ONLY`, 404 (row, or a document that is not the caller's live `file` or `collection_attachment` document), 409 `ALREADY_ATTACHED` / `LIMIT_REACHED` (20 per row) |
+| `DELETE /rows/:r/attachments/:d` | editor who linked it, or the owner | 200 `{ row, documentBinned }` | 403 `READ_ONLY` / `NOT_LINKER`, 404 |
+
+- **Access.** A linked document is readable (`GET /api/files/:id`, `/content`) by anyone who can read a live row that links it in a live collection; the check is live, so unsharing, binning the row or collection, or unlinking ends access at once (T58). This path is OR-ed into `readableDocument*` only, never into lists.
+- **Files routes.** Rename, move, and sharing (`PATCH /api/files/:id`, `GET|PUT /api/files/:id/sharing`) are 404 for any document whose `purpose` is not `file`, and sharing rows or folder access never apply to such documents. `DELETE /api/files/:id` on a row attachment that a row still links is 409 `ATTACHMENT_LINKED`.
+- **Never linked.** The hourly sweeper moves `collection_attachment` uploads with no row link that are older than 24 hours to the uploader's Bin (100 per run, `deleted_by = NULL`, audit reason `attachment_never_linked`).
+- **Lifecycle.** When the last link to a `collection_attachment` document is removed (unlink, or a row or collection purge), the document moves to the uploader's Bin (`deleted_by` = actor). Files items that were linked are never binned. Restoring an attachment from the Bin keeps `folder_id = NULL`.
+- **Notes** in `note` fields never grant access: a note the caller cannot read resolves as `{ id, restricted: true }` (T59).
+- Audit: `collection.row_attach` and `collection.row_detach` with `{ collectionId, rowId, documentId }`; a binned upload adds `document.delete { documentId, reason: "attachment_unlinked" }`.
+
+### CSV import and export
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /:c/import { csv, mapping?, dryRun }` | editor | dry run: 200 `{ dryRun: true, header, total, valid, errorCount, errors ≤ 50, mapping, preview ≤ 20, wouldExceedLimit }`; import: 200 `{ inserted }` | 400 `INVALID_CSV` (with `line`) / `INVALID_MAPPING` / `IMPORT_INVALID { errorCount, errors }`, 403 `READ_ONLY`, 404, 409 `LIMIT_REACHED`, 413 `IMPORT_TOO_LARGE`, 429 `RATE_LIMITED` |
+| `GET /:c/export.csv?viewId=` | reader | 200 `text/csv; charset=utf-8`, `Content-Disposition: attachment`, `no-store` | 400 (bad `viewId`), 404 (collection, or a view of another collection) |
+
+- **Import** (D59, T56). `csv` is the file's text inside JSON, at most 2,000,000 UTF-8 bytes; the first record is the header, then at most 5000 rows of at most 50 columns (in-house RFC 4180 parser: quotes, doubled quotes, embedded line breaks, CRLF/LF/CR, BOM stripped, empty records skipped). `mapping` has one entry per header column: a field id or `null` to skip; without it, columns map to fields with the same name (case-insensitive). File fields cannot be mapped. Cells convert per type (numbers may use `,` separators; checkboxes accept yes/no/true/false/1/0/x; options match by label or id, several separated by `;`; notes by id and must be readable), then pass the same strict validation as `POST /rows`. `errors[].row` counts data rows from 1. A real import inserts every row in one transaction, indexed for search, or nothing; imports count five per minute per user, dry runs included. Audit: `collection.import { collectionId, count }`.
+- **Export** (T55). The rows `POST /:c/query { viewId }` returns (all pages, in order) and the view's shown fields, as UTF-8 with a BOM and CRLF. Text cells (names, text, url, option labels, note titles, file names) that start with `=`, `+`, `-`, `@`, tab, or CR get a leading `'`; numbers, dates, and checkboxes are written as-is. Note titles follow the caller's access (empty when unreadable). Importing an export removes the added `'`. Audit: `collection.export { collectionId, count }`.
+
+### Collection sharing
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /:c/sharing` | owner | 200 `{ visibility, role: "viewer" \| "editor", users: [{ id, display_name }] }` | 403 `OWNER_ONLY`, 404 |
+| `PUT /:c/sharing { visibility: "private" \| "selected" \| "all_users", userIds ≤ 100, role? = "viewer" }` | owner | 200 `{ ok: true }` | 400, 403, 404 |
+
+Same rules as board sharing: the owner cannot be a recipient (400), `selected` needs at least one user (400), every user must exist and be enabled (400), and member rows are kept only for `selected`. `role` applies to the whole audience (D54). Removing someone revokes access to the collection, its rows, its search hits, and its row attachments at once. Audit: `collection.sharing_changed { collectionId, visibility, role, recipientCount }`.
+
+**Query** (D56, T54). `sort` ≤ 3 `{ fieldId, direction: "asc" | "desc" }` (text, url, number, date, checkbox, and select fields; select sorts by option order; empty values last); `filters` ≤ 10 `{ fieldId, op, value? }`, AND-ed; `q` ≤ 200 characters matches any text or url field (case-insensitive substring); `limit` 1–100 (default 50). Field ids are checked against the schema, operators are enumerated, and JSON paths are bound as parameters. With `viewId`, the view's sort and filters apply unless the request gives its own; view clauses that name removed fields are dropped.
+
+| Types | Operators and `value` |
+| --- | --- |
+| text, url | `contains` / `equals` (non-empty string), `empty`, `not_empty` |
+| number, date | `eq`, `lt`, `lte`, `gt`, `gte` (a number, or `YYYY-MM-DD`), `empty` |
+| checkbox | `is` (boolean) |
+| select | `is`, `is_not` (an option id), `in` (1–20 option ids) |
+| multi_select | `has_any`, `has_all` (1–20 option ids) |
+| note, file | `empty`, `not_empty` |
+
+`nextCursor` is opaque: an offset bound to the spec and to `schema_version`. A cursor from another spec is 400 `INVALID_CURSOR`; after a schema change it is 409 `SCHEMA_CHANGED`. Offsets stop at 10,000.
+
+**Audit** (ids and counts only, never values or names): `collection.create { collectionId, fieldCount, templateId? }`, `collection.update`, `collection.delete`, `collection.schema_update { collectionId, fieldCount }`, `collection.row_create`, `collection.row_update { collectionId, rowId, fieldCount }`, `collection.row_undo`, `collection.row_delete`.
 
 ## Changes to existing note endpoints (Wave 4)
 

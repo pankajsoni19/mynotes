@@ -29,7 +29,7 @@ function taskRow(item: Record<string, any>, date: string): TodayRow {
   };
 }
 
-const binTypeLabel: Record<string, string> = { note: "Note", document: "File", card: "Card", board: "Board" };
+const binTypeLabel: Record<string, string> = { note: "Note", document: "File", card: "Card", board: "Board", collection: "Collection", collection_row: "Row" };
 
 /**
  * Client copy for each Today section, in the default order. A section the
