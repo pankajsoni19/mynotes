@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
-import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
+import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
 
 /**
  * D69 for Collections: dialogs, sheets, and pickers push no history entry. Collections nests them
@@ -30,6 +30,7 @@ export function useDialogLayer(open: boolean, close: () => void) {
     if (!open) return;
     return openLayer(() => closeRef.current(), readHistoryDepth(window.history.state));
   }, [open]);
+  useDialogSentinel(open);
 }
 
 /** Closes the top-most layer for a popstate; true when the browser's move was undone. */

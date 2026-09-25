@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
-import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
+import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
 
 type Guard = (poppedState: unknown) => boolean;
 
@@ -23,6 +23,7 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
   const wasOpenRef = useRef(false);
   if (open && !wasOpenRef.current) depthRef.current = readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
+  useDialogSentinel(open);
   useEffect(() => {
     if (!open) return undefined;
     const guard: Guard = (poppedState) => {

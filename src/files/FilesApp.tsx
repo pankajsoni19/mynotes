@@ -4,7 +4,7 @@ import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
-import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
+import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
@@ -220,6 +220,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
   const dialogWasOpenRef = useRef(false);
   if (dialog !== null && !dialogWasOpenRef.current) dialogDepthRef.current = readHistoryDepth(window.history.state);
   dialogWasOpenRef.current = dialog !== null;
+  useDialogSentinel(dialog !== null);
   const closeDialogRef = useRef<() => void>(() => undefined);
   useEffect(() => registerHistoryDialogGuard((poppedState) => {
     if (!dialogOpenRef.current) return false;

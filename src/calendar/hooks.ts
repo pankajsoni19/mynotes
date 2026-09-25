@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
-import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
+import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
 
 /** Tracks a CSS media query (the phone layout below 761 px, as everywhere in Nook). */
 export function useMediaQuery(query: string) {
@@ -33,6 +33,7 @@ export function useDialogBackGuard(active: boolean, onBack: (forced: boolean) =>
   const wasActiveRef = useRef(false);
   if (active && !wasActiveRef.current && typeof window !== "undefined") depthRef.current = readHistoryDepth(window.history.state);
   wasActiveRef.current = active;
+  useDialogSentinel(active);
   useEffect(() => registerHistoryDialogGuard((poppedState) => {
     if (!activeRef.current) return false;
     const direction = dialogPopDirection(depthRef.current, readHistoryDepth(poppedState));

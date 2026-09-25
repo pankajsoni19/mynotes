@@ -3,6 +3,7 @@ import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon
 import { ApiError } from "../api";
 import { AccountActions } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
+import { useDialogSentinel } from "../historyDialogs";
 import { relativeTime } from "../files/format";
 import type { BinItem } from "../types";
 import { deleteBinItem, emptyBin, listBin, restoreBinItem } from "./binApi";
@@ -81,7 +82,8 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     sheetReturnFocusRef.current = null;
   }, []);
 
-  // The sheet has no history entry of its own, so Back/Forward (and Escape) just close it.
+  // The sheet has no history entry of its own (except the depth-0 sentinel on a phone), so Back/Forward (and Escape) just close it.
+  useDialogSentinel(sheetKey !== null);
   useEffect(() => {
     if (!sheetKey) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeSheet(); };
