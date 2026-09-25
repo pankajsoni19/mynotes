@@ -61,6 +61,5 @@
   .bin-row-actions { display: none; }
   .bin-more { width: 44px; height: 44px; display: grid; }
   .bin-app .app-home-button { min-height: 44px; }
-  .bin-app .app-account-button { width: 44px; height: 44px; }
 }
 @media (min-width: 761px) { .bin-sheet, .bin-app > .panel-scrim { display: none; } }

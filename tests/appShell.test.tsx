@@ -65,3 +65,10 @@ test("Home opens Tasks as a live app", () => {
   expect(tasks).toContain("Open Tasks");
   expect([...markup.matchAll(/class="app-card app-card-(\w+)"/g)].map((match) => match[1])).toEqual(["notes", "files", "tasks"]);
 });
+
+test("account buttons have 44px hit areas on phones without growing the icon", async () => {
+  const css = await Bun.file(new URL("../src/appShell.css", import.meta.url)).text();
+  const phone = css.slice(css.indexOf("@media (max-width: 760px)"));
+  expect(phone).toMatch(/\.app-account-button \{[^}]*width: 44px;[^}]*height: 44px;/);
+  expect(css).toMatch(/\.app-account-button svg \{ width: 16px;/);
+});

@@ -112,7 +112,6 @@
   .task-board-open { min-height: 60px; }
   .task-board-actions .icon-button, .task-board-header .icon-button { width: 44px; height: 44px; }
   .tasks-app .app-home-button { min-height: 44px; }
-  .tasks-app .app-account-button { width: 44px; height: 44px; }
 }
 
 /* Card dialog (a view over the board with its own history entry). */
