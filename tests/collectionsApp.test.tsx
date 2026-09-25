@@ -2,10 +2,12 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppHome } from "../src/AppShell";
 import { CellEditor } from "../src/collections/cells";
+import { CollectionCards } from "../src/collections/CollectionCards";
 import { CollectionList } from "../src/collections/CollectionList";
 import type { CollectionRow, FieldDefinition } from "../src/collections/collectionsApi";
 import { fromDrafts, moveDraft, newFieldDraft, toDrafts, typeChoices, validateDrafts } from "../src/collections/fieldDrafts";
-import { allowedTypeChanges, cardFields, displayValue, parseInput, validateCollectionName } from "../src/collections/values";
+import { RowPanel } from "../src/collections/RowPanel";
+import { allowedTypeChanges, cardFields, defaultFilterValue, displayValue, filterReady, parseInput, validateCollectionName } from "../src/collections/values";
 
 const account = { displayName: "Ada Lovelace", onSettings: () => undefined, onSignOut: () => undefined };
 const fields: FieldDefinition[] = [
@@ -20,7 +22,7 @@ const fields: FieldDefinition[] = [
 ];
 const row = (values: CollectionRow["values"], links: CollectionRow["links"] = {}): CollectionRow => ({
   id: "r", collection_id: "c", position: 1, title: String(values.f_aaaaaaaa ?? ""), values, links, revision: 1, can_undo: false,
-  created_by: null, created_by_name: null, updated_by_name: null, updated_via_key_id: null, created_at: "", updated_at: ""
+  created_by: null, created_by_name: null, updated_by_name: null, updated_via_key_id: null, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z"
 });
 
 test("Home has a live Collections card", () => {
@@ -72,6 +74,45 @@ test("viewers get read-only cells and editors get inputs", () => {
   // Multi-line text is edited in the row panel, never in a single-line input that drops line breaks.
   const multiline = renderToStaticMarkup(<CellEditor field={fields[0]!} row={row({ f_aaaaaaaa: "a\nb" })} editable onSave={async () => true} onOpenPicker={() => undefined} />);
   expect(multiline).not.toContain("<input");
+});
+
+test("phone cards show the primary field and up to three more, with 44 px actions", () => {
+  const sample = row({ f_aaaaaaaa: "Mug", f_bbbbbbbb: 3.5, f_cccccccc: "2024-02-29", f_dddddddd: "o_aaaaaa", f_gggggggg: "https://example.test/" });
+  const markup = renderToStaticMarkup(<CollectionCards fields={fields} rows={[sample]} editable conflicts={{}} onOpenRow={() => undefined} onRowActions={() => undefined} onReloadRow={() => undefined} onAdd={async () => true} />);
+  expect(markup).toContain('<span class="collection-card-title">Mug</span>');
+  expect([...markup.matchAll(/class="collection-card-field"/g)]).toHaveLength(3);
+  expect(markup).not.toContain("example.test");
+  expect(markup).toContain('aria-label="Actions for Mug"');
+  const viewer = renderToStaticMarkup(<CollectionCards fields={fields} rows={[sample]} editable={false} conflicts={{}} onOpenRow={() => undefined} onRowActions={() => undefined} onReloadRow={() => undefined} />);
+  expect(viewer).not.toContain("New row");
+});
+
+test("the row panel labels one editor per field and shows View only to viewers", () => {
+  const collection = { id: "c", name: "Things", icon: "table", owner_id: "o", owner_name: "O", is_owner: 0 as const, role: "viewer" as const, visibility: "all_users" as const, share_role: "viewer" as const, row_count: 1, field_count: fields.length, template_id: null, created_at: "", updated_at: "", fields, schema_version: 1 };
+  const sample = row({ f_aaaaaaaa: "Mug" });
+  const props = { collection, rowId: "r", listed: sample, conflict: null, save: async () => null, onAcceptConflict: () => undefined, onActions: () => undefined, onClose: () => undefined, onMissing: () => undefined };
+  const viewer = renderToStaticMarkup(<RowPanel {...props} editable={false} />);
+  expect(viewer).toContain("View only");
+  expect(viewer).not.toContain("<input");
+  const editor = renderToStaticMarkup(<RowPanel {...props} editable />);
+  expect(editor).not.toContain("View only");
+  expect([...editor.matchAll(/class="row-field-label"/g)]).toHaveLength(fields.length);
+  expect(editor).toContain('aria-labelledby="row-field-f_aaaaaaaa"');
+  expect(editor).toContain("<textarea");
+});
+
+test("filters are sent only when complete", () => {
+  expect(filterReady(fields[1], { op: "gt", value: 3 })).toBe(true);
+  expect(filterReady(fields[1], { op: "gt" })).toBe(false);
+  expect(filterReady(fields[1], { op: "contains", value: "3" })).toBe(false);
+  expect(filterReady(fields[0], { op: "empty" })).toBe(true);
+  expect(filterReady(fields[0], { op: "contains", value: "  " })).toBe(false);
+  expect(filterReady(fields[3], { op: "in", value: [] })).toBe(false);
+  expect(filterReady(fields[4], { op: "has_all", value: ["o_bbbbbb"] })).toBe(true);
+  expect(filterReady(fields[7], { op: "is", value: false })).toBe(true);
+  expect(defaultFilterValue(fields[7]!, "is")).toBe(true);
+  expect(defaultFilterValue(fields[3]!, "in")).toEqual([]);
+  expect(defaultFilterValue(fields[0]!, "empty")).toBeUndefined();
 });
 
 test("field drafts mirror the schema rules and build the PUT body", () => {

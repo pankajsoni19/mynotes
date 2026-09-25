@@ -74,16 +74,17 @@ export function useRows(collectionId: string, notify: (message: string) => void)
     setState((previous) => ({ ...previous, rows: [...previous.rows, row], total: previous.total + 1 }));
   }, []);
 
-  /** Saves a change to one row; resolves true when it was stored. */
-  const save = useCallback((rowId: string, values: Record<string, FieldValue | null>, known?: CollectionRow) => {
+  /** Saves a change to one row; resolves to the stored row, or null when it was not saved. */
+  const save = useCallback((rowId: string, values: Record<string, FieldValue | null>, known?: () => CollectionRow | null) => {
     const previous = queues.current.get(rowId) ?? Promise.resolve();
-    const next = previous.then(async () => {
-      const row = rowsRef.current.find((item) => item.id === rowId) ?? known;
-      if (!row) return false;
+    const next = previous.then(async (): Promise<CollectionRow | null> => {
+      // The row panel may show a row outside the loaded page; it passes its own latest copy.
+      const row = rowsRef.current.find((item) => item.id === rowId) ?? known?.() ?? null;
+      if (!row) return null;
       try {
         const { row: saved } = await patchRow(rowId, values, row.revision);
         replaceRow(saved);
-        return true;
+        return saved;
       } catch (reason) {
         const code = errorCode(reason);
         if (code === "ROW_CHANGED") {
@@ -96,10 +97,10 @@ export function useRows(collectionId: string, notify: (message: string) => void)
         } else {
           notify(errorMessage(reason, "Could not save the change"));
         }
-        return false;
+        return null;
       }
     });
-    queues.current.set(rowId, next.catch(() => false));
+    queues.current.set(rowId, next.catch(() => null));
     return next;
   }, [notify, replaceRow]);
 

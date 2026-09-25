@@ -152,3 +152,50 @@ export const rowCountLabel = (count: number) => count === 1 ? "1 row" : `${count
 export function roleLabel(role: "owner" | "editor" | "viewer") {
   return role === "owner" ? "Owner" : role === "editor" ? "Can edit" : "View only";
 }
+
+/** Filter operators per field type (mirrors server/collections/query.ts OPERATORS). */
+export const OPERATORS: Record<FieldType, string[]> = {
+  text: ["contains", "equals", "empty", "not_empty"],
+  url: ["contains", "equals", "empty", "not_empty"],
+  number: ["eq", "lt", "lte", "gt", "gte", "empty"],
+  date: ["eq", "lt", "lte", "gt", "gte", "empty"],
+  checkbox: ["is"],
+  select: ["is", "is_not", "in"],
+  multi_select: ["has_any", "has_all"],
+  note: ["empty", "not_empty"],
+  file: ["empty", "not_empty"]
+};
+
+export const OPERATOR_LABELS: Record<string, string> = {
+  contains: "contains", equals: "is", empty: "is empty", not_empty: "is not empty",
+  eq: "=", lt: "<", lte: "≤", gt: ">", gte: "≥",
+  is: "is", is_not: "is not", in: "is any of", has_any: "has any of", has_all: "has all of"
+};
+
+export const SORTABLE_TYPES: FieldType[] = ["text", "url", "number", "date", "checkbox", "select"];
+
+/** Operators that take no value. */
+export const valuelessOperator = (op: string) => op === "empty" || op === "not_empty";
+
+/** Whether a filter is complete enough to send (the server rejects incomplete ones with 400). */
+export function filterReady(field: FieldDefinition | undefined, filter: { op: string; value?: unknown }) {
+  if (!field || !OPERATORS[field.type].includes(filter.op)) return false;
+  if (valuelessOperator(filter.op)) return true;
+  const value = filter.value;
+  switch (field.type) {
+    case "number": return typeof value === "number" && Number.isFinite(value);
+    case "date": return typeof value === "string" && isRealDate(value);
+    case "checkbox": return typeof value === "boolean";
+    case "select": return filter.op === "in" ? Array.isArray(value) && value.length > 0 : typeof value === "string" && value !== "";
+    case "multi_select": return Array.isArray(value) && value.length > 0;
+    default: return typeof value === "string" && value.trim() !== "";
+  }
+}
+
+/** The default value when a filter's operator or field changes. */
+export function defaultFilterValue(field: FieldDefinition, op: string): string | number | boolean | string[] | undefined {
+  if (valuelessOperator(op)) return undefined;
+  if (field.type === "checkbox") return true;
+  if (field.type === "multi_select" || (field.type === "select" && op === "in")) return [];
+  return field.type === "number" ? undefined : "";
+}

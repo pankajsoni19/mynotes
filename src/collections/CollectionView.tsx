@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Columns3, Eye, Pencil, RotateCcw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Columns3, Eye, Pencil, RotateCcw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { NameDialog } from "../files/RenameDialog";
 import { formatRoute } from "../router";
@@ -19,12 +19,15 @@ import {
   type CollectionView as SavedView,
   type FieldValue
 } from "./collectionsApi";
+import { CollectionCards, useIsPhone } from "./CollectionCards";
 import { CollectionTable } from "./CollectionTable";
 import { useDialogLayer } from "./dialogLayers";
 import { FieldEditor } from "./FieldEditor";
 import { CollectionIcon } from "./icons";
 import { OptionPicker } from "./OptionPicker";
 import { RowActionSheet } from "./RowActionSheet";
+import { RowPanel } from "./RowPanel";
+import { SortFilterSheet, type SortFilter } from "./SortFilterSheet";
 import { useRows } from "./useRows";
 import { roleLabel, rowCountLabel, validateCollectionName } from "./values";
 
@@ -43,6 +46,7 @@ type CollectionViewProps = {
 type Dialog =
   | { kind: "fields" }
   | { kind: "rename" }
+  | { kind: "sortFilter" }
   | { kind: "picker"; rowId: string; fieldId: string }
   | { kind: "actions"; rowId: string };
 
@@ -74,31 +78,48 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
   useEffect(() => { void loadCollection(); }, [loadCollection]);
 
   const view = viewId ? views.find((item) => item.id === viewId) ?? null : null;
+  // Sort and filters chosen in the sheet override the saved view's until the view changes.
+  const [local, setLocal] = useState<SortFilter | null>(null);
+  const [search, setSearch] = useState("");
+  const [q, setQ] = useState("");
+  const [detached, setDetached] = useState<Record<string, CollectionRow>>({});
+  const phone = useIsPhone();
+  useEffect(() => { setLocal(null); }, [viewId]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQ(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
   useEffect(() => {
     if (!collection) return;
     if (viewId && !view) {
       onMissing("view");
       return;
     }
-    void rows.load(viewId ? { viewId } : {});
-    // rows.load is stable per collection; reload when the view or the schema changes.
+    void rows.load({ ...(viewId ? { viewId } : {}), ...(local ? { sort: local.sort, filters: local.filters } : {}), ...(q ? { q } : {}) });
+    // rows.load is stable per collection; reload when the view, the schema, or the spec changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collection?.id, collection?.schema_version, viewId, view?.id]);
-
-  // The row panel arrives with stage A commit 5; until then a row URL opens its collection.
-  useEffect(() => {
-    if (rowId) go(collectionsRoute(collectionId, { viewId }), { replace: true });
-  }, [collectionId, go, rowId, viewId]);
+  }, [collection?.id, collection?.schema_version, viewId, view?.id, local, q]);
 
   const closeDialog = useCallback(() => setDialog(null), []);
   useDialogLayer(dialog !== null, closeDialog);
+
+  const effective: SortFilter = local ?? { sort: view?.config.sort ?? [], filters: view?.config.filters ?? [] };
+  const activeCount = effective.sort.length + effective.filters.length;
+  const closeRow = useCallback(() => onBack(), [onBack]);
+  const rowMissing = useCallback(() => onMissing("row"), [onMissing]);
 
   const fields = useMemo(() => {
     const hidden = new Set(view?.config.hiddenFieldIds ?? []);
     return (collection?.fields ?? []).filter((field, index) => index === 0 || !hidden.has(field.id));
   }, [collection?.fields, view?.config.hiddenFieldIds]);
 
-  const findRow = (id: string) => rows.rows.find((row) => row.id === id) ?? null;
+  const findRow = (id: string) => rows.rows.find((row) => row.id === id) ?? detached[id] ?? null;
+  // Rows outside the loaded page (a deep link, a filtered-out row) are kept here after an undo.
+  const showRow = (row: CollectionRow) => {
+    rows.replaceRow(row);
+    if (!rows.rows.some((item) => item.id === row.id)) setDetached((items) => ({ ...items, [row.id]: row }));
+  };
 
   function openRow(row: CollectionRow) {
     go(collectionsRoute(collectionId, { rowId: row.id }), { underlyingViewId: viewId });
@@ -107,12 +128,12 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
   async function undo(row: CollectionRow) {
     setDialog(null);
     try {
-      rows.replaceRow((await undoRow(row.id, row.revision)).row);
+      showRow((await undoRow(row.id, row.revision)).row);
       notify("Change undone");
     } catch (reason) {
       if (errorCode(reason) === "ROW_CHANGED") {
         const current = errorPayload<{ row?: CollectionRow }>(reason)?.row;
-        if (current) rows.replaceRow(current);
+        if (current) showRow(current);
         notify("Someone else changed this row since. Check it before undoing.");
       } else notify(errorMessage(reason, "Could not undo"));
     }
@@ -123,6 +144,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     try {
       await deleteRow(row.id);
       rows.removeRow(row.id);
+      if (rowId === row.id) onBack();
       notify("Row moved to the Bin");
     } catch (reason) {
       notify(errorMessage(reason, "Could not delete the row"));
@@ -174,29 +196,57 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       </span>}
     </header>
 
-    {rows.loadError && <div className="bin-state bin-error collection-state" role="alert">
-      <h2>Could not load the rows</h2>
-      <p>{rows.loadError}</p>
-      <button className="primary-button" onClick={() => { void rows.reload(); }}><RotateCcw />Try again</button>
-    </div>}
-    {!rows.loadError && rows.loading && !rows.rows.length && <p className="bin-loading collection-state" role="status">Loading rows…</p>}
-    {!rows.loadError && !(rows.loading && !rows.rows.length) && <div className="collection-body">
-      <CollectionTable
-        fields={fields}
-        rows={rows.rows}
+    <div className="collection-toolbar" role="toolbar" aria-label="Rows">
+      <input className="collection-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find rows" aria-label="Find rows" maxLength={200} />
+      <button className={`collection-chip${activeCount ? " active" : ""}`} onClick={() => setDialog({ kind: "sortFilter" })} aria-haspopup="dialog"><SlidersHorizontal />{activeCount ? `Sort & filter · ${activeCount}` : "Sort & filter"}</button>
+      {local && <button className="collection-chip" onClick={() => setLocal(null)}><X />{view ? `Reset to ${view.name}` : "Clear"}</button>}
+    </div>
+
+    <div className="collection-main">
+      {rows.loadError && <div className="bin-state bin-error collection-state" role="alert">
+        <h2>Could not load the rows</h2>
+        <p>{rows.loadError}</p>
+        <button className="primary-button" onClick={() => { void rows.reload(); }}><RotateCcw />Try again</button>
+      </div>}
+      {!rows.loadError && rows.loading && !rows.rows.length && <p className="bin-loading collection-state" role="status">Loading rows…</p>}
+      {!rows.loadError && !(rows.loading && !rows.rows.length) && <div className="collection-body">
+        {phone
+          ? <CollectionCards fields={fields} rows={rows.rows} editable={editable} conflicts={rows.conflicts} onOpenRow={openRow}
+            onRowActions={(row) => setDialog({ kind: "actions", rowId: row.id })} onReloadRow={(row) => rows.acceptConflict(row.id)} onAdd={editable ? add : undefined} />
+          : <CollectionTable
+            fields={fields}
+            rows={rows.rows}
+            editable={editable}
+            conflicts={rows.conflicts}
+            activeRowId={rowId}
+            onSave={async (row, values: Record<string, FieldValue | null>) => (await rows.save(row.id, values)) !== null}
+            onOpenRow={openRow}
+            onRowActions={(row) => setDialog({ kind: "actions", rowId: row.id })}
+            onOpenPicker={(row, field) => setDialog({ kind: "picker", rowId: row.id, fieldId: field.id })}
+            onReloadRow={(row) => rows.acceptConflict(row.id)}
+            onAdd={editable ? add : undefined}
+          />}
+        {!rows.rows.length && <p className="collection-empty">{q || activeCount ? "No rows match." : editable ? "No rows yet. Add one above." : "No rows yet."}</p>}
+        {rows.nextCursor && <button className="secondary-button collection-more" onClick={() => { void rows.loadMore(); }}>Load more ({rows.rows.length} of {rows.total})</button>}
+      </div>}
+
+      {rowId && <RowPanel
+        key={rowId}
+        collection={collection}
+        rowId={rowId}
         editable={editable}
-        conflicts={rows.conflicts}
-        activeRowId={rowId}
-        onSave={(row, values: Record<string, FieldValue | null>) => rows.save(row.id, values)}
-        onOpenRow={openRow}
-        onRowActions={(row) => setDialog({ kind: "actions", rowId: row.id })}
-        onOpenPicker={(row, field) => setDialog({ kind: "picker", rowId: row.id, fieldId: field.id })}
-        onReloadRow={(row) => rows.acceptConflict(row.id)}
-        onAdd={editable ? add : undefined}
-      />
-      {!rows.rows.length && <p className="collection-empty">{editable ? "No rows yet. Add one below." : "No rows yet."}</p>}
-      {rows.nextCursor && <button className="secondary-button collection-more" onClick={() => { void rows.loadMore(); }}>Load more ({rows.rows.length} of {rows.total})</button>}
-    </div>}
+        listed={findRow(rowId)}
+        conflict={rows.conflicts[rowId] ?? null}
+        save={rows.save}
+        onAcceptConflict={() => rows.acceptConflict(rowId)}
+        onActions={(row) => {
+          if (!findRow(row.id)) setDetached((items) => ({ ...items, [row.id]: row }));
+          setDialog({ kind: "actions", rowId: row.id });
+        }}
+        onClose={closeRow}
+        onMissing={rowMissing}
+      />}
+    </div>
 
     {dialog?.kind === "fields" && <FieldEditor collection={collection} onClose={closeDialog} onReload={() => { setDialog(null); void loadCollection(); }} onSaved={(saved) => {
       setDialog(null);
@@ -209,8 +259,12 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         setCollection(saved);
         setDialog(null);
       }} />}
+    {dialog?.kind === "sortFilter" && <SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {
+      setDialog(null);
+      setLocal(next);
+    }} />}
     {dialog?.kind === "picker" && dialogRow && pickerField && <OptionPicker field={pickerField} selected={Array.isArray(dialogRow.values[pickerField.id]) ? dialogRow.values[pickerField.id] as string[] : []}
-      onClose={closeDialog} onSave={(ids) => rows.save(dialogRow.id, { [pickerField.id]: ids.length ? ids : null })} />}
+      onClose={closeDialog} onSave={async (ids) => (await rows.save(dialogRow.id, { [pickerField.id]: ids.length ? ids : null })) !== null} />}
     {dialog?.kind === "actions" && dialogRow && <RowActionSheet row={dialogRow} editable={editable} onClose={closeDialog}
       onUndo={() => { void undo(dialogRow); }} onDelete={() => { void remove(dialogRow); }} onCopyLink={() => { void copyLink(dialogRow); }} />}
   </section>;

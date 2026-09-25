@@ -221,6 +221,13 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 
 - [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.
 - [x] Home shows a live Collections card ("Track anything in typed tables"); the list renders its loading state and New collection; values display and parse per type; viewers get read-only cells; multi-line text is never edited in a single-line cell; field drafts mirror the schema rules and build the `PUT /schema` body.
+- [x] Phone cards show the primary field plus up to three fields with values and a 44 px actions button; the row panel labels one editor per field (a textarea for text) and shows "View only" with no inputs to viewers; filters are sent only when complete.
+
+Manual QA (desktop and 390×844, two users; the scratch click-through for commits 4–5 covered the unchecked rows marked *):
+
+- [ ] Home → Collections → New collection (template) → table; edit cells (blur saves; an invalid link is flagged and not saved); a second session's change makes the next edit show Reload*, and Reload shows their value*.
+- [ ] 390×844: cards are ≥ 56 px with no horizontal scroll*; tap → full-screen row panel with ≥ 44 px editors*; the sort/filter sheet filters and sorts*; ⋯ → Undo / Copy link / Move to Bin.
+- [ ] Back: row → collection → list → Home*; with a picker open over the row panel, Back closes only the picker, and the next Back leaves the row*; Forward restores the row*.
 
 `tests/migrations.test.ts`:
 
