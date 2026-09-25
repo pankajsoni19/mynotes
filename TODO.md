@@ -120,6 +120,13 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [ ] App headers show only the icon plus the app name (the "MYNOTES" eyebrow read as "Notes"); product name stays on the login page and in the tab title
 - [ ] Review, QA, release with v0.5.0 or as v0.4.2
 
+### Rebrand — MyNotes → Nook (operator decision 2026-09-25, queued behind the in-flight waves)
+
+The product is a private workspace (Notes, Files, Bin, Tasks next), so "MyNotes" as the product name caused confusion with the Notes app. New name: **Nook**. Scope: display name and repository only. The GitHub repo is already `pankajsoni19/nook` (Pages at `https://pankajsoni19.github.io/nook/`); the local remote is updated. Internal identifiers stay unchanged for compatibility: cookie `mynotes_session`, `mynotes.sqlite`, compose service/container `mynotes`, `/srv/mynotes` default, `mynotes:*` localStorage and `mynotes.*` history keys, the backup archive prefix.
+
+- [ ] Rename in UI (wordmark, Home greeting, tab titles, login page, settings/about), `index.html`, `package.json` name, MCP server name/instructions, README, site (copy, links, GitHub URL), docs/ARCHITECTURE and plan docs (links only; historical text may keep "MyNotes"), `.github/workflows/pages.yml` if it names the repo, social preview alt text; regenerate `public/social-preview.png` wordmark if feasible without new binaries in a review-unfriendly way (otherwise flag)
+- [ ] Review, QA, release (v0.5.0 with search, or earlier as v0.4.2)
+
 ### Wave 6 — Documentation and final audit (complete, v0.4.1)
 
 - [x] README, ARCHITECTURE, and site docs for Files/Bin, editor features, URLs, env vars, backup sizing (`8259794`, `8e1aa18`, `42d5300`, `eff0971`); the `app-dev` reference was already removed in Wave 4
