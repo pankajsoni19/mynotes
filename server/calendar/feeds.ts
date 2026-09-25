@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
+import { getConnInfo } from "hono/bun";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { config, isEmailAllowed, isOriginAllowed } from "../config";
@@ -92,38 +93,73 @@ export function revokeFeed(userId: string, feedId: string) {
 // Feed fetches
 
 type Window = { count: number; resetAt: number };
-const windows = new Map<string, Window>();
 
-/** 60 fetches per hour per token (keyed by its hash, never the token). Returns seconds to wait, or 0. */
-export function feedRateLimited(tokenHash: string, time = Date.now()) {
-  if (windows.size > 5000) for (const [key, window] of windows) if (window.resetAt <= time) windows.delete(key);
-  let window = windows.get(tokenHash);
-  if (!window || window.resetAt <= time) {
-    window = { count: 0, resetAt: time + HOUR_MS };
-    windows.set(tokenHash, window);
-  }
-  if (window.count >= FEED_HOURLY_LIMIT) return Math.max(1, Math.ceil((window.resetAt - time) / 1000));
+/**
+ * Two bounded limiters. A live token has 60 fetches per hour, keyed by its feed id, so only tokens
+ * that exist ever get an entry. A request whose token is unknown, revoked, or otherwise fails counts
+ * against its client address (30 per minute); past that, failures from that address answer 429
+ * instead of 404 while live tokens keep working (behind a local proxy every client shares one
+ * address, and an attacker must not lock subscribers out). Both maps are capped and evict their
+ * least recently used entry, so a flood of random tokens or addresses holds a fixed amount of memory.
+ */
+export const FEED_FAILURES_PER_MINUTE = 30;
+export const FEED_WINDOW_CAP = 10_000;
+export const FEED_ADDRESS_CAP = 1_000;
+const MINUTE_MS = 60_000;
+const feedWindows = new Map<string, Window>();
+const addressWindows = new Map<string, Window>();
+
+/** A fixed window from `map`, moved to the most recent end and evicting the oldest past `cap`. */
+function touchWindow(map: Map<string, Window>, key: string, length: number, cap: number, time: number) {
+  let window = map.get(key);
+  if (window) map.delete(key);
+  if (!window || window.resetAt <= time) window = { count: 0, resetAt: time + length };
+  map.set(key, window);
+  if (map.size > cap) map.delete(map.keys().next().value!);
+  return window;
+}
+
+const retryAfterSeconds = (window: Window, time: number) => Math.max(1, Math.ceil((window.resetAt - time) / 1000));
+
+/** 60 fetches per hour per live feed. Returns seconds to wait, or 0. */
+export function feedRateLimited(feedId: string, time = Date.now()) {
+  const window = touchWindow(feedWindows, feedId, HOUR_MS, FEED_WINDOW_CAP, time);
+  if (window.count >= FEED_HOURLY_LIMIT) return retryAfterSeconds(window, time);
   window.count += 1;
   return 0;
 }
 
-/** Test hook. */
-export function resetFeedLimits() {
-  windows.clear();
+/** Counts a failed fetch from `address`. Returns seconds to wait once it is over its budget, or 0. */
+export function feedFailureLimited(address: string, time = Date.now()) {
+  const window = touchWindow(addressWindows, address, MINUTE_MS, FEED_ADDRESS_CAP, time);
+  window.count += 1;
+  return window.count > FEED_FAILURES_PER_MINUTE ? retryAfterSeconds(window, time) : 0;
 }
+
+/** Test hooks. */
+export function resetFeedLimits() {
+  feedWindows.clear();
+  addressWindows.clear();
+}
+export const feedLimiterSizes = () => ({ feeds: feedWindows.size, addresses: addressWindows.size });
 
 type LiveFeed = { id: string; calendar_id: string; user_id: string; detail: FeedDetail; last_used_at: string | null; email: string };
 
 /**
- * The calendar text for a token, or null for any failure: a malformed, unknown, or revoked token,
- * another calendar's token, a disabled or no-longer-allowed creator, a binned calendar, or a
+ * The live feed for a token, or null for a malformed, unknown, or revoked token, another calendar's
+ * token, or a disabled or no-longer-allowed creator. renderFeed's null covers a binned calendar or a
  * creator who can no longer read it. The caller answers every null with the same 404.
  */
-export function renderFeed(calendarId: string, token: string, nowMs = Date.now()) {
+export function findFeed(calendarId: string, token: string) {
   if (!tokenPattern.test(token)) return null;
   const feed = db.query(`SELECT f.id, f.calendar_id, f.user_id, f.detail, f.last_used_at, u.email FROM calendar_feeds f JOIN users u ON u.id = f.user_id
       WHERE f.token_hash = ? AND f.revoked_at IS NULL AND u.disabled_at IS NULL`).get(hashFeedToken(token)) as LiveFeed | null;
   if (!feed || feed.calendar_id !== calendarId.toLowerCase() || !isEmailAllowed(feed.email)) return null;
+  return feed;
+}
+
+/** The calendar text for a live feed from findFeed, or null when its creator can no longer read the calendar. */
+export function renderFeed(feed: LiveFeed, nowMs = Date.now()) {
   // Live access: the creator must still be able to read the calendar (T64).
   const calendar = readableCalendar(feed.calendar_id, feed.user_id);
   if (!calendar) return null;
@@ -157,22 +193,36 @@ const notFound = () => new Response(JSON.stringify({ error: "Not found" }), {
   headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
 });
 
+const tooMany = (retryAfter: number) => new Response(JSON.stringify({ error: "Too many requests for this feed" }), {
+  status: 429,
+  headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "Retry-After": String(retryAfter) }
+});
+
+/** The socket's peer address (never a forwarded header, which any client can set). */
+function clientAddress(c: Context<AppEnv>) {
+  try {
+    return getConnInfo(c).remote.address ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 /** docs/plan/API_CONTRACTS.md § Calendar feeds. */
 export function registerFeedRoutes(app: Hono<AppEnv>) {
   // Token-authenticated; isFeedRequest keeps it outside requireAuth and the TOTP gate.
   app.get("/api/calendars/:calendarId/feed.ics", (c) => {
     const calendarId = c.req.param("calendarId");
     const token = c.req.query("token") ?? "";
-    if (!uuid.safeParse(calendarId).success || !tokenPattern.test(token)) return notFound();
-    const retryAfter = feedRateLimited(hashFeedToken(token));
-    if (retryAfter) {
-      return new Response(JSON.stringify({ error: "Too many requests for this feed" }), {
-        status: 429,
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "Retry-After": String(retryAfter) }
-      });
-    }
-    const body = renderFeed(calendarId, token);
-    if (body === null) return notFound();
+    const failed = () => {
+      const retryAfter = feedFailureLimited(clientAddress(c));
+      return retryAfter ? tooMany(retryAfter) : notFound();
+    };
+    const feed = uuid.safeParse(calendarId).success ? findFeed(calendarId, token) : null;
+    if (!feed) return failed();
+    const retryAfter = feedRateLimited(feed.id);
+    if (retryAfter) return tooMany(retryAfter);
+    const body = renderFeed(feed);
+    if (body === null) return failed();
     c.header("Cache-Control", "private, no-store");
     c.header("Content-Type", "text/calendar; charset=utf-8");
     c.header("Content-Disposition", "inline; filename=\"calendar.ics\"");

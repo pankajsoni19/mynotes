@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createUser, db, origin, request, type Session } from "./support/harness";
 
 const { buildCalendar, escapeText, eventLines, foldLine, MAX_FEED_EVENTS } = await import("../server/calendar/ics");
-const { FEED_HOURLY_LIMIT, isFeedRequest, resetFeedLimits } = await import("../server/calendar/feeds");
+const { FEED_ADDRESS_CAP, FEED_FAILURES_PER_MINUTE, FEED_HOURLY_LIMIT, feedFailureLimited, feedLimiterSizes, findFeed, isFeedRequest, resetFeedLimits } = await import("../server/calendar/feeds");
 type IcsEvent = import("../server/calendar/ics").IcsEvent;
 
 beforeEach(() => resetFeedLimits());
@@ -276,6 +276,29 @@ describe("calendar feeds API", () => {
     db.query("UPDATE calendar_feeds SET last_used_at = ? WHERE id = ?").run(old, feed.id);
     await fetchFeed(calendarId, token);
     expect((db.query("SELECT last_used_at FROM calendar_feeds WHERE id = ?").get(feed.id) as { last_used_at: string }).last_used_at > old).toBe(true);
+  });
+
+  test("unknown tokens are limited per client address, never tracked per token, and live tokens keep working", async () => {
+    const owner = await createUser("Feed flood");
+    const calendarId = await newCalendar(owner, "Flooded");
+    const { token } = await createFeed(owner, calendarId, "busy");
+    const random = () => `nookfeed_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")}`;
+    for (let index = 0; index < FEED_FAILURES_PER_MINUTE; index += 1) expect((await fetchFeed(calendarId, random())).status).toBe(404);
+    const limited = await fetchFeed(calendarId, random());
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect((await fetchFeed(calendarId, "nookfeed_short")).status).toBe(429);
+    expect((await fetchFeed(calendarId, token)).status).toBe(200);
+    expect(feedLimiterSizes()).toEqual({ feeds: 1, addresses: 1 });
+
+    // A flood of random tokens from many addresses holds bounded memory and stays fast.
+    resetFeedLimits();
+    for (let index = 0; index < 200; index += 1) expect(findFeed(calendarId, random())).toBeNull();
+    // The limiter itself (the part that once scanned its whole map) stays well under a millisecond per request.
+    const started = performance.now();
+    for (let index = 0; index < 5000; index += 1) feedFailureLimited(`10.0.${index >> 8}.${index & 255}`);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(feedLimiterSizes()).toEqual({ feeds: 0, addresses: FEED_ADDRESS_CAP });
   });
 
   test("the token never reaches the logs or the audit log", async () => {
