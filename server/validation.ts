@@ -31,6 +31,8 @@ export const draftSchema = z.object({
   markdown: z.string(),
   revision: z.number().int().nonnegative().nullable()
 }).strict();
+/** The draft revision the client last saw. Optional only for older clients (see POST /publish). */
+export const publishSchema = z.object({ revision: z.number().int().positive().optional() }).strict();
 export const sharingSchema = z.object({
   visibility: z.enum(["inherit", "private", "selected", "all_users"]),
   userIds: z.array(uuid).max(100).default([])

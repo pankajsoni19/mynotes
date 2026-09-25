@@ -47,7 +47,7 @@ import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 import { DEFAULT_KEY_SCOPES, lockedScopes, OFFERED_MCP_PERMISSIONS, scopeLabel, toggleScope, type McpScope } from "./mcpPermissions";
-import { canPublish, finalizeOpenNote, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
+import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
@@ -1006,7 +1006,16 @@ export function App() {
     if (!note) return false;
     const hasDelta = await saveDraft();
     if (!hasDelta) return false;
-    await api(`/notes/${note.id}/publish`, { method: "POST", body: "{}" });
+    try {
+      await api(`/notes/${note.id}/publish`, { method: "POST", body: JSON.stringify(revisionRef.current === null ? {} : { revision: revisionRef.current }) });
+    } catch (reason) {
+      if (!(reason instanceof ApiError) || !isDraftChangedError(reason.status, reason.payload)) throw reason;
+      // Someone else (an MCP key or another session) wrote the draft after this editor's last save.
+      // Show it instead of publishing text the user has not seen.
+      await Promise.all([loadNote(note.id), loadNavigation()]);
+      flash(DRAFT_CHANGED_MESSAGE);
+      return false;
+    }
     if (sessionEditedRef.current === note.id) sessionEditedRef.current = null;
     if (reloadCurrent) await Promise.all([loadNote(note.id), loadNavigation()]);
     else await loadNavigation();

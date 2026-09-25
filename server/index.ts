@@ -26,6 +26,7 @@ import {
   noteCreateSchema,
   noteMetaSchema,
   parseJson,
+  publishSchema,
   registerSchema,
   sharingSchema,
   totpCodeSchema,
@@ -658,10 +659,19 @@ app.delete("/api/notes/:id/draft", async (c) => {
 app.post("/api/notes/:id/publish", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
+  const body = await parseJson(c.req.raw, publishSchema);
   return withNoteLock(id, async () => {
     const note = ownedNote(id, userId);
     if (!note) return c.json({ error: "Note not found" }, 404);
     if (note.draft_revision === null) return c.json({ error: "There is no draft to publish" }, 409);
+    // The caller publishes the draft revision it last saw (T38). Older clients that send no
+    // revision may still publish their own draft, but never one an MCP key wrote.
+    if (body.revision === undefined && note.draft_mcp_key_id !== null) {
+      return c.json({ error: "Invalid request", details: ["revision is required to publish a draft written through MCP"] }, 400);
+    }
+    if (body.revision !== undefined && body.revision !== note.draft_revision) {
+      return c.json({ error: "Draft changed since you last saw it", code: "DRAFT_CHANGED", currentRevision: note.draft_revision }, 409);
+    }
     const markdown = await storage.readDraft(id);
     if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new Error("Draft content failed integrity verification");
     if (!hasDraftDelta(note, note.draft_checksum)) return c.json({ error: "Draft matches the published version" }, 409);

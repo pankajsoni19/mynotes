@@ -310,6 +310,7 @@ Writes are audited as `mcp.note_create` and `mcp.note_draft_update` (`{ via: "mc
 
 - `GET /api/notes` rows gain `draft_mcp_key_name: string | null` (owner only, while a draft exists).
 - `GET /api/notes/:id` gains `draftMcpKeyName: string | null` (owner only); `draft_mcp_key_id` is never returned.
+- `POST /api/notes/:id/publish` takes `{ revision }`, the draft revision the client last saw; the app always sends it. A different revision returns 409 `{ code: "DRAFT_CHANGED", currentRevision }` and publishes nothing. Omitting it is allowed only when no MCP key wrote the draft (older clients); otherwise 400.
 - Publishing, discarding the draft, and restoring a version to the draft clear `notes.draft_mcp_key_id`. A human autosave keeps it, because the draft still holds the key's text.
 
 ## Changes to existing note endpoints (Wave 4)

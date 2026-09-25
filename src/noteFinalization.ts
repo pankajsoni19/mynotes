@@ -43,3 +43,10 @@ export function canPublish({ isOwner, serverHasDelta, hasUnsavedChanges }: Omit<
 export function mcpDraftBadge(keyName: string | null | undefined) {
   return keyName ? `Draft by ${keyName}` : null;
 }
+
+export const DRAFT_CHANGED_MESSAGE = "This draft changed since you last saw it — review it before publishing";
+
+/** Whether a failed publish means the draft moved on (for example an MCP write) and must be reviewed first. */
+export function isDraftChangedError(status: number, payload: unknown) {
+  return status === 409 && typeof payload === "object" && payload !== null && (payload as { code?: unknown }).code === "DRAFT_CHANGED";
+}

@@ -277,7 +277,9 @@ describe("MCP draft-only note writes", () => {
     expect((await callTool(key, "create_note", { markdown: "   " })).isError).toBe(true);
 
     // Opening and publishing is the human step; publishing clears the badge.
-    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
+    // An MCP-written draft cannot be published without naming the revision the person reviewed.
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner)).status).toBe(400);
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: JSON.stringify({ revision: 1 }) }, owner)).status).toBe(200);
     expect((db.query("SELECT draft_mcp_key_id FROM notes WHERE id = ?").get(noteId) as { draft_mcp_key_id: string | null }).draft_mcp_key_id).toBeNull();
     expect((await json<NoteDetailBody>(await request(`/notes/${noteId}`, {}, owner))).note.draftMcpKeyName).toBeNull();
   });
@@ -325,6 +327,31 @@ describe("MCP draft-only note writes", () => {
     const tooLarge = await callTool(key, "update_note_draft", { noteId, markdown: "x".repeat(2_000_001), baseRevision: null, mode: "replace" });
     expect(tooLarge.isError).toBe(true);
   }, 20_000);
+
+  test("publishing needs the revision the person last saw, so a later MCP write is never published unseen", async () => {
+    const owner = await createUser("Publish race");
+    const key = makeKey(owner, ["notes:write-draft"], "Racer");
+    const noteId = await publishedNote(owner, "# Race\n\nv1");
+    // The person autosaves revision 1, then the agent writes revision 2.
+    expect((await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ markdown: "# Race\n\nhuman", revision: null }) }, owner)).status).toBe(200);
+    expect((await callTool(key, "update_note_draft", { noteId, markdown: "agent text", baseRevision: 1, mode: "append" })).value).toMatchObject({ revision: 2 });
+
+    const stale = await request(`/notes/${noteId}/publish`, { method: "POST", body: JSON.stringify({ revision: 1 }) }, owner);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ code: "DRAFT_CHANGED", currentRevision: 2 });
+    // A client that sends no revision cannot publish an MCP-written draft either.
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner)).status).toBe(400);
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: JSON.stringify({ revision: "2" }) }, owner)).status).toBe(400);
+    expect(versionCount(noteId)).toBe(1);
+    expect((db.query("SELECT draft_mcp_key_id FROM notes WHERE id = ?").get(noteId) as { draft_mcp_key_id: string | null }).draft_mcp_key_id).toBe(key.id);
+
+    // After reviewing revision 2, the person publishes it.
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: JSON.stringify({ revision: 2 }) }, owner)).status).toBe(200);
+    expect(versionCount(noteId)).toBe(2);
+    // A human-only draft still publishes without a revision (older clients).
+    expect((await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ markdown: "# Race\n\nv3", revision: null }) }, owner)).status).toBe(200);
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
+  });
 
   test("shared, binned, and other users' notes are reported as not found", async () => {
     const owner = await createUser("Draft owner");

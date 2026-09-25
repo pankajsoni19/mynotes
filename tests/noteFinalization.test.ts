@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { canPublish, finalizeOpenNote, mcpDraftBadge, shouldAutoPublish } from "../src/noteFinalization";
+import { canPublish, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "../src/noteFinalization";
+
+test("only a 409 DRAFT_CHANGED publish failure means the draft must be reviewed", () => {
+  expect(isDraftChangedError(409, { code: "DRAFT_CHANGED", currentRevision: 3 })).toBe(true);
+  expect(isDraftChangedError(409, { error: "Draft matches the published version" })).toBe(false);
+  expect(isDraftChangedError(400, { code: "DRAFT_CHANGED" })).toBe(false);
+  expect(isDraftChangedError(409, null)).toBe(false);
+});
 
 function steps(options: { removed?: boolean; delta?: boolean; published?: boolean; publishError?: Error; removeError?: Error }) {
   const calls: string[] = [];
