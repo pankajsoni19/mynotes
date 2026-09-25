@@ -89,3 +89,8 @@ describe("Tasks items in the Bin", () => {
     expect(restoreResultMessage(note, { ok: true, folderName: "Projects", visibility: "private" })).toBe("Restored to Projects");
   });
 });
+
+test("a restored linked attachment returns to its card", () => {
+  expect(restoreResultMessage({ type: "document", attachment: true }, { ok: true, folderId: null, folderName: null })).toBe("Restored to its card");
+  expect(restoreResultMessage({ type: "document", attachment: true }, { ok: true, folderId: "f", folderName: "Default" })).toBe("Restored to Default");
+});

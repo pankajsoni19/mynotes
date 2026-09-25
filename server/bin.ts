@@ -81,7 +81,7 @@ export function purgeOwnedItem(type: BinType, id: string, ownerId: string): Prom
 
 export type Visibility = "private" | "selected" | "all_users";
 export type RestoreOutcome =
-  | { status: "restored"; folderId: string; folderName: string; visibility: Visibility }
+  | { status: "restored"; folderId: string | null; folderName: string | null; visibility: Visibility }
   | { status: "already_restored"; folderId: string | null; folderName: string | null }
   | { status: "purging" }
   | { status: "not_found" };
@@ -111,15 +111,26 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
       const folder = ownedFolder(row.folder_id, ownerId);
       return { status: "already_restored", folderId: folder?.id ?? null, folderName: folder?.name ?? null };
     }
+    // A card attachment that some card still links comes back as an attachment: no folder, same
+    // purpose. One that no card uses returns to Files, in its folder or Default.
+    const linkedAttachment = type === "document" && Boolean(db.query(`SELECT 1 FROM documents d WHERE d.id = ? AND d.purpose <> 'file'
+      AND EXISTS (SELECT 1 FROM card_attachments ca WHERE ca.document_id = d.id)`).get(id));
+    if (linkedAttachment) {
+      return db.transaction((): RestoreOutcome => {
+        const restored = db.query(`UPDATE documents SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, updated_at = ?
+          WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`).run(now(), id, ownerId);
+        if (restored.changes !== 1) return { status: "purging" };
+        audit(ownerId, null, "document.restore", { documentId: id, folderId: null });
+        return { status: "restored", folderId: null, folderName: null, visibility: "private" };
+      })();
+    }
     return db.transaction((): RestoreOutcome => {
       const folder = ownedFolder(row.folder_id, ownerId) ?? ownedFolder(ensureDefaultFolder(ownerId), ownerId)!;
       const restored = db.query(`UPDATE ${table} SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = ?, updated_at = ?
         WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`)
         .run(folder.id, now(), id, ownerId);
-      // A card attachment binned after losing its last link comes back as an ordinary Files item.
       if (type === "document" && restored.changes === 1) {
-        db.query(`UPDATE documents SET purpose = 'file' WHERE id = ? AND purpose = 'task_attachment'
-          AND NOT EXISTS (SELECT 1 FROM card_attachments WHERE document_id = documents.id)`).run(id);
+        db.query("UPDATE documents SET purpose = 'file' WHERE id = ? AND purpose = 'task_attachment'").run(id);
       }
       if (restored.changes !== 1) return { status: "purging" };
       if (type === "note") audit(ownerId, id, "note.restore", { folderId: folder.id });

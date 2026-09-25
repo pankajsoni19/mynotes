@@ -49,7 +49,7 @@ export function binKindLabel(item: Pick<BinItem, "type" | "attachment">) {
 }
 
 /** Toast after restoring any Bin item. */
-export function restoreResultMessage(item: Pick<BinItem, "type">, result: BinRestoreResult) {
+export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<BinItem, "attachment">>, result: BinRestoreResult) {
   if (item.type === "board") {
     const name = result.boardName ? ` “${result.boardName}”` : "";
     return result.alreadyRestored ? `The board${name} is already restored` : `Restored the board${name}`;
@@ -58,6 +58,7 @@ export function restoreResultMessage(item: Pick<BinItem, "type">, result: BinRes
     const where = [result.columnName, result.boardName].filter(Boolean).join(" on ");
     return result.alreadyRestored ? `Already restored${where ? ` to ${where}` : ""}` : `Restored${where ? ` to ${where}` : ""}`;
   }
+  if (item.type === "document" && item.attachment && !result.folderName && !result.alreadyRestored) return "Restored to its card";
   const folderName = result.folderName ?? "Default";
   return result.alreadyRestored ? `Already restored to ${folderName}` : restoredMessage(folderName, result.visibility);
 }

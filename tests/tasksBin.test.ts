@@ -169,3 +169,30 @@ describe("cards and boards in the Bin", () => {
     expect(db.query("SELECT 1 FROM boards WHERE id = ?").get(boardId)).toBeTruthy();
   });
 });
+
+describe("restoring attachments", () => {
+  test("a still-linked attachment restores as an attachment; an unlinked one restores into Files", async () => {
+    const { owner, member, addCard } = await setup("Restore attachment");
+    const card = await addCard("Keeps its file");
+    const linked = await attach(owner, card.id, "linked.txt");
+    // Binned while still linked (for example before the Files delete guard existed).
+    const now = new Date().toISOString();
+    db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(now, owner.userId, now, linked);
+    expect((await request(`/files/${linked}/content`, {}, member)).status).toBe(404);
+    const restored = await call(owner, "POST", `/bin/document/${linked}/restore`);
+    expect(restored.status).toBe(200);
+    expect(restored.body).toMatchObject({ ok: true, folderId: null, folderName: null });
+    expect(documentRow(linked)).toMatchObject({ deleted_at: null, purpose: "task_attachment", folder_id: null });
+    expect((await request(`/files/${linked}/content`, {}, member)).status).toBe(200);
+    const files = (await (await request("/files", {}, owner)).json()) as { documents: Array<{ id: string }> };
+    expect(files.documents.some((item) => item.id === linked)).toBe(false);
+
+    // Unlinked: back in Files, in Default.
+    await tasks(owner, "DELETE", `/cards/${card.id}/attachments/${linked}`);
+    expect(documentRow(linked)!.deleted_at).toBeTruthy();
+    const back = await call(owner, "POST", `/bin/document/${linked}/restore`);
+    expect(back.body.folderName).toBe("Default");
+    expect(documentRow(linked)).toMatchObject({ deleted_at: null, purpose: "file" });
+    expect(documentRow(linked)!.folder_id).toBeTruthy();
+  });
+});
