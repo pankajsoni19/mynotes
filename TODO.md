@@ -117,7 +117,7 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 
 Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md). Nothing here is scheduled until the operator picks it.
 
-**Chosen for planning (Waves 7–9, plan in progress):** full-text search in notes; MCP coverage across notes, files, and tasks with per-key scopes; Task Boards module (multiple boards, sharing, draggable cards, comments, attachments).
+**Chosen and planned (Waves 7 → 9 → 8, [docs/plan/WAVES_7-9.md](docs/plan/WAVES_7-9.md), director-reviewed with four required changes):** full-text search in notes (v0.5.0); Task Boards module with sharing, draggable cards, comments, attachments (v0.6.0, four runnable stages); MCP coverage across notes, files, and tasks with per-key scopes and draft-only writes (v0.7.0). Start after Wave 6.
 
 **New standalone modules, ranked by value for effort (operator: "look good, keep for later"):**
 - [ ] Today dashboard (S/M) — read-only home pulling due tasks, recent notes/files, Bin warnings; natural mobile landing page
