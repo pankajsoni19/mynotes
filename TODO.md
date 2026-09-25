@@ -75,7 +75,8 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] `/table` with Tiptap table extensions pinned at 3.31.3 (`9c399e4`): 3×3 with header row, seven row/column/table actions in a floating toolbar, GFM pipe-table round trip (`tests/noteMarkdown.test.ts`), horizontal scroll on phones
 - [x] "Download as PDF" in the editor toolbar and mobile actions menu via `@media print` rules and `window.print()` (`66c65c8`); the tab title carries the note title during printing and is restored after
 - [x] Merged in `a98f427` (+ `b0ad1c3` duplicate-export fix). Director QA on the isolated instance: pasted PNG uploaded and embedded, saved in the draft Markdown; `/table` from the menu and from Enter, toolbar actions present, pipe table saved; PDF action calls print and restores the title.
-- [ ] Independent review verdict, then release with v0.3.0
+- [x] Independent review (fresh session): one high (unescaped `|` in table cells corrupted rows on reload) and three mediums (multi-paragraph cells reloaded as literal `<br>`, Retry offered for final 409/413/415 upload errors, note-level shares cannot see folder-private images). Fixes for the first three are being applied before release. Accepted and documented: images embedded in a note inherit the **folder's** sharing, so a note shared more widely than its folder shows broken images to those readers (no data leaks); a fix belongs to a later note-attachments design. Low items (data: image sources rendering, print title fallback, silent upload cancel on browser Back, cancel/finish race, unknown preview_kind icon, image inserted at the cursor on completion) are fixed where cheap or accepted.
+- [ ] Release with v0.3.0
 
 ### Wave 4 — Shared 30-day Bin (v0.3.0)
 
