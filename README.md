@@ -29,7 +29,7 @@ You need Git, Docker Engine, and Docker Compose.
 1. Clone the repository: `git clone https://github.com/pankajsoni19/nook.git && cd nook`.
 2. Copy `.env.example` to `.env` and adjust it if needed (for example `ALLOWED_EMAILS`, `TOTP_POLICY`, `APP_ORIGINS`).
 3. Create `/srv/mynotes` writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-4. Build and start: `APP_VERSION=0.6.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+4. Build and start: `APP_VERSION=0.7.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 5. Open `http://localhost:2026` and create the first account; later registrations stay disabled unless you enable them.
 
 Internal identifiers such as the `mynotes.sqlite` database, the `mynotes_session` cookie, the `mynotes` container, `MYNOTES_DATA_DIR`, and the `mynotes-*` backup archives keep the original `mynotes` prefix for compatibility with existing installs.
