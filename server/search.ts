@@ -74,6 +74,94 @@ export function buildFtsQuery(q: string): string | null {
   return emitted.join(" ");
 }
 
+/*
+ * Inline Markdown helpers. Each is a single left-to-right pass: a note line
+ * can be megabytes long, and the equivalent regexes (`\[([^\]]*)\]\(...\)`,
+ * `<[^>]*>`) rescan the rest of the line from every unmatched `[` or `<`,
+ * which is quadratic.
+ */
+
+/** First index of `char` at or after `from`. Calls must use non-decreasing `from`, which keeps a scan linear overall. */
+function forwardFinder(text: string, char: string) {
+  let found = -2;
+  let searchedFrom = 0;
+  return (from: number) => {
+    if (found === -1 && from >= searchedFrom) return -1;
+    if (found >= from) return found;
+    searchedFrom = from;
+    found = text.indexOf(char, from);
+    return found;
+  };
+}
+
+/**
+ * Replaces `![alt](url)`, `![alt][ref]` (marker "![") or `[text](url)`,
+ * `[text][ref]` (marker "[") with the bracketed text. Reference links need a
+ * non-empty text, as in the regexes this replaces.
+ */
+function stripBrackets(line: string, marker: "![" | "[") {
+  if (!line.includes(marker)) return line;
+  const nextClose = forwardFinder(line, "]");
+  const nextRefClose = forwardFinder(line, "]");
+  const nextParen = forwardFinder(line, ")");
+  let output = "";
+  let index = 0;
+  while (index < line.length) {
+    const start = line.indexOf(marker, index);
+    if (start < 0) break;
+    const textStart = start + marker.length;
+    const close = nextClose(textStart);
+    if (close < 0) break;
+    const text = line.slice(textStart, close);
+    const after = line[close + 1];
+    let end = -1;
+    if (after === "(") end = nextParen(close + 2);
+    else if (after === "[" && (marker === "![" || text.length > 0)) end = nextRefClose(close + 2);
+    if (end < 0) {
+      output += line.slice(index, start + 1);
+      index = start + 1;
+      continue;
+    }
+    output += `${line.slice(index, start)} ${text} `;
+    index = end + 1;
+  }
+  return output + line.slice(index);
+}
+
+/** Replaces HTML tags and autolinks (`<a …>`, `</b>`, `<https://…>`, `<mailto:…>`) with a space. */
+function stripTags(line: string) {
+  if (!line.includes("<")) return line;
+  const nextGt = forwardFinder(line, ">");
+  let output = "";
+  let index = 0;
+  while (index < line.length) {
+    const start = line.indexOf("<", index);
+    if (start < 0) break;
+    const rest = line.slice(start + 1, start + 9).toLowerCase();
+    const tagLike = /^\/?[a-z]/.test(rest) || rest.startsWith("mailto:");
+    const end = tagLike ? nextGt(start + 1) : -1;
+    // No ">" left on the line: nothing further can be a tag.
+    if (tagLike && end < 0) break;
+    if (end < 0) {
+      output += line.slice(index, start + 1);
+      index = start + 1;
+      continue;
+    }
+    output += `${line.slice(index, start)} `;
+    index = end + 1;
+  }
+  return output + line.slice(index);
+}
+
+/** Drops an ATX heading's closing hashes (`## Title ##`): trailing `#`s preceded by whitespace. */
+function stripClosingHashes(line: string) {
+  const trimmed = line.trimEnd();
+  let cut = trimmed.length;
+  while (cut > 0 && trimmed[cut - 1] === "#") cut -= 1;
+  if (cut === trimmed.length || cut === 0 || !/\s/.test(trimmed[cut - 1]!)) return line;
+  return trimmed.slice(0, cut).trimEnd();
+}
+
 /**
  * Plain searchable text from note Markdown: keeps headings, paragraph text,
  * image alt text, link text, and code; strips URLs, HTML tags, and Markdown
@@ -99,22 +187,16 @@ export function searchText(markdown: string): string {
     // Reference-style link definitions carry only a URL.
     if (/^\s{0,3}\[[^\]]+\]:\s*\S+/.test(sourceLine)) continue;
     // Table separator rows and horizontal rules.
-    if (/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(sourceLine)) continue;
+    // (A character-class check: a structural regex backtracks quadratically on long runs of spaces.)
+    if (sourceLine.includes("---") && /^[\s|:-]+$/.test(sourceLine)) continue;
     if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(sourceLine)) continue;
     if (/^\s{0,3}(=+|-+)\s*$/.test(sourceLine)) continue;
 
-    const line = sourceLine
-      .replace(/^\s{0,3}#{1,6}\s+/, "")
-      .replace(/\s+#+\s*$/, "")
+    const line = stripTags(stripBrackets(stripBrackets(stripClosingHashes(sourceLine
+      .replace(/^\s{0,3}#{1,6}\s+/, ""))
       .replace(/^(\s*>\s?)+/, "")
       .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
-      .replace(/^\s*\[[ xX]\]\s+/, "")
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, " $1 ")
-      .replace(/!\[([^\]]*)\]\[[^\]]*\]/g, " $1 ")
-      .replace(/\[([^\]]*)\]\([^)]*\)/g, " $1 ")
-      .replace(/\[([^\]]+)\]\[[^\]]*\]/g, " $1 ")
-      .replace(/<(?:https?:\/\/|mailto:)[^>]*>/gi, " ")
-      .replace(/<\/?[A-Za-z][^>]*>/g, " ")
+      .replace(/^\s*\[[ xX]\]\s+/, ""), "!["), "["))
       .replace(/https?:\/\/\S+/gi, " ")
       .replace(/\\([\\`*_{}[\]()#+\-.!|~<>"])/g, "$1")
       .replace(/`+/g, "")

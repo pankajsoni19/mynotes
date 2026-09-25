@@ -105,6 +105,41 @@ describe("searchText", () => {
     }
   });
 
+  test("inline links, images, tags, and closing hashes are projected in one linear pass", () => {
+    // Matches the previous regex chain on well-formed Markdown. Two deliberate differences on
+    // malformed input: a reference link is no longer merged across an earlier stray "[", and a
+    // separator row with short cells (":-:") is dropped.
+    expect(searchText("[![badge alt](https://img.example/b.svg)](https://ci.example)")).toBe("badge alt");
+    expect(searchText("see [a [b](c) and ![](x) and [ref][1] and [](y) and [][z]")).toBe("see a [b and and ref and and [][z]");
+    // As with the old `<[A-Za-z][^>]*>` pattern, a tag-like "<" runs to the next ">".
+    expect(searchText("unclosed [bracket and ![image and <tag and 3 < 4 > 2")).toBe("unclosed [bracket and ![image and 2");
+    expect(searchText("a <3 b > c and </> <1> < a>")).toBe("a <3 b > c and </> <1> < a>");
+    expect(searchText("x <B>bold</B> <br/> <mailto:me@example.test> <https://a.example/x> y")).toBe("x bold y");
+    expect(searchText("## Title ##")).toBe("Title");
+    expect(searchText("## C# notes")).toBe("C# notes");
+    expect(searchText("# Issue #")).toBe("Issue");
+    expect(searchText("| --- | :-: |\n|:---|")).toBe("");
+  });
+
+  test("runs in linear time on hostile 2 MB lines", () => {
+    const size = 2 * 1024 * 1024;
+    const timings: Record<string, number> = {};
+    for (const unit of ["[", "![", "<a"]) {
+      const input = unit.repeat(size / unit.length);
+      const started = performance.now();
+      searchText(input);
+      timings[unit] = performance.now() - started;
+      expect(timings[unit]).toBeLessThan(200);
+    }
+    // Other shapes that a backtracking pattern would make quadratic; bounded loosely.
+    for (const unit of [" ", "[a](", "[a][", "|-", " #", "<mailto:", "\\*"]) {
+      const input = unit.repeat(Math.floor(size / unit.length)) + "x";
+      const started = performance.now();
+      searchText(input);
+      expect(performance.now() - started).toBeLessThan(1500);
+    }
+  });
+
   test("strips control characters, including the highlight markers", () => {
     expect(searchText("a\u0002b\u0003c\u200Bd")).toBe("abcd");
     expect(cleanIndexText("Ti\u0002tle\u0003")).toBe("Title");
