@@ -342,3 +342,30 @@ describe("GET /api/today", () => {
     expect((await today(fresh)).sections.tasksMine).toEqual({ items: [], more: false, href: "/tasks" });
   });
 });
+
+describe("binSoon", () => {
+  test("finds the soonest-to-purge items even behind more than 500 newer Bin entries", async () => {
+    const owner = await createUser("Today big bin");
+    const insert = db.query(`INSERT INTO notes (id, owner_id, folder_id, title, current_version, created_at, updated_at, deleted_at, deleted_by, purge_after)
+      VALUES (?, ?, NULL, ?, 0, ?, ?, ?, ?, ?)`);
+    const later = new Date(Date.now() + 20 * 86_400_000).toISOString();
+    const old = new Date(Date.now() - 28 * 86_400_000).toISOString();
+    const soonIds: string[] = [];
+    db.transaction(() => {
+      // Deleted long ago, so listBin's newest-500 window would miss them.
+      for (let index = 0; index < 3; index += 1) {
+        const id = crypto.randomUUID();
+        soonIds.push(id);
+        insert.run(id, owner.userId, `Leaving ${index}`, old, old, old, owner.userId, new Date(Date.now() + (index + 1) * 3_600_000).toISOString());
+      }
+      const recent = new Date().toISOString();
+      for (let index = 0; index < 520; index += 1) insert.run(crypto.randomUUID(), owner.userId, `Recent ${index}`, recent, recent, recent, owner.userId, later);
+    })();
+    const view = await today(owner);
+    expect(ids(view.sections.binSoon)).toEqual(soonIds);
+    expect(view.sections.binSoon!.more).toBe(false);
+    // A row already being purged is not listed.
+    db.query("UPDATE notes SET purge_started_at = ? WHERE id = ?").run(new Date().toISOString(), soonIds[0]!);
+    expect(ids((await today(owner)).sections.binSoon)).toEqual(soonIds.slice(1));
+  });
+});

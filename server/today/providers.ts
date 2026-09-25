@@ -1,5 +1,5 @@
 import { readableNotePredicate } from "../access";
-import { listBin } from "../bin";
+import { BIN_LIST_LIMIT, listBinPurgingSoon } from "../bin";
 import { db } from "../db";
 import { recentListableDocuments } from "../documentAccess";
 import { storageUsage } from "../documents";
@@ -125,11 +125,11 @@ registerTodayProvider("binSoon", {
   href: "/bin",
   load: ({ userId, now, scopes }) => {
     const cutoff = new Date(now.getTime() + BIN_SOON_MS).toISOString();
-    return page(listBin(userId, null)
-      .filter((item) => !item.purging && item.purge_after <= cutoff && binItemVisible(item.type, scopes))
-      .sort((a, b) => a.purge_after.localeCompare(b.purge_after) || (a.id < b.id ? -1 : 1))
-      .slice(0, TODAY_FETCH)
-      .map((item) => ({ type: item.type, id: item.id, title: item.title, purge_after: item.purge_after })));
+    // Sessions read 11 rows. For an MCP key, types it may not see are dropped before the limit,
+    // so a wider (still bounded) read keeps them from crowding out the visible ones.
+    return page(listBinPurgingSoon(userId, cutoff, scopes ? BIN_LIST_LIMIT : TODAY_FETCH)
+      .filter((item) => binItemVisible(item.type, scopes))
+      .slice(0, TODAY_FETCH));
   }
 });
 

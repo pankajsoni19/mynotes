@@ -297,6 +297,32 @@ export function listBin(ownerId: string, type: BinListType | null) {
   return items.sort((a, b) => b.deleted_at.localeCompare(a.deleted_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, BIN_LIST_LIMIT);
 }
 
+export type BinSoonItem = { type: BinListType; id: string; title: string; purge_after: string };
+
+/**
+ * The caller's Bin items that are purged at or before `dueBy`, soonest first, at most `limit`
+ * (Today's `binSoon`). Same owner and deleter rules as listBin, but queried by `purge_after`
+ * so a Bin with more than BIN_LIST_LIMIT items still shows the ones leaving first. Items
+ * already being purged are left out.
+ */
+export function listBinPurgingSoon(ownerId: string, dueBy: string, limit: number): BinSoonItem[] {
+  const core = db.query(`SELECT * FROM (
+      SELECT 'note' AS type, id, title, purge_after FROM notes
+        WHERE owner_id = $ownerId AND deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after <= $dueBy
+      UNION ALL
+      SELECT 'document' AS type, id, name AS title, purge_after FROM documents
+        WHERE owner_id = $ownerId AND deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after <= $dueBy
+    ) ORDER BY purge_after, id LIMIT $limit`).all({ ownerId, dueBy, limit }) as BinSoonItem[];
+  const tasks = listTaskBin(ownerId, null, limit, { dueBy }).map((row): BinSoonItem => ({ type: row.type, id: row.id, title: row.title, purge_after: row.purge_after }));
+  // Providers list their own items (bounded by the module); keep the ones due.
+  const provided = [...providers.values()].flatMap((provider) => provider.list(ownerId))
+    .filter((item) => !item.purging && item.purge_after <= dueBy)
+    .map((item): BinSoonItem => ({ type: item.type, id: item.id, title: item.title, purge_after: item.purge_after }));
+  return [...core, ...tasks, ...provided]
+    .sort((a, b) => a.purge_after.localeCompare(b.purge_after) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, limit);
+}
+
 /**
  * Empty Bin: purges each of the owner's binned items independently, in
  * batches of SWEEP_BATCH_SIZE. Failed byte removals stay tombstoned for the sweeper.

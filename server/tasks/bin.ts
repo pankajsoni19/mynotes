@@ -39,20 +39,27 @@ type BoardBinRow = { id: string; owner_id: string; name: string; visibility: str
 const boardAudience = `(b.owner_id = $userId OR b.visibility = 'all_users'
   OR (b.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId)))`;
 
-export function listTaskBin(userId: string, type: TaskBinType | null, limit: number): TaskBinRow[] {
+/**
+ * `dueBy` lists only items not being purged whose `purge_after` is at or before it, soonest
+ * first (Today's `binSoon`); otherwise newest deletion first.
+ */
+export function listTaskBin(userId: string, type: TaskBinType | null, limit: number, options: { dueBy?: string } = {}): TaskBinRow[] {
   const rows: Array<Omit<TaskBinRow, "purging" | "can_purge"> & { purging: number; can_purge: number }> = [];
+  const due = (alias: string) => options.dueBy === undefined ? "" : ` AND ${alias}.purge_started_at IS NULL AND ${alias}.purge_after <= $dueBy`;
+  const order = (alias: string) => options.dueBy === undefined ? `${alias}.deleted_at DESC, ${alias}.id` : `${alias}.purge_after, ${alias}.id`;
+  const params = { userId, limit, ...(options.dueBy === undefined ? {} : { dueBy: options.dueBy }) };
   if (type !== "board") {
     rows.push(...db.query(`SELECT 'card' AS type, k.id, k.title, b.id AS board_id, b.name AS board_name, k.deleted_at, k.purge_after,
         k.purge_started_at IS NOT NULL AS purging, CASE WHEN b.owner_id = $userId THEN 1 ELSE 0 END AS can_purge
       FROM cards k JOIN boards b ON b.id = k.board_id
-      WHERE k.deleted_at IS NOT NULL AND (b.owner_id = $userId OR (k.deleted_by = $userId AND b.deleted_at IS NULL AND ${boardAudience}))
-      ORDER BY k.deleted_at DESC, k.id LIMIT $limit`).all({ userId, limit }) as typeof rows);
+      WHERE k.deleted_at IS NOT NULL AND (b.owner_id = $userId OR (k.deleted_by = $userId AND b.deleted_at IS NULL AND ${boardAudience}))${due("k")}
+      ORDER BY ${order("k")} LIMIT $limit`).all(params) as typeof rows);
   }
   if (type !== "card") {
     rows.push(...db.query(`SELECT 'board' AS type, b.id, b.name AS title, b.id AS board_id, b.name AS board_name, b.deleted_at, b.purge_after,
         b.purge_started_at IS NOT NULL AS purging, 1 AS can_purge
-      FROM boards b WHERE b.owner_id = $userId AND b.deleted_at IS NOT NULL
-      ORDER BY b.deleted_at DESC, b.id LIMIT $limit`).all({ userId, limit }) as typeof rows);
+      FROM boards b WHERE b.owner_id = $userId AND b.deleted_at IS NOT NULL${due("b")}
+      ORDER BY ${order("b")} LIMIT $limit`).all(params) as typeof rows);
   }
   return rows.map((row) => ({ ...row, purging: row.purging === 1, can_purge: row.can_purge === 1 }));
 }
