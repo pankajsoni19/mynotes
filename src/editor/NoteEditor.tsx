@@ -43,12 +43,17 @@ type Props = {
   folderId?: string | null;
   /** Shows a short status message (the app toast). */
   onNotice?: (message: string) => void;
+  /** Stores a picked, pasted, or dropped image and returns its node; defaults to a Files upload into `folderId`. */
+  uploadImage?: (file: File) => Promise<{ src: string; alt: string }>;
+  /** Accessible name of the editing surface. */
+  label?: string;
+  placeholder?: string;
 };
 
-export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice }: Props) {
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, label = "Note content", placeholder = "Start writing… Type / for commands" }: Props) {
   // The editor is created once, so the upload handler reads the latest props through a ref.
-  const latest = useRef({ folderId, onNotice });
-  latest.current = { folderId, onNotice };
+  const latest = useRef({ folderId, onNotice, uploadImage });
+  latest.current = { folderId, onNotice, uploadImage };
 
   const insertImages = async (activeEditor: Editor, files: File[]) => {
     const notice = (message: string) => latest.current.onNotice?.(message);
@@ -59,7 +64,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       }
       notice(`Uploading ${file.name || "image"}…`);
       try {
-        const image = await uploadNoteImage(file, latest.current.folderId);
+        const image = latest.current.uploadImage ? await latest.current.uploadImage(file) : await uploadNoteImage(file, latest.current.folderId);
         if (activeEditor.isDestroyed || !activeEditor.isEditable) {
           notice("Image saved to Files, but the note is no longer open for editing");
           continue;
@@ -75,7 +80,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
   const editor = useEditor({
     extensions: [
       ...noteContentExtensions(),
-      Placeholder.configure({ placeholder: "Start writing… Type / for commands" }),
+      Placeholder.configure({ placeholder }),
       Markdown.configure({ markedOptions: markdownOptions }),
       ImageInsert.configure({ onFiles: (activeEditor, files) => { void insertImages(activeEditor, files); } }),
       SlashCommands
@@ -84,7 +89,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
     contentType: "markdown",
     editable,
     editorProps: {
-      attributes: { class: "note-prose", spellcheck: "true", "aria-label": "Note content" }
+      attributes: { class: "note-prose", spellcheck: "true", "aria-label": label }
     },
     onUpdate: ({ editor: activeEditor }) => onChange(activeEditor.getMarkdown())
   });

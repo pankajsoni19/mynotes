@@ -19,6 +19,7 @@ type BoardColumnViewProps = {
   onDropAt: (cardId: string | null, index: number) => void;
   onKeyMove: (card: CardSummary, key: MoveKey) => void;
   onCardMenu: (card: CardSummary, trigger: HTMLElement) => void;
+  onOpenCard: (card: CardSummary) => void;
   onColumnMenu: (trigger: HTMLElement) => void;
   onMoveColumn: (direction: -1 | 1) => void;
   onAddCard: (title: string) => Promise<void>;
@@ -116,7 +117,15 @@ export function BoardColumnView(props: BoardColumnViewProps) {
             props.onDragStart(card);
           }}
           onDragEnd={props.onDragEnd}
-          onKeyDown={(event) => cardKeyDown(event, card)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && event.target === event.currentTarget) {
+              event.preventDefault();
+              props.onOpenCard(card);
+              return;
+            }
+            cardKeyDown(event, card);
+          }}
+          onClick={(event) => { if (!(event.target as Element).closest("button")) props.onOpenCard(card); }}
         >
           <span className="task-card-title">{card.title}</span>
           {(card.has_description === 1 || card.comment_count > 0 || card.attachment_count > 0) && <span className="task-card-meta">

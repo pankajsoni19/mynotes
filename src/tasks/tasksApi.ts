@@ -60,3 +60,25 @@ export const taskErrorCode = (reason: unknown) => reason instanceof ApiError && 
   ? (reason.payload as { code?: unknown }).code
   : undefined;
 export const taskErrorMessage = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
+
+export type CardDetail = CardSummary & { description: string };
+export type CardComment = {
+  id: string;
+  card_id: string;
+  author_id: string | null;
+  author_name: string | null;
+  is_author: 0 | 1;
+  body: string;
+  created_at: string;
+  edited_at: string | null;
+};
+export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean };
+
+export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}`);
+export const updateCard = (cardId: string, change: { title?: string; description?: string; revision: number }) =>
+  api<{ card: CardDetail }>(`/tasks/cards/${cardId}`, json("PATCH", change));
+export const listComments = (cardId: string, before: string) =>
+  api<{ comments: CardComment[]; hasMore: boolean }>(`/tasks/cards/${cardId}/comments?before=${encodeURIComponent(before)}`);
+export const createComment = (cardId: string, body: string) => api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", { body }));
+export const updateComment = (commentId: string, body: string) => api<{ comment: CardComment }>(`/tasks/comments/${commentId}`, json("PATCH", { body }));
+export const deleteComment = (commentId: string) => api<{ ok: true }>(`/tasks/comments/${commentId}`, json("DELETE", {}));

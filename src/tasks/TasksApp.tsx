@@ -50,10 +50,6 @@ export function TasksApp({ userId, displayName, navigate, flash, onHome, onSetti
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
-  // The card dialog arrives with stage B; until then a card URL opens its board in place.
-  useEffect(() => {
-    if (route.cardId) navigateRef.current(tasksRoute(route.boardId), { replace: true });
-  }, [route.boardId, route.cardId]);
 
   const go = useCallback((next: TasksRoute, replace = false) => {
     setRoute(next);
@@ -67,6 +63,19 @@ export function TasksApp({ userId, displayName, navigate, flash, onHome, onSetti
     else onHome();
   }, [go, onHome]);
 
+  // A card is a view with its own entry: opening pushes it, and closing steps back to the board
+  // (or replaces a deep-linked card entry with its board).
+  const openCard = useCallback((cardId: string) => {
+    const boardId = routeRef.current.boardId;
+    if (boardId) go(tasksRoute(boardId, cardId));
+  }, [go]);
+  const closeCard = useCallback(() => {
+    const current = routeRef.current;
+    if (!current.cardId) return;
+    if (readHistoryDepth(window.history.state) > 0) window.history.back();
+    else go(tasksRoute(current.boardId), true);
+  }, [go]);
+
   const onMissing = useCallback(() => {
     flash("Board not found");
     go(tasksRoute(), true);
@@ -79,7 +88,7 @@ export function TasksApp({ userId, displayName, navigate, flash, onHome, onSetti
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
     {route.boardId
-      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} focusCardId={route.cardId} onBack={back} onMissing={onMissing} notify={flash} />
+      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={flash} />
       : <BoardList onOpen={(board) => go(tasksRoute(board.id))} notify={flash} />}
   </main>;
 }

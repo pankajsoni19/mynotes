@@ -20,3 +20,12 @@ export const sharingLabel = (visibility: "private" | "selected" | "all_users") =
   visibility === "all_users" ? "Everyone here" : visibility === "selected" ? "Shared" : "Private";
 
 export const cardCountLabel = (count: number) => count === 1 ? "1 card" : `${count} cards`;
+
+export const COMMENT_MAX_BYTES = 16_384;
+
+/** Why a comment body would be refused, or null. */
+export function commentBodyError(body: string) {
+  if (!body.trim()) return "Write a comment first.";
+  if (new TextEncoder().encode(body).length > COMMENT_MAX_BYTES) return "Comments can be at most 16 KB.";
+  return null;
+}

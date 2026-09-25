@@ -17,14 +17,19 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
   const wasOpenRef = useRef(false);
   if (open && !wasOpenRef.current) depthRef.current = readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
-  useEffect(() => registerHistoryDialogGuard((poppedState) => {
-    if (!openRef.current) return false;
-    openRef.current = false;
-    closeRef.current();
-    const direction = dialogPopDirection(depthRef.current, readHistoryDepth(poppedState));
-    // Direction unknown: let the route handlers follow the browser instead of leaving a stale URL.
-    if (!direction) return false;
-    undoDialogPop(direction);
-    return true;
-  }), []);
+  // Registered only while open, so nested views (the card dialog over the board) each guard their
+  // own dialogs and the most recently opened one wins.
+  useEffect(() => {
+    if (!open) return undefined;
+    return registerHistoryDialogGuard((poppedState) => {
+      if (!openRef.current) return false;
+      openRef.current = false;
+      closeRef.current();
+      const direction = dialogPopDirection(depthRef.current, readHistoryDepth(poppedState));
+      // Direction unknown: let the route handlers follow the browser instead of leaving a stale URL.
+      if (!direction) return false;
+      undoDialogPop(direction);
+      return true;
+    });
+  }, [open]);
 }

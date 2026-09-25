@@ -5,6 +5,7 @@ import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
 import { BoardColumnView } from "./BoardColumnView";
 import { BoardSharePanel } from "./BoardSharePanel";
+import { CardDialog } from "./CardDialog";
 import { MoveCardSheet } from "./MoveCardSheet";
 import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
 import { isMobileViewport } from "../mobileNavigation";
@@ -30,8 +31,10 @@ import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 type BoardViewProps = {
   userId: string;
   boardId: string;
-  /** A card the URL named; the card dialog arrives with stage B, so the board opens with it in view. */
-  focusCardId: string | null;
+  /** The card the URL names; its dialog is open over the board. */
+  openCardId: string | null;
+  onOpenCard: (cardId: string) => void;
+  onCloseCard: () => void;
   onBack: () => void;
   onMissing: () => void;
   notify: (message: string) => void;
@@ -44,7 +47,8 @@ type BoardDialog =
 
 export const MAX_COLUMNS = 20;
 
-export function BoardView({ userId, boardId, focusCardId, onBack, onMissing, notify }: BoardViewProps) {
+export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard, onBack, onMissing, notify }: BoardViewProps) {
+  const focusCardId = openCardId;
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<BoardDialog | null>(null);
@@ -95,12 +99,16 @@ export function BoardView({ userId, boardId, focusCardId, onBack, onMissing, not
 
   useEffect(() => () => { if (hintTimerRef.current !== null) window.clearTimeout(hintTimerRef.current); }, []);
 
+  // Closing the card dialog returns focus to the card on the board.
+  const lastOpenCardRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!detail || !focusCardId) return;
-    window.document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(focusCardId)}"]`)?.focus();
-    // Only once the board has loaded.
+    if (openCardId) lastOpenCardRef.current = openCardId;
+    else if (lastOpenCardRef.current) {
+      focusCard(lastOpenCardRef.current);
+      lastOpenCardRef.current = null;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail !== null, focusCardId]);
+  }, [openCardId]);
 
   const closeDialog = useCallback(() => {
     setDialog(null);
@@ -114,6 +122,11 @@ export function BoardView({ userId, boardId, focusCardId, onBack, onMissing, not
     returnFocusRef.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setDialog(next);
   };
+
+  const onCardMissing = useCallback(() => {
+    notify("Card not found");
+    onCloseCard();
+  }, [notify, onCloseCard]);
 
   const board = detail?.board ?? null;
   const owner = board?.is_owner === 1;
@@ -312,6 +325,7 @@ export function BoardView({ userId, boardId, focusCardId, onBack, onMissing, not
         onDropAt={(payload, slot) => dropAt(column.id, payload, slot)}
         onKeyMove={keyMove}
         onCardMenu={(card, trigger) => openDialog({ kind: "moveCard", cardId: card.id }, trigger)}
+        onOpenCard={(card) => onOpenCard(card.id)}
         onColumnMenu={(trigger) => openDialog({ kind: "columnMenu", columnId: column.id }, trigger)}
         onMoveColumn={(direction) => { void moveColumn(column.id, direction); }}
         onAddCard={(title) => addCard(column.id, title)}
@@ -319,6 +333,27 @@ export function BoardView({ userId, boardId, focusCardId, onBack, onMissing, not
       {owner && columns.length < MAX_COLUMNS && <button className="task-add-column" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog"><Plus />Add column</button>}
     </div>}
 
+    {openCardId && detail && <CardDialog
+      key={openCardId}
+      cardId={openCardId}
+      columns={columns}
+      columnId={cards.find((card) => card.id === openCardId)?.column_id}
+      boardOwner={owner}
+      onClose={onCloseCard}
+      onMissing={onCardMissing}
+      notify={notify}
+      onMove={(card) => openDialog({ kind: "moveCard", cardId: card.id })}
+      onChanged={(card) => setCards((items) => items.map((item) => item.id === card.id ? {
+        ...item,
+        title: card.title,
+        revision: card.revision,
+        has_description: card.description.trim() ? 1 : 0,
+        comment_count: card.comment_count,
+        attachment_count: card.attachment_count,
+        column_id: item.column_id,
+        updated_at: card.updated_at
+      } : item))}
+    />}
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
     {dialog?.kind === "share" && board && <BoardSharePanel board={board} onClose={closeDialog} onChanged={() => {
       closeDialog();
