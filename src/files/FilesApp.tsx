@@ -4,7 +4,7 @@ import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
-import { popStateClosedDialog, registerHistoryDialogGuard } from "../historyDialogs";
+import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
 import { isMobileViewport } from "../mobileNavigation";
@@ -207,19 +207,25 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   }, [applyRoute, userId]);
 
   // D18: browser Back (or Forward) while a dialog or sheet is open only closes it. Dialogs have no
-  // history entry of their own, so the entry the browser just left is pushed again and the panel stays.
+  // history entry of their own, so the browser's move is undone with history.go() and the panel stays.
   const dialogOpenRef = useRef(false);
   dialogOpenRef.current = dialog !== null;
-  const placeRef = useRef({ folder, documentId, panel });
-  placeRef.current = { folder, documentId, panel };
-  useEffect(() => registerHistoryDialogGuard(() => {
+  // The history depth of the entry the dialog was opened on, to tell Back from Forward.
+  const dialogDepthRef = useRef(0);
+  const dialogWasOpenRef = useRef(false);
+  if (dialog !== null && !dialogWasOpenRef.current) dialogDepthRef.current = readHistoryDepth(window.history.state);
+  dialogWasOpenRef.current = dialog !== null;
+  const closeDialogRef = useRef<() => void>(() => undefined);
+  useEffect(() => registerHistoryDialogGuard((poppedState) => {
     if (!dialogOpenRef.current) return false;
-    const place = placeRef.current;
     dialogOpenRef.current = false;
-    setDialog(null);
-    navigate(filesRoute(place.folder, place.documentId), { filesPanel: place.panel });
+    closeDialogRef.current();
+    const direction = dialogPopDirection(dialogDepthRef.current, readHistoryDepth(poppedState));
+    // Direction unknown: let the route handlers follow the browser instead of leaving a stale URL.
+    if (!direction) return false;
+    undoDialogPop(direction);
     return true;
-  }), [navigate]);
+  }), []);
 
   // Leaving Files cancels whatever is still uploading.
   useEffect(() => {
@@ -282,6 +288,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     setDialog(null);
     focusRow(returnFocusRef.current);
   }, []);
+  closeDialogRef.current = closeDialog;
 
   function chooseSort(next: FileSort) {
     setSort(next);

@@ -1,12 +1,15 @@
 // D18: browser Back/Forward while an in-app dialog or sheet is open only closes it. Dialogs push no
-// history entry, so the open app registers a guard that closes its dialog (and restores the entry the
-// browser just left). Every popstate handler asks first, so the first one to see the event runs the
-// guard and the others skip it. Listener order on window is registration order, which is why this is
-// a shared check instead of a capture-phase listener.
+// history entry, so the open app registers a guard that closes its dialog and then undoes the
+// browser's move with history.go(), whose own popstate is ignored once. Every popstate handler asks
+// first, so the first one to see the event runs the guard and the others skip it. Listener order on
+// window is registration order, which is why this is a shared check instead of a capture-phase listener.
 
-type DialogGuard = () => boolean;
+/** Receives the state of the entry the browser moved to; returns true when it closed a dialog. */
+type DialogGuard = (poppedState: unknown) => boolean;
 
 let guard: DialogGuard | null = null;
+let ignoring = 0;
+let ignoreTimer: ReturnType<typeof setTimeout> | null = null;
 const consumed = new WeakSet<object>();
 
 /** Registers the guard for the dialogs of the app on screen. Returns the unregister function. */
@@ -15,10 +18,39 @@ export function registerHistoryDialogGuard(next: DialogGuard) {
   return () => { if (guard === next) guard = null; };
 }
 
-/** True when this popstate only closed a dialog, so the caller must not restore a route for it. */
-export function popStateClosedDialog(event: object) {
+/** True when this popstate only closed a dialog (or undid that move), so the caller must not restore a route for it. */
+export function popStateClosedDialog(event: { state?: unknown }) {
   if (consumed.has(event)) return true;
-  if (!guard?.()) return false;
+  if (ignoring > 0) {
+    ignoring -= 1;
+    consumed.add(event);
+    return true;
+  }
+  if (!guard?.(event.state)) return false;
   consumed.add(event);
   return true;
+}
+
+export type PopDirection = "back" | "forward";
+
+/**
+ * Which way the browser moved, from the `mynotes.depth` of the entry the dialog was opened on and of
+ * the entry it moved to. Null when the depths match and the direction cannot be told.
+ */
+export function dialogPopDirection(openDepth: number, poppedDepth: number): PopDirection | null {
+  if (poppedDepth < openDepth) return "back";
+  if (poppedDepth > openDepth) return "forward";
+  return null;
+}
+
+/** The history.go() delta that returns to the entry the dialog was opened on. */
+export const undoPopDelta = (direction: PopDirection) => direction === "back" ? 1 : -1;
+
+/** Moves back to the dialog's entry and ignores the popstate that move causes. */
+export function undoDialogPop(direction: PopDirection, go: (delta: number) => void = (delta) => window.history.go(delta)) {
+  ignoring += 1;
+  // A move that never fires popstate must not swallow a later, real one.
+  if (ignoreTimer) clearTimeout(ignoreTimer);
+  ignoreTimer = setTimeout(() => { ignoring = 0; ignoreTimer = null; }, 1000);
+  go(undoPopDelta(direction));
 }

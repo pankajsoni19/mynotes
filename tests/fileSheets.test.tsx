@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FileActionSheet } from "../src/files/FileActionSheet";
 import { MoveSheet } from "../src/files/MoveSheet";
-import { popStateClosedDialog, registerHistoryDialogGuard } from "../src/historyDialogs";
+import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop, undoPopDelta } from "../src/historyDialogs";
 import type { DocumentSummary, Folder } from "../src/types";
 
 const base: DocumentSummary = {
@@ -59,4 +59,31 @@ test("popstate handlers skip an event that only closed a dialog", () => {
   unregisterOld();
   expect(popStateClosedDialog({})).toBe(false);
   unregisterNew();
+});
+
+test("Back and Forward with a dialog open are told apart by history depth and undone the other way", () => {
+  expect(dialogPopDirection(3, 2)).toBe("back");
+  expect(dialogPopDirection(3, 4)).toBe("forward");
+  expect(dialogPopDirection(0, 0)).toBeNull();
+  expect(undoPopDelta("back")).toBe(1);
+  expect(undoPopDelta("forward")).toBe(-1);
+
+  // The guard closes the dialog and undoes the move; the popstate that undo causes is ignored once.
+  const moves: number[] = [];
+  let open = true;
+  const unregister = registerHistoryDialogGuard((state) => {
+    if (!open) return false;
+    open = false;
+    const direction = dialogPopDirection(3, (state as { "mynotes.depth": number })["mynotes.depth"]);
+    if (!direction) return false;
+    undoDialogPop(direction, (delta) => moves.push(delta));
+    return true;
+  });
+  expect(popStateClosedDialog({ state: { "mynotes.depth": 4 } })).toBe(true);
+  expect(moves).toEqual([-1]);
+  // The popstate caused by history.go(-1) back onto the dialog's entry.
+  expect(popStateClosedDialog({ state: { "mynotes.depth": 3 } })).toBe(true);
+  // A later, real navigation goes through to the route handlers.
+  expect(popStateClosedDialog({ state: { "mynotes.depth": 2 } })).toBe(false);
+  unregister();
 });
