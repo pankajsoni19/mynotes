@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db, type DocumentRow } from "./db";
 import type { PreviewKind } from "./mimeSniff";
 
 export type Visibility = "private" | "selected" | "all_users";
@@ -44,4 +44,45 @@ export const documentSummarySelect = `
 export function ownedDocumentSummary(documentId: string, userId: string) {
   return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND d.owner_id = $userId AND d.deleted_at IS NULL`)
     .get({ documentId, userId }) as DocumentSummary | null;
+}
+
+/**
+ * Documents readable by `$userId`. Mirrors the notes predicate exactly: the
+ * owner; or a document-level override (all users, or selected with a share
+ * row); or, when inheriting, the immediate folder's visibility and shares.
+ * Folder sharing does not cascade to subfolders. Binned rows never match.
+ */
+const readablePredicate = `
+  d.deleted_at IS NULL AND (
+    d.owner_id = $userId
+    OR (d.sharing_override = 1 AND (d.visibility = 'all_users' OR (d.visibility = 'selected' AND EXISTS (
+      SELECT 1 FROM document_shares s WHERE s.document_id = d.id AND s.user_id = $userId
+    ))))
+    OR (d.sharing_override = 0 AND EXISTS (
+      SELECT 1 FROM folders rf WHERE rf.id = d.folder_id AND (
+        rf.visibility = 'all_users' OR (rf.visibility = 'selected' AND EXISTS (
+          SELECT 1 FROM folder_shares rfs WHERE rfs.folder_id = rf.id AND rfs.user_id = $userId
+        ))
+      )
+    ))
+  )
+`;
+
+export function readableDocument(documentId: string, userId: string) {
+  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readablePredicate}`).get({ documentId, userId }) as DocumentRow | null;
+}
+
+export function readableDocumentSummary(documentId: string, userId: string) {
+  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readablePredicate}`).get({ documentId, userId }) as DocumentSummary | null;
+}
+
+export function listReadableDocuments(userId: string, folderId: string | null) {
+  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND ($folderId IS NULL OR d.folder_id = $folderId) ORDER BY d.updated_at DESC LIMIT 500`)
+    .all({ userId, folderId }) as DocumentSummary[];
+}
+
+/** A document owned by `userId`. Binned rows are included only on request; rows being purged never are. */
+export function ownedDocument(documentId: string, userId: string, options: { includeDeleted?: boolean } = {}) {
+  const deletedFilter = options.includeDeleted ? "purge_started_at IS NULL" : "deleted_at IS NULL";
+  return db.query(`SELECT * FROM documents WHERE id = ? AND owner_id = ? AND ${deletedFilter}`).get(documentId, userId) as DocumentRow | null;
 }

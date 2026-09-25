@@ -34,6 +34,10 @@ export const sharingSchema = z.object({
   visibility: z.enum(["inherit", "private", "selected", "all_users"]),
   userIds: z.array(uuid).max(100).default([])
 }).strict();
+export const documentPatchSchema = z.object({
+  name: z.string().max(1024).optional(),
+  folderId: uuid.nullable().optional()
+}).strict().refine((value) => value.name !== undefined || value.folderId !== undefined, "Provide a name or a folderId");
 export const folderSharingSchema = z.object({
   visibility: z.enum(["private", "selected", "all_users"]),
   userIds: z.array(uuid).max(100).default([])

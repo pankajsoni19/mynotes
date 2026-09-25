@@ -7,12 +7,14 @@ import type { Context, Hono } from "hono";
 import { config } from "./config";
 import { audit, db, ensureDefaultFolder, now } from "./db";
 import type { AppEnv } from "./auth";
-import { ownedDocumentSummary, type DocumentSummary } from "./documentAccess";
+import { listReadableDocuments, ownedDocument, ownedDocumentSummary, readableDocumentSummary, type DocumentSummary } from "./documentAccess";
 import { commitStaged, createStagingFile, discardStaged, removeObject } from "./documentStorage";
 import { SNIFF_BYTES, sniff } from "./mimeSniff";
-import { sanitizeDisplayName, uuid } from "./validation";
+import { withResourceLock } from "./storage";
+import { documentPatchSchema, parseJson, sanitizeDisplayName, sharingSchema, uuid } from "./validation";
 
 const MAX_CONCURRENT_UPLOADS = 3;
+const BIN_RETENTION_MS = 30 * 86_400_000;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
 
 class UploadError extends Error {
@@ -262,6 +264,103 @@ async function handleUpload(c: Context<AppEnv>) {
   }
 }
 
+const notFound = (c: Context<AppEnv>) => c.json({ error: "File not found" }, 404);
+const withDocumentLock = <T>(id: string, operation: () => Promise<T>) => withResourceLock(`document:${id}`, operation);
+
 export function registerDocumentRoutes(app: Hono<AppEnv>) {
   app.post("/api/files", handleUpload);
+
+  app.get("/api/files", (c) => {
+    const folderId = c.req.query("folderId");
+    return c.json({ documents: listReadableDocuments(c.get("user").id, folderId === undefined ? null : uuid.parse(folderId)) });
+  });
+
+  app.get("/api/files/:id", (c) => {
+    const id = uuid.parse(c.req.param("id"));
+    const document = readableDocumentSummary(id, c.get("user").id);
+    return document ? c.json({ document }) : notFound(c);
+  });
+
+  app.patch("/api/files/:id", async (c) => {
+    const id = uuid.parse(c.req.param("id"));
+    const userId = c.get("user").id;
+    const body = await parseJson(c.req.raw, documentPatchSchema);
+    return withDocumentLock(id, async () => {
+      if (!ownedDocument(id, userId)) return notFound(c);
+      let name: string | null = null;
+      if (body.name !== undefined) {
+        name = sanitizeDisplayName(body.name, "rename");
+        if (!name) return c.json({ error: "Enter a name of 1 to 255 bytes that is not . or .." }, 400);
+      }
+      const moving = body.folderId !== undefined;
+      if (body.folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(body.folderId, userId)) {
+        return c.json({ error: "Folder not found" }, 404);
+      }
+      db.transaction(() => {
+        db.query(`UPDATE documents SET name = COALESCE(?, name), folder_id = CASE WHEN ? THEN ? ELSE folder_id END, updated_at = ?
+          WHERE id = ? AND owner_id = ? AND deleted_at IS NULL`)
+          .run(name, moving ? 1 : 0, body.folderId ?? null, now(), id, userId);
+        if (name !== null) audit(userId, null, "document.rename", { documentId: id });
+        if (moving) audit(userId, null, "document.move", { documentId: id, folderId: body.folderId ?? null });
+      })();
+      return c.json({ document: ownedDocumentSummary(id, userId)! });
+    });
+  });
+
+  app.get("/api/files/:id/sharing", (c) => {
+    const id = uuid.parse(c.req.param("id"));
+    const document = ownedDocument(id, c.get("user").id);
+    if (!document) return notFound(c);
+    const users = db.query("SELECT u.id, u.display_name FROM document_shares s JOIN users u ON u.id = s.user_id WHERE s.document_id = ? ORDER BY u.display_name")
+      .all(id);
+    return c.json({ visibility: document.sharing_override ? document.visibility : "inherit", users });
+  });
+
+  app.put("/api/files/:id/sharing", async (c) => {
+    const id = uuid.parse(c.req.param("id"));
+    const userId = c.get("user").id;
+    if (!ownedDocument(id, userId)) return notFound(c);
+    const body = await parseJson(c.req.raw, sharingSchema);
+    if (body.userIds.includes(userId)) return c.json({ error: "The owner cannot be added as a recipient" }, 400);
+    const uniqueIds = [...new Set(body.userIds)];
+    if (body.visibility === "selected" && uniqueIds.length === 0) return c.json({ error: "Select at least one user" }, 400);
+    if (uniqueIds.length) {
+      const placeholders = uniqueIds.map(() => "?").join(",");
+      const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
+      if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
+    }
+    return withDocumentLock(id, async () => {
+      if (!ownedDocument(id, userId)) return notFound(c);
+      db.transaction(() => {
+        db.query("DELETE FROM document_shares WHERE document_id = ?").run(id);
+        if (body.visibility === "selected") {
+          const statement = db.query("INSERT INTO document_shares (document_id, user_id, created_at) VALUES (?, ?, ?)");
+          for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
+        }
+        const visibility = body.visibility === "inherit" ? "private" : body.visibility;
+        db.query("UPDATE documents SET visibility = ?, sharing_override = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
+          .run(visibility, body.visibility === "inherit" ? 0 : 1, now(), id, userId);
+        audit(userId, null, "document.sharing_changed", { documentId: id, visibility: body.visibility, recipientCount: uniqueIds.length });
+      })();
+      return c.json({ ok: true });
+    });
+  });
+
+  app.delete("/api/files/:id", async (c) => {
+    const id = uuid.parse(c.req.param("id"));
+    const userId = c.get("user").id;
+    return withDocumentLock(id, async () => {
+      const document = ownedDocument(id, userId, { includeDeleted: true });
+      if (!document) return notFound(c);
+      if (document.deleted_at) return c.json({ ok: true, alreadyDeleted: true, purgeAfter: document.purge_after });
+      const deletedAt = new Date();
+      const purgeAfter = new Date(deletedAt.getTime() + BIN_RETENTION_MS).toISOString();
+      db.transaction(() => {
+        db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
+          .run(deletedAt.toISOString(), userId, purgeAfter, id, userId);
+        audit(userId, null, "document.delete", { documentId: id });
+      })();
+      return c.json({ ok: true, purgeAfter });
+    });
+  });
 }

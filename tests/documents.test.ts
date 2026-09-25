@@ -445,3 +445,223 @@ describe("document uploads", () => {
     expect(growth).toBeLessThan(32 * 1_048_576);
   });
 });
+
+const json = async <T>(response: Response) => (await response.json()) as T;
+const shareFolder = (session: Session, folderId: string, visibility: string, userIds: string[] = []) =>
+  request(`/folders/${folderId}/sharing`, { method: "PUT", body: JSON.stringify({ visibility, userIds }) }, session);
+const shareDocument = (session: Session, id: string, visibility: string, userIds: string[] = []) =>
+  request(`/files/${id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility, userIds }) }, session);
+const patchDocument = (session: Session, id: string, body: unknown) =>
+  request(`/files/${id}`, { method: "PATCH", body: JSON.stringify(body) }, session);
+const deleteDocument = (session: Session, id: string) => request(`/files/${id}`, { method: "DELETE", body: "{}" }, session);
+
+describe("document metadata and access", () => {
+  test("notes and documents follow the same share matrix", async () => {
+    const owner = await createUser("Matrix owner");
+    const folderReader = await createUser("Matrix folder reader");
+    const itemReader = await createUser("Matrix item reader");
+    const unrelated = await createUser("Matrix unrelated");
+    const viewers = { owner, folderReader, itemReader, unrelated };
+
+    const sharedFolder = await folderFor(owner, "Matrix shared");
+    expect((await shareFolder(owner, sharedFolder, "selected", [folderReader.userId])).status).toBe(200);
+    const everyoneFolder = await folderFor(owner, "Matrix everyone");
+    expect((await shareFolder(owner, everyoneFolder, "all_users")).status).toBe(200);
+    const privateFolder = await folderFor(owner, "Matrix private");
+    const subfolderResponse = await request("/folders", { method: "POST", body: JSON.stringify({ name: "Matrix child", parentId: sharedFolder }) }, owner);
+    const subfolder = (await json<{ folder: { id: string } }>(subfolderResponse)).folder.id;
+
+    type Scenario = { name: string; folderId: string; sharing?: { visibility: string; userIds: string[] }; readers: Array<keyof typeof viewers> };
+    const scenarios: Scenario[] = [
+      { name: "inherits a selected folder", folderId: sharedFolder, readers: ["owner", "folderReader"] },
+      { name: "inherits an all-users folder", folderId: everyoneFolder, readers: ["owner", "folderReader", "itemReader", "unrelated"] },
+      { name: "private override in a shared folder", folderId: sharedFolder, sharing: { visibility: "private", userIds: [] }, readers: ["owner"] },
+      { name: "selected override in a private folder", folderId: privateFolder, sharing: { visibility: "selected", userIds: [itemReader.userId] }, readers: ["owner", "itemReader"] },
+      { name: "all-users override in a private folder", folderId: privateFolder, sharing: { visibility: "all_users", userIds: [] }, readers: ["owner", "folderReader", "itemReader", "unrelated"] },
+      { name: "subfolder of a shared folder", folderId: subfolder, readers: ["owner"] }
+    ];
+
+    for (const scenario of scenarios) {
+      const noteResponse = await request("/notes", { method: "POST", body: JSON.stringify({ folderId: scenario.folderId }) }, owner);
+      const noteId = (await json<{ note: { id: string } }>(noteResponse)).note.id;
+      const document = await uploadOk(owner, "matrix", "matrix.txt", { folderId: scenario.folderId });
+      if (scenario.sharing) {
+        expect((await request(`/notes/${noteId}/sharing`, { method: "PUT", body: JSON.stringify(scenario.sharing) }, owner)).status).toBe(200);
+        expect((await shareDocument(owner, document.id, scenario.sharing.visibility, scenario.sharing.userIds)).status).toBe(200);
+      }
+      for (const [label, viewer] of Object.entries(viewers)) {
+        const expected = scenario.readers.includes(label as keyof typeof viewers);
+        const noteStatus = (await request(`/notes/${noteId}/versions`, {}, viewer)).status;
+        const documentStatus = (await request(`/files/${document.id}`, {}, viewer)).status;
+        const noteListed = (await json<{ notes: Array<{ id: string }> }>(await request("/notes", {}, viewer))).notes.some((item) => item.id === noteId);
+        const documentListed = (await json<{ documents: Array<{ id: string }> }>(await request("/files", {}, viewer))).documents.some((item) => item.id === document.id);
+        const observed = { scenario: scenario.name, viewer: label, noteStatus, documentStatus, noteListed, documentListed };
+        expect(observed).toEqual({ scenario: scenario.name, viewer: label, noteStatus: expected ? 200 : 404, documentStatus: expected ? 200 : 404, noteListed: expected, documentListed: expected });
+      }
+    }
+    // Leave no all-users folder behind for other test files.
+    await request(`/folders/${everyoneFolder}`, { method: "DELETE", body: "{}" }, owner);
+  }, 30_000);
+
+  test("masks folder placement and override state for recipients", async () => {
+    const owner = await createUser("Mask owner");
+    const folderReader = await createUser("Mask folder reader");
+    const itemReader = await createUser("Mask item reader");
+    const shared = await folderFor(owner, "Mask shared");
+    await shareFolder(owner, shared, "selected", [folderReader.userId]);
+    const hidden = await folderFor(owner, "Mask hidden");
+    const inherited = await uploadOk(owner, "a", "inherited.txt", { folderId: shared });
+    const direct = await uploadOk(owner, "b", "direct.txt", { folderId: hidden });
+    await shareDocument(owner, direct.id, "selected", [itemReader.userId]);
+
+    const viaFolder = (await json<{ document: UploadedDocument }>(await request(`/files/${inherited.id}`, {}, folderReader))).document;
+    expect(viaFolder).toMatchObject({ folder_id: shared, is_owner: 0, visibility: "selected", sharing_override: 0, owner_name: "Mask owner" });
+    const viaShare = (await json<{ document: UploadedDocument }>(await request(`/files/${direct.id}`, {}, itemReader))).document;
+    expect(viaShare).toMatchObject({ folder_id: null, is_owner: 0, visibility: "selected", sharing_override: 0 });
+    const ownerView = (await json<{ document: UploadedDocument }>(await request(`/files/${direct.id}`, {}, owner))).document;
+    expect(ownerView).toMatchObject({ folder_id: hidden, is_owner: 1, sharing_override: 1 });
+    const listed = (await json<{ documents: UploadedDocument[] }>(await request("/files", {}, itemReader))).documents.find((item) => item.id === direct.id)!;
+    expect(listed.folder_id).toBeNull();
+    for (const hiddenKey of ["sha256", "upload_key", "deleted_at", "purge_after"]) expect(listed).not.toHaveProperty(hiddenKey);
+    const inFolder = (await json<{ documents: UploadedDocument[] }>(await request(`/files?folderId=${shared}`, {}, owner))).documents;
+    expect(inFolder.map((item) => item.id)).toEqual([inherited.id]);
+    expect((await request("/files?folderId=bad", {}, owner)).status).toBe(400);
+    expect((await request("/files/not-a-uuid", {}, owner)).status).toBe(400);
+
+    const sharing = await json<{ visibility: string; users: Array<{ id: string }> }>(await request(`/files/${direct.id}/sharing`, {}, owner));
+    expect(sharing.visibility).toBe("selected");
+    expect(sharing.users.map((user) => user.id)).toEqual([itemReader.userId]);
+    expect((await json<{ visibility: string }>(await request(`/files/${inherited.id}/sharing`, {}, owner))).visibility).toBe("inherit");
+  });
+
+  test("recipients cannot rename, move, share, or delete", async () => {
+    const owner = await createUser("Readonly owner");
+    const reader = await createUser("Readonly reader");
+    const document = await uploadOk(owner, "a", "shared.txt");
+    await shareDocument(owner, document.id, "selected", [reader.userId]);
+    const readerFolder = defaultFolderOf(reader.userId);
+    expect((await request(`/files/${document.id}`, {}, reader)).status).toBe(200);
+    expect((await patchDocument(reader, document.id, { name: "mine.txt" })).status).toBe(404);
+    expect((await patchDocument(reader, document.id, { folderId: readerFolder })).status).toBe(404);
+    expect((await shareDocument(reader, document.id, "all_users")).status).toBe(404);
+    expect((await request(`/files/${document.id}/sharing`, {}, reader)).status).toBe(404);
+    expect((await deleteDocument(reader, document.id)).status).toBe(404);
+    const row = db.query("SELECT name, folder_id, deleted_at FROM documents WHERE id = ?").get(document.id);
+    expect(row).toEqual({ name: "shared.txt", folder_id: defaultFolderOf(owner.userId), deleted_at: null });
+  });
+
+  test("validates sharing like notes", async () => {
+    const owner = await createUser("Share rules owner");
+    const reader = await createUser("Share rules reader");
+    const document = await uploadOk(owner, "a", "a.txt");
+    expect((await shareDocument(owner, document.id, "selected", [])).status).toBe(400);
+    expect((await shareDocument(owner, document.id, "selected", [owner.userId])).status).toBe(400);
+    expect((await shareDocument(owner, document.id, "selected", [crypto.randomUUID()])).status).toBe(400);
+    expect((await shareDocument(owner, document.id, "everyone")).status).toBe(400);
+    expect((await shareDocument(owner, document.id, "selected", [reader.userId])).status).toBe(200);
+    expect((await shareDocument(owner, document.id, "inherit")).status).toBe(200);
+    expect(db.query("SELECT COUNT(*) AS count FROM document_shares WHERE document_id = ?").get(document.id)).toEqual({ count: 0 });
+    expect(db.query("SELECT sharing_override FROM documents WHERE id = ?").get(document.id)).toEqual({ sharing_override: 0 });
+  });
+
+  test("renames with display-name validation and keeps the sniffed type", async () => {
+    const owner = await createUser("Rename owner");
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+    const document = await uploadOk(owner, png, "photo.png");
+    expect(document.preview_kind).toBe("image");
+    const renamed = await patchDocument(owner, document.id, { name: "page‮.html" });
+    expect(renamed.status).toBe(200);
+    expect((await json<{ document: UploadedDocument }>(renamed)).document).toMatchObject({ name: "page.html", mime_type: "image/png", preview_kind: "image" });
+    expect((await patchDocument(owner, document.id, { name: "  " })).status).toBe(400);
+    expect((await patchDocument(owner, document.id, { name: ".." })).status).toBe(400);
+    expect((await patchDocument(owner, document.id, { name: `${"a".repeat(256)}` })).status).toBe(400);
+    expect((await patchDocument(owner, document.id, {})).status).toBe(400);
+    expect((await patchDocument(owner, document.id, { name: "a", extra: 1 })).status).toBe(400);
+    expect((await patchDocument(owner, crypto.randomUUID(), { name: "a" })).status).toBe(404);
+  });
+
+  test("moves only into owned folders and reports the new effective visibility", async () => {
+    const owner = await createUser("Move owner");
+    const other = await createUser("Move other");
+    const document = await uploadOk(owner, "a", "a.txt");
+    expect(document.visibility).toBe("private");
+    const shared = await folderFor(owner, "Move shared");
+    await shareFolder(owner, shared, "selected", [other.userId]);
+    const moved = await patchDocument(owner, document.id, { folderId: shared });
+    expect(moved.status).toBe(200);
+    expect((await json<{ document: UploadedDocument }>(moved)).document).toMatchObject({ folder_id: shared, visibility: "selected" });
+    expect((await request(`/files/${document.id}`, {}, other)).status).toBe(200);
+
+    const othersShared = await folderFor(other, "Other shared");
+    await shareFolder(other, othersShared, "selected", [owner.userId]);
+    expect((await patchDocument(owner, document.id, { folderId: othersShared })).status).toBe(404);
+    const toNone = await patchDocument(owner, document.id, { folderId: null });
+    expect((await json<{ document: UploadedDocument }>(toNone)).document).toMatchObject({ folder_id: null, visibility: "private" });
+    expect((await request(`/files/${document.id}`, {}, other)).status).toBe(404);
+  });
+
+  test("deleting a folder leaves its documents live, private, and unfiled", async () => {
+    const owner = await createUser("Folder delete owner");
+    const reader = await createUser("Folder delete reader");
+    const folder = await folderFor(owner, "Doomed");
+    await shareFolder(owner, folder, "selected", [reader.userId]);
+    const document = await uploadOk(owner, "a", "a.txt", { folderId: folder });
+    expect((await request(`/files/${document.id}`, {}, reader)).status).toBe(200);
+    expect((await request(`/folders/${folder}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    const after = (await json<{ document: UploadedDocument }>(await request(`/files/${document.id}`, {}, owner))).document;
+    expect(after).toMatchObject({ folder_id: null, visibility: "private" });
+    expect((await request(`/files/${document.id}`, {}, reader)).status).toBe(404);
+  });
+
+  test("soft delete moves a document to the Bin and hides it everywhere", async () => {
+    const owner = await createUser("Delete owner");
+    const reader = await createUser("Delete reader");
+    const document = await uploadOk(owner, "a", "a.txt");
+    await shareDocument(owner, document.id, "selected", [reader.userId]);
+    expect((await request(`/files/${document.id}`, {}, reader)).status).toBe(200);
+    const before = Date.now();
+    const deleted = await deleteDocument(owner, document.id);
+    expect(deleted.status).toBe(200);
+    const body = await json<{ ok: boolean; purgeAfter: string }>(deleted);
+    expect(body.ok).toBe(true);
+    const purgeAfter = new Date(body.purgeAfter).getTime();
+    expect(purgeAfter).toBeGreaterThanOrEqual(before + 30 * 86_400_000 - 1000);
+    expect(purgeAfter).toBeLessThanOrEqual(Date.now() + 30 * 86_400_000 + 1000);
+    const row = db.query("SELECT deleted_by, purge_after, purge_started_at FROM documents WHERE id = ?").get(document.id);
+    expect(row).toEqual({ deleted_by: owner.userId, purge_after: body.purgeAfter, purge_started_at: null });
+    // Share rows and bytes are retained so a restore brings sharing back as it was.
+    expect(db.query("SELECT COUNT(*) AS count FROM document_shares WHERE document_id = ?").get(document.id)).toEqual({ count: 1 });
+    expect(existsSync(objectPath(document.id))).toBe(true);
+
+    const again = await json<{ ok: boolean; alreadyDeleted: boolean; purgeAfter: string }>(await deleteDocument(owner, document.id));
+    expect(again).toEqual({ ok: true, alreadyDeleted: true, purgeAfter: body.purgeAfter });
+    for (const viewer of [owner, reader]) {
+      expect((await request(`/files/${document.id}`, {}, viewer)).status).toBe(404);
+      const listed = (await json<{ documents: Array<{ id: string }> }>(await request("/files", {}, viewer))).documents;
+      expect(listed.some((item) => item.id === document.id)).toBe(false);
+    }
+    expect((await patchDocument(owner, document.id, { name: "b.txt" })).status).toBe(404);
+    expect((await shareDocument(owner, document.id, "private")).status).toBe(404);
+    expect((await deleteDocument(reader, document.id)).status).toBe(404);
+    expect((await deleteDocument(owner, crypto.randomUUID())).status).toBe(404);
+  });
+
+  test("audits document changes without filenames", async () => {
+    const owner = await createUser("Audit owner");
+    const secretName = "audit-secret-name-7f3a.txt";
+    const document = await uploadOk(owner, "a", secretName);
+    await patchDocument(owner, document.id, { name: "audit-secret-rename-7f3a.txt" });
+    const folder = await folderFor(owner, "Audit folder");
+    await patchDocument(owner, document.id, { folderId: folder });
+    await shareDocument(owner, document.id, "all_users");
+    await deleteDocument(owner, document.id);
+    const events = db.query("SELECT event_type, note_id, metadata_json FROM audit_log WHERE metadata_json LIKE ? ORDER BY created_at, rowid")
+      .all(`%${document.id}%`) as Array<{ event_type: string; note_id: string | null; metadata_json: string }>;
+    expect(events.map((event) => event.event_type)).toEqual(["document.upload", "document.rename", "document.move", "document.sharing_changed", "document.delete"]);
+    expect(events.every((event) => event.note_id === null)).toBe(true);
+    expect(JSON.parse(events[2]!.metadata_json)).toEqual({ documentId: document.id, folderId: folder });
+    expect(JSON.parse(events[3]!.metadata_json)).toEqual({ documentId: document.id, visibility: "all_users", recipientCount: 0 });
+    const leaked = db.query("SELECT COUNT(*) AS count FROM audit_log WHERE metadata_json LIKE '%audit-secret%'").get();
+    expect(leaked).toEqual({ count: 0 });
+  });
+});
