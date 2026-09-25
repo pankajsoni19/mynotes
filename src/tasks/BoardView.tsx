@@ -6,7 +6,11 @@ import { NameDialog } from "../files/RenameDialog";
 import { BoardColumnView } from "./BoardColumnView";
 import { BoardSharePanel } from "./BoardSharePanel";
 import { MoveCardSheet } from "./MoveCardSheet";
-import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnMoveAnchor, isNoopMove, keyboardMoveTarget, readCardDragPayload, type MoveKey } from "./boardOrder";
+import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
+import { isMobileViewport } from "../mobileNavigation";
+import { formatRoute } from "../router";
+import { tasksRoute } from "../tasksRoute";
+import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
 import { cardCountLabel, validateBoardName, validateColumnName } from "./taskActions";
 import {
   createCard,
@@ -40,7 +44,7 @@ type BoardDialog =
 
 export const MAX_COLUMNS = 20;
 
-export function BoardView({ boardId, focusCardId, onBack, onMissing, notify }: BoardViewProps) {
+export function BoardView({ userId, boardId, focusCardId, onBack, onMissing, notify }: BoardViewProps) {
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<BoardDialog | null>(null);
@@ -52,6 +56,11 @@ export function BoardView({ boardId, focusCardId, onBack, onMissing, notify }: B
   detailRef.current = detail;
   // The control that opened the current dialog, so focus can return to it.
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  // Phones show one column at a time on a scroll-snap track; the index lives in the entry's hint.
+  const [activeColumn, setActiveColumn] = useState(0);
+  const activeColumnRef = useRef(0);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const hintTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -66,6 +75,25 @@ export function BoardView({ boardId, focusCardId, onBack, onMissing, notify }: B
     setDetail(null);
     void load();
   }, [load]);
+
+  // First load: show the column this entry was on (Back/Forward and reloads return to it).
+  const loaded = detail !== null;
+  useEffect(() => {
+    if (!loaded) return;
+    const current = detailRef.current!;
+    const focusColumn = focusCardId ? current.cards.find((card) => card.id === focusCardId)?.column_id : undefined;
+    const ordered = [...current.columns].sort(byPosition);
+    const fromCard = focusColumn ? ordered.findIndex((column) => column.id === focusColumn) : -1;
+    const index = fromCard >= 0 ? fromCard : columnIndexFor(window.history.state, userId, boardId, ordered.length);
+    activeColumnRef.current = index;
+    setActiveColumn(index);
+    const track = trackRef.current;
+    if (track && isMobileViewport()) track.scrollTo({ left: index * track.clientWidth, behavior: "instant" as ScrollBehavior });
+    // Only once per board load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, boardId]);
+
+  useEffect(() => () => { if (hintTimerRef.current !== null) window.clearTimeout(hintTimerRef.current); }, []);
 
   useEffect(() => {
     if (!detail || !focusCardId) return;
@@ -91,11 +119,42 @@ export function BoardView({ boardId, focusCardId, onBack, onMissing, notify }: B
   const owner = board?.is_owner === 1;
   const columns = [...(detail?.columns ?? [])].sort(byPosition);
   const cards = detail?.cards ?? [];
+  const shownColumn = Math.max(0, Math.min(activeColumn, columns.length - 1));
   const dialogColumn = dialog && "columnId" in dialog ? columns.find((column) => column.id === dialog.columnId) ?? null : null;
   const dialogCard = dialog?.kind === "moveCard" ? cards.find((card) => card.id === dialog.cardId) ?? null : null;
 
   const setCards = (change: (cards: CardSummary[]) => CardSummary[]) =>
     setDetail((current) => current ? { ...current, cards: change(current.cards) } : current);
+
+  /** Keeps the column index on the current entry with replaceState: swiping never adds history entries. */
+  function rememberColumn(index: number) {
+    if (hintTimerRef.current !== null) window.clearTimeout(hintTimerRef.current);
+    hintTimerRef.current = window.setTimeout(() => {
+      hintTimerRef.current = null;
+      if (window.location.pathname !== formatRoute(tasksRoute(boardId))) return;
+      window.history.replaceState(createTasksHistoryState(userId, { boardId, column: index }, window.history.state), "", window.location.pathname);
+    }, 150);
+  }
+
+  function onTrackScroll() {
+    const track = trackRef.current;
+    if (!track || !isMobileViewport()) return;
+    const index = columnIndexFromScroll(track.scrollLeft, track.clientWidth, columns.length);
+    if (index === activeColumnRef.current) return;
+    activeColumnRef.current = index;
+    setActiveColumn(index);
+    rememberColumn(index);
+    window.document.getElementById(`task-tab-${columns[index]?.id}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  function showColumn(index: number) {
+    const track = trackRef.current;
+    activeColumnRef.current = index;
+    setActiveColumn(index);
+    rememberColumn(index);
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    track?.scrollTo({ left: index * track.clientWidth, behavior: reduce ? "instant" as ScrollBehavior : "smooth" });
+  }
 
   function focusCard(cardId: string) {
     window.setTimeout(() => window.document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(cardId)}"]`)?.focus(), 0);
@@ -111,7 +170,11 @@ export function BoardView({ boardId, focusCardId, onBack, onMissing, notify }: B
     const before = current.cards;
     const place = cardPlace(applyLocalMove(before, cardId, columnId, afterCardId), current.columns, cardId);
     setCards((items) => applyLocalMove(items, cardId, columnId, afterCardId));
-    if (options.focus) focusCard(cardId);
+    if (options.focus) {
+      focusCard(cardId);
+      const index = [...current.columns].sort(byPosition).findIndex((column) => column.id === columnId);
+      if (isMobileViewport() && index >= 0 && index !== activeColumnRef.current) showColumn(index);
+    }
     try {
       const result = await moveCard(cardId, columnId, afterCardId);
       setCards((items) => {
@@ -225,7 +288,13 @@ export function BoardView({ boardId, focusCardId, onBack, onMissing, notify }: B
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!loadError && !detail && <p className="bin-loading task-board-state" role="status">Loading the board…</p>}
-    {detail && <div className="task-columns">
+    {detail && <nav className="task-column-tabs" aria-label="Columns">
+      {columns.map((column, index) => <button key={column.id} id={`task-tab-${column.id}`} className={index === shownColumn ? "active" : ""} aria-current={index === shownColumn ? "true" : undefined} onClick={() => showColumn(index)}>
+        <span>{column.name}</span><b>{columnCards(cards, column.id).length}</b>
+      </button>)}
+      {owner && columns.length < MAX_COLUMNS && <button className="task-tab-add" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Add column"><Plus /></button>}
+    </nav>}
+    {detail && <div className="task-columns" ref={trackRef} onScroll={onTrackScroll}>
       {columns.map((column, index) => <BoardColumnView
         key={column.id}
         column={column}
@@ -277,12 +346,11 @@ export function BoardView({ boardId, focusCardId, onBack, onMissing, notify }: B
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}
-    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} onCancel={closeDialog} onMove={async (columnId) => {
+    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} onCancel={closeDialog} onMove={async (columnId, place) => {
       const current = detailRef.current;
-      const last = current ? columnCards(current.cards, columnId).filter((card) => card.id !== dialogCard.id).at(-1) ?? null : null;
       setDialog(null);
       returnFocusRef.current = null;
-      await move(dialogCard.id, columnId, last?.id ?? null, { focus: true });
+      if (current) await move(dialogCard.id, columnId, sheetMoveAnchor(current.cards, dialogCard.id, columnId, place), { focus: true });
     }} />}
   </section>;
 }

@@ -6,11 +6,13 @@ import {
   CARD_DRAG_TYPE,
   cardPlace,
   columnCards,
+  columnIndexFromScroll,
   columnMoveAnchor,
   isCardDrag,
   isNoopMove,
   keyboardMoveTarget,
-  readCardDragPayload
+  readCardDragPayload,
+  sheetMoveAnchor
 } from "../src/tasks/boardOrder";
 
 const columns = [{ id: "todo", name: "To do", position: 1024 }, { id: "doing", name: "Doing", position: 2048 }, { id: "done", name: "Done", position: 3072 }];
@@ -81,4 +83,23 @@ test("column ←/→ anchors", () => {
   expect(columnMoveAnchor(columns, "doing", 1)).toBe("done");
   expect(columnMoveAnchor(columns, "done", 1)).toBeUndefined();
   expect(columnMoveAnchor(columns, "done", -1)).toBe("todo");
+});
+
+test("the Move sheet's Top and Bottom anchors exclude the moved card", () => {
+  expect(sheetMoveAnchor(cards, "a", "todo", "top")).toBeNull();
+  expect(sheetMoveAnchor(cards, "a", "todo", "bottom")).toBe("c");
+  expect(sheetMoveAnchor(cards, "c", "todo", "bottom")).toBe("b");
+  expect(sheetMoveAnchor(cards, "a", "doing", "bottom")).toBe("x");
+  expect(sheetMoveAnchor(cards, "a", "done", "bottom")).toBeNull();
+});
+
+test("the phone track's scroll offset maps to a clamped column index", () => {
+  expect(columnIndexFromScroll(0, 390, 3)).toBe(0);
+  expect(columnIndexFromScroll(390, 390, 3)).toBe(1);
+  expect(columnIndexFromScroll(560, 390, 3)).toBe(1);
+  expect(columnIndexFromScroll(600, 390, 3)).toBe(2);
+  expect(columnIndexFromScroll(5000, 390, 3)).toBe(2);
+  expect(columnIndexFromScroll(-40, 390, 3)).toBe(0);
+  expect(columnIndexFromScroll(100, 0, 3)).toBe(0);
+  expect(columnIndexFromScroll(100, 390, 0)).toBe(0);
 });

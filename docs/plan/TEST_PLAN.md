@@ -1,4 +1,4 @@
-# Test plan: Home, Files, Bin, and Search
+# Test plan: Home, Files, Bin, Search, and Tasks
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every automated case below must exist and pass before its wave's exit gate.
 
@@ -159,6 +159,40 @@ Manual QA (desktop and 390×844):
 - [ ] A second user sees only shared, published notes (with the owner's name) and never the first user's drafts.
 - [ ] 390×844: rows and the scope chip are at least 44 px; no horizontal scroll; open a result, Back returns to the results with the query kept, Back again returns to the list without the search, then to the folders.
 - [ ] More than 20 searches in 10 s show the inline rate-limit message with the title filter still visible.
+
+## Wave 9: Task Boards, stage A (boards, columns, cards)
+
+Unit tests (no server):
+
+- [x] `tests/boardOrder.test.ts`: `planInsert` places at 1024 in an empty list, last + 1024 at the bottom, half the first at the top, and the midpoint after an anchor; a stale anchor returns null; a gap below 1e-6 renumbers to 1024, 2048, … with the new item in place; 80 repeated inserts at one spot stay strictly ordered.
+- [x] `tests/tasksBoardOrder.test.ts`: the `application/x-mynotes-card` payload accepts a UUID only; drop slots map to `afterCardId`; local moves mirror the server rules; Alt+Arrow targets within and across columns stop at edges; column ←/→ anchors; Move sheet Top/Bottom anchors; the phone track's scroll offset maps to a clamped column index.
+- [x] `tests/tasksRoute.test.ts` and `tests/router.test.ts`: `/tasks`, `/tasks/:boardId`, `/tasks/:boardId/card/:cardId` round-trip and normalise, malformed ids degrade to the board or the list, formatting never escapes the origin; Back steps card → board → list → Home (history when this visit pushed entries, otherwise a replace or Home); the column hint round-trips, is bound to user and board, is clamped, and survives same-board writes only.
+- [x] `tests/appShell.test.tsx`, `tests/tasksApp.test.tsx`: Home shows a live Tasks card; the board list renders its loading state and New board; name validation mirrors the server.
+
+`tests/migrations.test.ts`:
+
+- [x] A v0.5.0-shaped database upgrades to `[1..9]`: task tables with their CHECKs and cascades, `documents.purpose` defaulting to `file` with the three-value CHECK, and no `folders.system_role`.
+
+`tests/documents.test.ts`:
+
+- [x] Documents with `purpose <> 'file'` never appear in `GET /api/files` (all or by folder) or `GET /api/bin?type=document`; uploads reject any `purpose` other than `file` with 400.
+
+`tests/tasksBoards.test.ts` and `tests/tasksCards.test.ts`:
+
+- [x] Boards: default columns, validation, list (owned first, shared with owner name, strangers see nothing), rename, delete to the Bin for everyone, 50-board cap, JSON/Origin/CSRF rules.
+- [x] Owner-only matrix: every owner-only route returns 403 `OWNER_ONLY` to a member and 404 to a stranger; strangers get 404 on every card route.
+- [x] Sharing: notes rules (owner not a recipient, `selected` needs users, unknown users, ≤100) and immediate revocation.
+- [x] Columns: append, after anchor, first; reorder; renormalisation; 20-column cap; `COLUMN_NOT_EMPTY` and `LAST_COLUMN`; binned cards do not block deletion; binned boards' columns are unreachable.
+- [x] IDOR: board A's columns and cards are rejected through board B, including for a user who can read both.
+- [x] Cards: create at bottom, top, or after an anchor; moves to top, middle, bottom, and across columns; stale anchors (binned, other column, self, unknown) return 409 `STALE_POSITION` with the current order; renormalisation returns the new positions; revision CAS (`CARD_CHANGED` carries the current card, moves keep the revision); any reader bins a card; 1000-card cap; parallel moves stay strictly ordered; audit metadata holds ids only.
+
+Manual QA (desktop and 390×844, two users):
+
+- [ ] Home → Tasks → New board → board shows To do, Doing, Done; rename and share from the list and the board header.
+- [ ] Desktop: drag cards within and between columns (insertion line, drop, order persists on reload); a drop onto a card another user just binned rolls back with a toast; ⋯ → Move to… with Top/Bottom; Alt+Arrow moves with focus kept; owner adds, renames, moves (←/→), and deletes columns; quick-add at the bottom of a column.
+- [ ] Member: sees the owner badge, no column or board controls, can add and move cards.
+- [ ] 390×844: one column at a time with swipe snapping, the tab strip follows and taps scroll; the column survives Back/Forward and reload; Move sheet is full-screen; every target is at least 44 px; no horizontal page scroll.
+- [ ] Back: card URL → board → list → Home; Back with a dialog or sheet open only closes it.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

@@ -124,7 +124,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
             {card.comment_count > 0 && <span title="Comments"><MessageSquare aria-hidden="true" />{card.comment_count}<span className="sr-only"> comments</span></span>}
             {card.attachment_count > 0 && <span title="Attachments"><Paperclip aria-hidden="true" />{card.attachment_count}<span className="sr-only"> attachments</span></span>}
           </span>}
-          <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}” to another column`} title="Move to…" draggable={false}><Ellipsis /></button>
+          <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…" draggable={false}><Ellipsis /></button>
         </div>
       </li>;
       })}

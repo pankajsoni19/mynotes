@@ -113,3 +113,16 @@ export function cardPlace<T extends CardLike>(cards: readonly T[], columns: Read
   const list = columnCards(cards, column.id);
   return `${column.name}, ${list.findIndex((item) => item.id === cardId) + 1} of ${list.length}`;
 }
+
+/** "Move to…" with Top or Bottom of a column: the anchor to send (the moved card itself excluded). */
+export function sheetMoveAnchor<T extends CardLike>(cards: readonly T[], cardId: string, columnId: string, place: "top" | "bottom") {
+  if (place === "top") return null;
+  const others = columnCards(cards, columnId).filter((card) => card.id !== cardId);
+  return others.length ? others[others.length - 1]!.id : null;
+}
+
+/** The column a phone's one-column track shows, from its scroll offset. */
+export function columnIndexFromScroll(scrollLeft: number, width: number, count: number) {
+  if (count <= 0 || !(width > 0)) return 0;
+  return Math.max(0, Math.min(count - 1, Math.round(scrollLeft / width)));
+}

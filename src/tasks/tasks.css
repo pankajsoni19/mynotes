@@ -74,10 +74,38 @@
 .task-add-column { flex: 0 0 220px; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px dashed #34343a; border-radius: 14px; background: transparent; color: #9a9aa1; font-size: .84rem; cursor: pointer; }
 .task-add-column:hover { border-color: #6b572c; color: #f5cf79; }
 .task-add-column svg { width: 16px; }
+.task-column-tabs { display: none; }
+.task-move-place { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 6px 12px 0; }
+.task-move-place button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #303035; border-radius: 10px; background: transparent; color: #c9c9ce; font-size: .84rem; font-weight: 600; cursor: pointer; }
+.task-move-place button.active { border-color: #6b572c; background: #2b261b; color: #ffe19a; }
+.task-move-place svg { width: 16px; }
 .task-menu .move-option { grid-template-columns: 20px minmax(0, 1fr); }
 .move-option.danger, .move-option.danger svg { color: #f3a3ae; }
 
 @media (max-width: 760px) {
+  /* One column at a time on an x-mandatory scroll-snap track, synced to a sticky tab strip. */
+  .task-board-header { padding: 8px 8px 4px; gap: 4px; }
+  .task-board-heading h1 { font-size: 1.1rem; }
+  .task-board-count { display: none; }
+  .task-column-tabs { position: sticky; top: 0; z-index: 2; flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 4px 16px 8px; background: #0d0d0f; scrollbar-width: none; }
+  .task-column-tabs::-webkit-scrollbar { display: none; }
+  .task-column-tabs button { flex: none; min-height: 44px; max-width: 70vw; display: inline-flex; align-items: center; gap: 8px; border: 1px solid #303035; border-radius: 999px; padding: 0 14px; background: #151517; color: #b7b7bd; font-size: .84rem; font-weight: 600; cursor: pointer; }
+  .task-column-tabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task-column-tabs button.active { border-color: #6f5928; background: #2b271d; color: #f5cf79; }
+  .task-column-tabs button b { min-width: 20px; border-radius: 999px; padding: 1px 6px; background: rgb(255 255 255 / 7%); font-size: .72rem; text-align: center; }
+  .task-column-tabs .task-tab-add { width: 44px; justify-content: center; padding: 0; }
+  .task-column-tabs .task-tab-add svg { width: 17px; }
+  .task-columns { gap: 0; padding: 0 0 env(safe-area-inset-bottom); overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .task-columns::-webkit-scrollbar { display: none; }
+  .task-column { flex: 0 0 calc(100% - 32px); width: calc(100% - 32px); height: calc(100% - 12px); max-height: none; margin: 0 16px 12px; scroll-snap-align: center; scroll-snap-stop: always; }
+  .task-add-column { display: none; }
+  .task-column-header { min-height: 52px; }
+  .task-column-controls .icon-button { width: 44px; height: 44px; }
+  .task-card { min-height: 52px; padding: 12px 48px 12px 14px; font-size: .92rem; }
+  .task-card-more { top: 4px; right: 2px; width: 44px; height: 44px; opacity: 1; }
+  .task-add-card { min-height: 44px; }
+  .task-quick-add input { min-height: 44px; font-size: 1rem; }
+  .task-quick-add-actions button { min-height: 44px; }
   .tasks-content { padding: 28px 16px calc(40px + env(safe-area-inset-bottom)); }
   .tasks-intro { flex-direction: column; align-items: stretch; }
   .tasks-new-button { min-height: 44px; justify-content: center; }
