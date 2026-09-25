@@ -5,8 +5,9 @@ import { totpMigration } from "./003_totp";
 import { totpRecoveryCodesMigration } from "./004_totp_recovery_codes";
 import { mcpApiKeysMigration } from "./005_mcp_api_keys";
 import { documentsMigration } from "./006_documents";
+import { binMigration } from "./007_bin";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration];
 
 export function runMigrations(db: Database) {
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");

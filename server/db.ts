@@ -46,6 +46,9 @@ export type NoteRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  deleted_by: string | null;
+  purge_after: string | null;
+  purge_started_at: string | null;
 };
 
 export type DocumentRow = {
