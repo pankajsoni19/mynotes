@@ -274,6 +274,42 @@ describe("restore, purge, and the retention sweeper", () => {
     expect(audits.map((row) => JSON.parse(row.metadata_json))).toEqual([{ documentId: dueDocument.id, reason: "retention" }]);
   }, 20_000);
 
+  test("an item restored and deleted again after the sweep's snapshot keeps its new retention", async () => {
+    const owner = await createUser("Re-deleted owner");
+    const id = insertBinnedNote(owner.userId, past());
+    // sweepBin takes its snapshot synchronously and only then waits for each row's lock,
+    // so the restore and second delete below land between the snapshot and the purge.
+    const sweep = bin.sweepBin();
+    const redeletedAt = new Date();
+    const newPurgeAfter = new Date(redeletedAt.getTime() + 30 * 86_400_000).toISOString();
+    db.query("UPDATE notes SET deleted_at = ?, purge_after = ? WHERE id = ?").run(redeletedAt.toISOString(), newPurgeAfter, id);
+    await sweep;
+    expect(noteRow(id)).toMatchObject({ purge_after: newPurgeAfter, purge_started_at: null });
+    expect(existsSync(noteDir(id))).toBe(true);
+  });
+
+  test("legacy never-published notes backfilled by migration 007 are purged by the first sweep", async () => {
+    const owner = await createUser("Legacy owner");
+    const legacyAt = "2025-01-01T00:00:00.000Z";
+    const insert = db.query(`INSERT INTO notes (id, owner_id, folder_id, title, current_version, created_at, updated_at, deleted_at)
+      VALUES (?, ?, NULL, 'Legacy', ?, ?, ?, ?)`);
+    const unpublished = crypto.randomUUID();
+    const published = crypto.randomUUID();
+    insert.run(unpublished, owner.userId, 0, legacyAt, legacyAt, legacyAt);
+    insert.run(published, owner.userId, 1, legacyAt, legacyAt, legacyAt);
+    for (const id of [unpublished, published]) mkdirSync(noteDir(id), { recursive: true, mode: 0o700 });
+    const { binMigration } = await import("../server/migrations/007_bin");
+    // Re-running 007 is a no-op for rows it already backfilled and fills in the two legacy rows.
+    binMigration.up(db);
+    expect(noteRow(unpublished)).toMatchObject({ deleted_by: owner.userId });
+    await runSweep();
+    expect(noteRow(unpublished)).toBeNull();
+    expect(existsSync(noteDir(unpublished))).toBe(false);
+    expect(noteRow(published)).toMatchObject({ deleted_at: legacyAt, deleted_by: owner.userId, purge_started_at: null });
+    expect(Date.parse(noteRow(published)!.purge_after!)).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+    expect((await listBin(owner)).items.map((item) => item.id)).toEqual([published]);
+  });
+
   test("the sweeper finishes interrupted purges", async () => {
     const owner = await createUser("Interrupted owner");
     const id = insertBinnedNote(owner.userId, future(), { purgeStartedAt: past() });

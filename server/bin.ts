@@ -32,12 +32,15 @@ export const binStorage = {
  * 3. Delete the row in a transaction (cascades clear versions and shares) and
  *    audit the purge with the id in metadata, since audit_log.note_id is nulled.
  */
-export async function purgeLocked(type: BinType, id: string, options: { reason: PurgeReason; actorId: string | null; ownerId?: string }): Promise<PurgeOutcome> {
+export async function purgeLocked(type: BinType, id: string, options: { reason: PurgeReason; actorId: string | null; ownerId?: string; dueBy?: string }): Promise<PurgeOutcome> {
   const table = tables[type];
   const startedAt = new Date().toISOString();
-  const marked = options.ownerId === undefined
-    ? db.query(`UPDATE ${table} SET purge_started_at = COALESCE(purge_started_at, ?) WHERE id = ? AND deleted_at IS NOT NULL`).run(startedAt, id)
-    : db.query(`UPDATE ${table} SET purge_started_at = COALESCE(purge_started_at, ?) WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL`).run(startedAt, id, options.ownerId);
+  // Sweeper purges re-check retention under the lock: an item restored and deleted
+  // again since the run's snapshot has a fresh purge_after and must survive.
+  const retention = options.dueBy === undefined ? "" : " AND (purge_started_at IS NOT NULL OR purge_after <= $dueBy)";
+  const owner = options.ownerId === undefined ? "" : " AND owner_id = $ownerId";
+  const marked = db.query(`UPDATE ${table} SET purge_started_at = COALESCE(purge_started_at, $startedAt) WHERE id = $id AND deleted_at IS NOT NULL${owner}${retention}`)
+    .run({ startedAt, id, ...(options.ownerId === undefined ? {} : { ownerId: options.ownerId }), ...(options.dueBy === undefined ? {} : { dueBy: options.dueBy }) });
   if (marked.changes === 0) return "not_found";
 
   try {
@@ -135,7 +138,7 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
     for (const row of [...resumed, ...due]) {
       // An interrupted purge that was not due yet was started by its owner.
       const reason: PurgeReason = row.purge_after !== null && row.purge_after > cutoff ? "user" : "retention";
-      const outcome = await withResourceLock(lockKey(type, row.id), () => purgeLocked(type, row.id, { reason, actorId: null }));
+      const outcome = await withResourceLock(lockKey(type, row.id), () => purgeLocked(type, row.id, { reason, actorId: null, dueBy: cutoff }));
       if (outcome === "purged") counts.purged += 1;
       else if (outcome === "pending") counts.pending += 1;
     }
