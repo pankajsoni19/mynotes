@@ -1,4 +1,4 @@
-# MyNotes implementation tracker
+# Nook implementation tracker
 
 ## Workspace apps roadmap (Home, Files, shared Bin)
 

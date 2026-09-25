@@ -1,4 +1,4 @@
-# MyNotes development plan: Home, Files, and shared Bin
+# Nook development plan: Home, Files, and shared Bin
 
 This is the handoff for the rest of the requested work. A new Claude Code session should be able to implement every remaining wave from this file and the linked specs without the original conversation.
 

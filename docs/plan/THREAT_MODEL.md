@@ -4,7 +4,7 @@ Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Reviewers in Wave
 
 ## Context
 
-MyNotes is self-hosted. One Bun container serves a small set of trusted accounts, and optionally restricts them with an email allowlist. It is reached over localhost, a LAN, or a Tailscale HTTPS origin. Users trust each other enough to share, but a shared recipient must never gain write access, and must never see anything that was not shared with them.
+Nook is self-hosted. One Bun container serves a small set of trusted accounts, and optionally restricts them with an email allowlist. It is reached over localhost, a LAN, or a Tailscale HTTPS origin. Users trust each other enough to share, but a shared recipient must never gain write access, and must never see anything that was not shared with them.
 
 ## Assets
 

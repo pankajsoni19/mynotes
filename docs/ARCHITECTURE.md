@@ -1,5 +1,7 @@
 # Architecture
 
+This document describes how Nook (formerly MyNotes) is built. For using the apps see [USING.md](USING.md); for running a server see [OPERATIONS.md](OPERATIONS.md). Internal identifiers keep the original `mynotes` prefix for compatibility with existing deployments and browsers: the `mynotes.sqlite` database, the `mynotes_session` cookie, the `mynotes` container, `MYNOTES_DATA_DIR` and its `/srv/mynotes` default, `mynotes:*` localStorage keys, `mynotes.*` history-state keys, `application/x-mynotes-*` drag types, the `mynotes_` API key prefix, and the `mynotes-*` backup archives.
+
 ## Runtime
 
 One Bun process runs a Hono app that serves the built React SPA, the `/api` JSON API, document uploads and content, and the `/mcp` endpoint. SQLite uses WAL mode. All note content is read and written through a storage service that validates UUIDs, uses fixed derived paths, and performs atomic file replacement. Uploaded documents use a second, UUID-only store beside the notes (see [Documents](#documents)).

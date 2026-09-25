@@ -1,4 +1,4 @@
-# MyNotes plan: Search (W7), MCP coverage (W8), Task Boards (W9)
+# Nook plan: Search (W7), MCP coverage (W8), Task Boards (W9)
 
 Extends [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) under its rules. Baseline: migration 007.
 
