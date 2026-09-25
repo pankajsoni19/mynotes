@@ -63,10 +63,23 @@ MyNotes is self-hosted. One Bun container serves a small set of trusted accounts
 | T25 | **Idempotency-key misuse** to learn about another user's uploads | Keys are scoped per `owner_id`. A replay returns only the caller's own document. | Required |
 | T26 | **Race conditions:** concurrent restore and purge, rename during delete, quota bypass with parallel uploads | Per-resource locks, compare-and-swap updates, a quota re-check inside the insert transaction, and in-memory reservations. | Required |
 | T27 | **Existing protections regressed** (TOTP gate, CSP on the SPA, JSON-only mutations) | The middleware exception is path-exact, and tests prove multipart is rejected elsewhere. The global CSP on the SPA is unchanged. The TOTP gate covers the new routes (test). | Required |
+| T28 | **Note images shown to the wrong audience.** Images embedded in a note are documents in the note's folder, so they follow the folder's sharing, not the note's override | No widening: a reader who can see the note but not the folder gets a broken image, never the bytes. Image sources other than this app's `/api/files/<id>/content` URLs are dropped when a note loads. Documented in the README. A proper fix belongs to a later note-attachments design. | Accepted (documented) |
+
+## Notes on shipped behaviour (v0.3.0–v0.4.0)
+
+Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.
+
+- **T10:** a huge chunked body sent to a non-upload route is stopped by Bun's `maxRequestBodySize` with a bare 413 rather than the JSON error. Streamed content bodies are sent chunked without `Content-Length`.
+- **T11/T12:** the 3 upload slots are per user, not global; several users can upload at once. Uploads without `Content-Length` reserve `MAX_UPLOAD_BYTES` against the quota and free-disk checks while streaming. busboy runs with `parts: 2` and `fileSize: MAX_UPLOAD_BYTES + 1` so that reaching a limit is detected (see API_CONTRACTS).
+- **T15:** a few invisible characters beyond the listed bidi and zero-width set survive name sanitising. Names are always shown in full in `title`.
+- **T17:** a purge the sweeper finishes after an interruption is audited with reason `resumed`. Failing purges are bounded per run (50 resumed plus 100 due per table), so they cannot starve expired items.
+- **T22:** content responses set their own headers and omit the global HSTS and Permissions-Policy.
 
 ## Residual risks the operator accepts
 
 T7, T16, T18, T19, T23, T24. Record any new acceptance here with a rationale and a date.
+
+- 2026-09-25: T28 (note images follow folder sharing). It fails closed (broken image, no disclosure), and fixing it needs a note-attachments model. T18 and T23 are documented in the README.
 
 ## Review checklist (Waves 3, 4, 6)
 
