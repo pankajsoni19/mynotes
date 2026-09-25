@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Download, Ellipsis, ExternalLink, FolderInput, Pencil, Share2, Trash2 } from "lucide-react";
+import { ChevronLeft, Download, Ellipsis, ExternalLink, FolderInput, Pencil, Share2, Trash2, X } from "lucide-react";
 import type { DocumentSummary } from "../types";
 import { contentUrl, fetchTextPreview, formatBytes, TEXT_PREVIEW_BYTES } from "./filesApi";
 import { formatDateTime, kindIcon, kindLabel, visibilityLabels } from "./format";
@@ -54,13 +54,15 @@ type FilePreviewProps = {
   document: DocumentSummary;
   folderName: string;
   onBack: () => void;
+  /** Desktop only: closes the preview pane and deselects the file. */
+  onClose?: () => void;
   /** Owner-only actions; null for files other people shared, which get Download (and Open preview) only. */
   actions?: FilePreviewActions | null;
   /** Opens the phone action sheet. */
   onMore?: (trigger: HTMLElement) => void;
 };
 
-export function FilePreview({ document, folderName, onBack, actions = null, onMore }: FilePreviewProps) {
+export function FilePreview({ document, folderName, onBack, onClose, actions = null, onMore }: FilePreviewProps) {
   const Icon = kindIcon(document.preview_kind);
   return <>
     <header className="editor-toolbar file-preview-toolbar">
@@ -75,6 +77,7 @@ export function FilePreview({ document, folderName, onBack, actions = null, onMo
         <button className="secondary-button file-action danger" onClick={actions.remove} aria-label={`Delete ${document.name}`} aria-keyshortcuts="Delete" title="Delete"><Trash2 /><span>Delete</span></button>
       </div>}
       {onMore && <button className="icon-button file-preview-more" onClick={(event) => onMore(event.currentTarget)} aria-haspopup="dialog" aria-label={`Actions for ${document.name}`}><Ellipsis /></button>}
+      {onClose && <button className="icon-button desktop-only file-preview-close" onClick={onClose} aria-label="Close preview" aria-keyshortcuts="Escape" title="Close (Esc)"><X /></button>}
     </header>
     <div className="file-preview-body">
       <section className="file-preview-stage" aria-label="Preview"><PreviewBody key={document.id} document={document} /></section>

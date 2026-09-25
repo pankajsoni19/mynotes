@@ -6,7 +6,7 @@ import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
-import { documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
+import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
@@ -523,6 +523,17 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     navigate(filesRoute(folder, document.id), { filesPanel: "preview" });
   }
 
+  // Desktop Close (×) and Esc in the preview pane: deselect and go back to the folder's URL in place.
+  function closePreview() {
+    const closedId = documentId;
+    const { route, panel: nextPanel } = closedPreviewTarget(folder);
+    setDocumentId(null);
+    setExtraDocument(null);
+    setPanel(nextPanel);
+    navigate(route, { replace: true, filesPanel: nextPanel });
+    focusRow(closedId);
+  }
+
   function showPanel(next: FilesPanel, replace = false) {
     setPanel(next);
     navigate(filesRoute(folder, documentId), { filesPanel: next, replace });
@@ -594,7 +605,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   const uploadDestination = folder === "all" ? defaultFolder?.name ?? "Default" : currentFolder?.name ?? "";
 
-  return <main className={`workspace files-workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
+  return <main className={`workspace files-workspace${collapsed ? " nav-collapsed" : ""}${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
     <aside className="folder-pane" id="file-folders">
       <header className="sidebar-header">
         <button className="sidebar-brand sidebar-home-button" onClick={() => leaveFiles(onHome)} aria-label="Open MyNotes home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>Files</strong></span></button>
@@ -707,13 +718,18 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       </section>}
     </section>
 
-    <section className="editor-pane file-preview-pane">
+    <section className="editor-pane file-preview-pane" aria-label="File preview" onKeyDown={(event) => {
+      if (event.key !== "Escape" || event.defaultPrevented || dialogOpenRef.current || !selected || isMobileViewport()) return;
+      event.preventDefault();
+      closePreview();
+    }}>
       {selected
         ? <FilePreview
           key={selected.id}
           document={selected}
           folderName={folderLabel(selected)}
           onBack={() => back("files")}
+          onClose={closePreview}
           onMore={(trigger) => openActions(selected, trigger)}
           actions={canManage(selected) ? {
             rename: () => openDialog("rename", selected),
