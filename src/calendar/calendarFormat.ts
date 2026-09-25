@@ -1,7 +1,7 @@
 // Pure Calendar display and form helpers. Browser-zone aware through Intl only, so they are unit
 // tested by passing a zone explicitly.
 import { addDays, daysBetween } from "../calendarRoute";
-import type { EventDetail, EventInput, Occurrence, RepeatRule, Weekday } from "./calendarApi";
+import type { DueTask, EventDetail, EventInput, Occurrence, RepeatRule, Weekday } from "./calendarApi";
 
 export const WEEKDAYS: Weekday[] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 export const weekdayNames: Record<Weekday, string> = { MO: "Mon", TU: "Tue", WE: "Wed", TH: "Thu", FR: "Fri", SA: "Sat", SU: "Sun" };
@@ -196,4 +196,15 @@ export function formToInput(form: EventForm): { input: EventInput } | { error: s
 export function weekdayOf(date: string): Weekday {
   const [year, month, day] = date.split("-").map(Number) as [number, number, number];
   return WEEKDAYS[(new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7]!;
+}
+
+/** Due cards by due date (the overlay is date-only, so no zone applies). */
+export function tasksByDay(tasks: DueTask[]) {
+  const days = new Map<string, DueTask[]>();
+  for (const task of tasks) {
+    const list = days.get(task.dueOn) ?? [];
+    list.push(task);
+    days.set(task.dueOn, list);
+  }
+  return days;
 }

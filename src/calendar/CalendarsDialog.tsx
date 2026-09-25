@@ -16,6 +16,8 @@ type CalendarsDialogProps = {
   onShare: (calendar: CalendarSummary) => void;
   onDelete: (calendar: CalendarSummary) => void;
   onClose: () => void;
+  showTasks: boolean;
+  onToggleTasks: () => void;
 };
 
 const roleLabel = (calendar: CalendarSummary) => calendar.role === "owner"
@@ -23,7 +25,7 @@ const roleLabel = (calendar: CalendarSummary) => calendar.role === "owner"
   : `${calendar.owner_name} · ${calendar.role === "editor" ? "you can edit" : "view only"}`;
 
 /** Show or hide calendars, and (for owners) rename, recolour, share, or bin them. Pushes no history entry. */
-export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, onUpdate, onShare, onDelete, onClose }: CalendarsDialogProps) {
+export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, onUpdate, onShare, onDelete, onClose, showTasks, onToggleTasks }: CalendarsDialogProps) {
   const [name, setName] = useState("");
   const [color, setColor] = useState<CalendarColor>("green");
   const [editing, setEditing] = useState<string | null>(null);
@@ -81,6 +83,13 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
           </span>}
         </li>;
       })}
+      <li className="calendar-list-row">
+        <button className="icon-button calendar-visibility" onClick={onToggleTasks} aria-pressed={showTasks} aria-label={`${showTasks ? "Hide" : "Show"} tasks due`}>
+          {showTasks ? <Eye /> : <EyeOff />}
+        </button>
+        <span className="calendar-dot large task" aria-hidden="true" />
+        <span className="calendar-list-copy"><strong>Tasks due</strong><small>Cards with a due date on boards you can open</small></span>
+      </li>
     </ul>
     {owned.length < 20 && <form className="calendar-new" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <input value={name} maxLength={80} placeholder="New calendar" aria-label="New calendar name" onChange={(event) => setName(event.target.value)} />

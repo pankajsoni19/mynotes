@@ -1202,6 +1202,15 @@ export function App() {
     return openApp("home");
   }
 
+  // A note linked from a calendar event opens in Notes as a new entry, so Back returns to the event.
+  function openLinkedNote(noteId: string) {
+    setSelectedFolder("all");
+    setSelectedNoteId(noteId);
+    setMobilePanel("editor");
+    navigate(notesRoute("all", noteId), { panel: "editor" });
+    setActiveApp("notes");
+  }
+
   async function leaveNotesFromHistory(route: Route) {
     if (!session) return;
     if (await leaveNotes()) {
@@ -1415,7 +1424,7 @@ export function App() {
   if (activeApp !== "notes" && !session.totp.setupRequired) return <>
     {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
-      : activeApp === "calendar" ? <CalendarApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
+      : activeApp === "calendar" ? <CalendarApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}

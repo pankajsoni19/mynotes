@@ -73,7 +73,7 @@ export type EventInput = {
   repeat?: RepeatRule | null;
 };
 
-export type DueTask = { cardId: string; boardId: string; title: string; dueOn: string };
+export type DueTask = { cardId: string; boardId: string; boardName: string; title: string; dueOn: string };
 export type OccurrenceList = { occurrences: Occurrence[]; truncated: boolean; tasks?: DueTask[] };
 
 const json = (body: unknown) => JSON.stringify(body);

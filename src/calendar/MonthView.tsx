@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, RotateCcw, TriangleAlert } from "lucide-react";
 import { addDays, monthGridDays, monthOf, weekdayLabels } from "../calendarRoute";
 import { listOccurrences, viewerTimeZone, type Occurrence, type OccurrenceList } from "./calendarApi";
-import { dayHeading, groupByDay, monthHeading } from "./calendarFormat";
-import { OccurrenceRow } from "./AgendaView";
+import { dayHeading, groupByDay, monthHeading, tasksByDay } from "./calendarFormat";
+import { OccurrenceRow, TaskRow } from "./AgendaView";
 
 type MonthViewProps = {
   month: string;
@@ -11,6 +11,7 @@ type MonthViewProps = {
   compact: boolean;
   selectedDay: string | null;
   calendarIds: string[] | null;
+  showTasks: boolean;
   reloadKey: number;
   canCreate: boolean;
   onSelectDay: (day: string) => void;
@@ -18,8 +19,6 @@ type MonthViewProps = {
   onCreate: (day: string) => void;
   onShiftMonth: (delta: number) => void;
   onToday: () => void;
-  renderDayExtras?: (data: OccurrenceList, day: string) => ReactNode;
-  dayMarkers?: (data: OccurrenceList, day: string) => number;
 };
 
 const CHIPS_PER_DAY = 3;
@@ -29,7 +28,7 @@ const CHIPS_PER_DAY = 3;
  * weeks; prev/next replace the history entry (the caller decides), so Back never walks months.
  */
 export function MonthView(props: MonthViewProps) {
-  const { month, today, compact, selectedDay, calendarIds, reloadKey, canCreate, onSelectDay, onOpen, onCreate, onShiftMonth, onToday } = props;
+  const { month, today, compact, selectedDay, calendarIds, showTasks, reloadKey, canCreate, onSelectDay, onOpen, onCreate, onShiftMonth, onToday } = props;
   const [data, setData] = useState<OccurrenceList | null>(null);
   const [loadedMonth, setLoadedMonth] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +42,7 @@ export function MonthView(props: MonthViewProps) {
   useEffect(() => {
     let active = true;
     setError(null);
-    listOccurrences(from, to, { calendarIds: calendarIds ?? undefined })
+    listOccurrences(from, to, { calendarIds: calendarIds ?? undefined, includeTasks: showTasks })
       .then((result) => {
         if (!active) return;
         setData(result);
@@ -52,11 +51,13 @@ export function MonthView(props: MonthViewProps) {
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Could not load events"); });
     return () => { active = false; };
     // calendarKey stands in for calendarIds.
-  }, [from, to, month, calendarKey, reloadKey, attempt]);
+  }, [from, to, month, calendarKey, showTasks, reloadKey, attempt]);
 
   const byDay = data ? groupByDay(data.occurrences, zone, from, to) : new Map<string, Occurrence[]>();
   const day = selectedDay && selectedDay.startsWith(month) ? selectedDay : today.startsWith(month) ? today : `${month}-01`;
   const dayItems = byDay.get(day) ?? [];
+  const dueByDay = tasksByDay(showTasks ? data?.tasks ?? [] : []);
+  const dayTasks = dueByDay.get(day) ?? [];
   const stale = loadedMonth !== month;
 
   return <section className={`calendar-month${compact ? " compact" : ""}`} aria-labelledby="calendar-month-title">
@@ -81,7 +82,8 @@ export function MonthView(props: MonthViewProps) {
       {Array.from({ length: 6 }, (_, week) => <div key={week} className="calendar-grid-row" role="row">
         {days.slice(week * 7, week * 7 + 7).map((cell) => {
           const items = byDay.get(cell) ?? [];
-          const markers = items.length + (data && props.dayMarkers ? props.dayMarkers(data, cell) : 0);
+          const due = dueByDay.get(cell)?.length ?? 0;
+          const markers = items.length + due;
           const outside = !cell.startsWith(month);
           const label = `${dayHeading(cell, today)}${markers ? `, ${markers === 1 ? "1 item" : `${markers} items`}` : ""}`;
           const className = `calendar-cell${outside ? " outside" : ""}${cell === today ? " today" : ""}${cell === day ? " selected" : ""}`;
@@ -90,7 +92,7 @@ export function MonthView(props: MonthViewProps) {
               <span className="calendar-cell-number">{Number(cell.slice(8))}</span>
               <span className="calendar-cell-dots" aria-hidden="true">
                 {items.slice(0, 3).map((item) => <span key={`${item.eventId}:${item.date}`} className={`calendar-dot color-${item.color}`} />)}
-                {markers > items.length && items.length < 3 && <span className="calendar-dot task" />}
+                {due > 0 && items.length < 3 && <span className="calendar-dot task" />}
               </span>
             </button>;
           }
@@ -102,6 +104,7 @@ export function MonthView(props: MonthViewProps) {
                 {item.title}
               </button>)}
               {items.length > CHIPS_PER_DAY && <button className="calendar-more" onClick={() => onSelectDay(cell)}>+{items.length - CHIPS_PER_DAY} more</button>}
+              {due > 0 && <button className="calendar-more calendar-due" onClick={() => onSelectDay(cell)}>{due === 1 ? "1 task due" : `${due} tasks due`}</button>}
             </div>
           </div>;
         })}
@@ -113,8 +116,8 @@ export function MonthView(props: MonthViewProps) {
         <h3 id="calendar-day-title">{dayHeading(day, today)}</h3>
         {canCreate && <button className="secondary-button calendar-add-day" onClick={() => onCreate(day)}><Plus />Add event</button>}
       </header>
-      {data && props.renderDayExtras?.(data, day)}
-      {!stale && !dayItems.length && <p className="calendar-note">No events this day.</p>}
+      {dayTasks.length > 0 && <ul className="calendar-day-tasks">{dayTasks.map((task) => <li key={`task:${task.cardId}`}><TaskRow task={task} /></li>)}</ul>}
+      {!stale && !dayItems.length && !dayTasks.length && <p className="calendar-note">No events this day.</p>}
       <ul>
         {dayItems.map((item) => <li key={`${item.eventId}:${item.date}`}><OccurrenceRow occurrence={item} day={day} zone={zone} onOpen={onOpen} /></li>)}
       </ul>

@@ -13,7 +13,9 @@ import {
   createCalendar,
   createEvent,
   deleteCalendar,
+  addEventLink,
   deleteEvent,
+  removeEventLink,
   listCalendars,
   skipOccurrence,
   undoEvent,
@@ -29,6 +31,7 @@ import {
 import { formFromEvent, formToInput, newEventForm, sameForm, shortDate, type EventForm } from "./calendarFormat";
 import { CalendarSharePanel, CalendarsDialog } from "./CalendarsDialog";
 import { EventSheet, RepeatSheet } from "./EventSheet";
+import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
 import { EventView } from "./EventView";
 import { PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
 import { MonthView } from "./MonthView";
@@ -46,6 +49,8 @@ type CalendarAppProps = {
   onHome: () => void;
   onSettings: () => void;
   onSignOut: () => void;
+  /** Opens a linked note in Notes (a new history entry). */
+  onOpenNote: (noteId: string) => void;
 };
 
 type Sheet = {
@@ -83,6 +88,13 @@ function readHidden(userId: string) {
     return new Set<string>();
   }
 }
+const tasksKey = (userId: string) => `mynotes:calendar-tasks:${userId}`;
+function readShowTasks(userId: string) {
+  try { return window.localStorage.getItem(tasksKey(userId)) !== "hidden"; } catch { return true; }
+}
+function writeShowTasks(userId: string, shown: boolean) {
+  try { window.localStorage.setItem(tasksKey(userId), shown ? "shown" : "hidden"); } catch { /* storage blocked */ }
+}
 function writeHidden(userId: string, hidden: Set<string>) {
   try { window.localStorage.setItem(hiddenKey(userId), JSON.stringify([...hidden])); } catch { /* storage blocked */ }
 }
@@ -92,7 +104,7 @@ function writeHidden(userId: string, hidden: Set<string>) {
  * Views are history entries; month paging replaces the entry; dialogs and sheets push nothing and
  * are closed by Back through the dialog guard (D69).
  */
-export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut }: CalendarAppProps) {
+export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut, onOpenNote }: CalendarAppProps) {
   const [route, setRoute] = useState<CalendarRoute>(currentCalendarRoute);
   const routeRef = useRef(route);
   routeRef.current = route;
@@ -107,6 +119,8 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [calendarsOpen, setCalendarsOpen] = useState(false);
   const [sharing, setSharing] = useState<CalendarSummary | null>(null);
+  const [picker, setPicker] = useState<EventResponse | null>(null);
+  const [showTasks, setShowTasks] = useState(() => readShowTasks(userId));
   const [busy, setBusy] = useState(false);
   const phone = useMediaQuery(PHONE_QUERY);
   const today = localDate(new Date());
@@ -169,7 +183,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
 
   // ---- dialogs ---------------------------------------------------------------------------------
 
-  const dialogOpen = sheet !== null || repeatOpen || confirm !== null || calendarsOpen || sharing !== null;
+  const dialogOpen = sheet !== null || repeatOpen || confirm !== null || calendarsOpen || sharing !== null || picker !== null;
   const sheetDirty = sheet !== null && !sameForm(sheet.initial, sheet.form);
 
   function closeSheet() {
@@ -187,12 +201,14 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       setConfirm(null);
       closeSheet();
       setSharing(null);
+      setPicker(null);
       setCalendarsOpen(false);
       return;
     }
     if (confirm) setConfirm(null);
     else if (repeatOpen) setRepeatOpen(false);
     else if (sheet) requestCloseSheet();
+    else if (picker) setPicker(null);
     else if (sharing) setSharing(null);
     else setCalendarsOpen(false);
   });
@@ -300,6 +316,30 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     }
   }
 
+  function toggleTasks() {
+    setShowTasks((current) => {
+      writeShowTasks(userId, !current);
+      return !current;
+    });
+  }
+
+  async function linkNote(data: EventResponse, noteId: string) {
+    await addEventLink(data.event.id, "note", noteId);
+    setPicker(null);
+    setReloadKey((value) => value + 1);
+    flash("Note linked");
+  }
+
+  async function removeLink(data: EventResponse, link: EventResponse["links"][number]) {
+    try {
+      await removeEventLink(data.event.id, link.targetType, link.targetId);
+      flash(`Removed the link to ${linkLabel(link)}`);
+    } catch (reason) {
+      flash(errorMessage(reason, "Could not remove the link"));
+    }
+    setReloadKey((value) => value + 1);
+  }
+
   function toggleCalendar(calendar: CalendarSummary) {
     setHidden((current) => {
       const next = new Set(current);
@@ -355,6 +395,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onUndo={(data) => { void undo(data); }}
       onSkip={(data, date) => { void skip(data, date); }}
       onDelete={(data) => setConfirm({ kind: "deleteEvent", data })}
+      renderLinks={(data) => <EventLinks data={data} canEdit={data.role !== "viewer"} onOpenNote={onOpenNote} onAddNote={() => setPicker(data)} onRemove={(link) => { void removeLink(data, link); }} />}
     />;
   } else if (route.view === "month") {
     content = <MonthView
@@ -363,6 +404,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       compact={phone}
       selectedDay={selectedDay}
       calendarIds={visibleIds}
+      showTasks={showTasks}
       reloadKey={reloadKey}
       canCreate={writableAll.length > 0}
       onSelectDay={selectDay}
@@ -372,7 +414,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onToday={() => go(monthRoute(monthOf(today)), true)}
     />;
   } else {
-    content = <AgendaView today={today} calendarIds={visibleIds} reloadKey={reloadKey} onOpen={openOccurrence} />;
+    content = <AgendaView today={today} calendarIds={visibleIds} showTasks={showTasks} reloadKey={reloadKey} onOpen={openOccurrence} />;
   }
 
   return <main className={`app-page calendar-app calendar-view-${view}`}>
@@ -425,7 +467,10 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onShare={setSharing}
       onDelete={(calendar) => setConfirm({ kind: "deleteCalendar", calendar })}
       onClose={() => setCalendarsOpen(false)}
+      showTasks={showTasks}
+      onToggleTasks={toggleTasks}
     />}
+    {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {sharing && <CalendarSharePanel calendar={sharing} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Sharing updated"); void loadCalendars(); }} />}
     {confirm?.kind === "discard" && <ConfirmDialog title="Discard changes?" message="Your changes to this event will be lost." confirmLabel="Discard" danger onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
     {confirm?.kind === "deleteEvent" && <ConfirmDialog title="Move to the Bin?" message={`Move “${confirm.data.event.title}”${confirm.data.event.repeat ? " and all its repeats" : ""} to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}

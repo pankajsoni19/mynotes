@@ -164,3 +164,24 @@
   .calendar-list-actions { grid-column: 3; flex-wrap: wrap; }
   .calendar-share-panel { inset: 0; width: 100%; border: 0; }
 }
+
+/* Tasks due overlay (D67) and event links */
+.calendar-task { cursor: default; border-style: dashed; }
+.calendar-task:hover { border-color: #242428; background: #131315; }
+.calendar-task-icon { width: 14px; color: #c9a85c; }
+.calendar-day-tasks { margin: 0 0 6px; }
+.calendar-more.calendar-due { color: #c9a85c; }
+.calendar-links { margin: 0 0 10px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.calendar-links li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 1px solid #242428; border-radius: 12px; padding: 4px 4px 4px 0; background: #131315; }
+.calendar-links li .icon-button { width: 44px; height: 44px; }
+.calendar-link { min-width: 0; min-height: 44px; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 10px; border: 0; padding: 4px 12px; background: transparent; color: inherit; text-align: left; }
+button.calendar-link { cursor: pointer; }
+button.calendar-link:hover strong { color: #f5cf79; }
+.calendar-link svg { width: 16px; color: #c9a85c; }
+.calendar-link span { min-width: 0; display: grid; gap: 2px; }
+.calendar-link strong { overflow: hidden; color: #ededee; font-size: .9rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-link small { color: #7c7c83; font-size: .74rem; }
+.calendar-links li.restricted strong { color: #9a9aa1; font-weight: 500; }
+.calendar-links li.restricted svg { color: #77777e; }
+.calendar-link-add { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; font-size: .84rem; }
+.calendar-link-add svg { width: 15px; }

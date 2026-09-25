@@ -22,6 +22,7 @@ import {
   removeEventLink,
   undoEvent
 } from "./service";
+import { listDueTasks, type DueTask } from "./tasksOverlay";
 
 // C0/C1 controls and bidi overrides never belong in a name, title, or location.
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/;
@@ -88,20 +89,22 @@ async function respond(c: Context<AppEnv>, operation: () => unknown, status: 200
   }
 }
 
-type EventsQuery = { from: string; to: string; tz: string; calendarIds: string[] | null };
+type EventsQuery = { from: string; to: string; tz: string; calendarIds: string[] | null; includeTasks: boolean };
 
 function parseEventsQuery(c: Context<AppEnv>): EventsQuery | string {
   const from = c.req.query("from") ?? "";
   const to = c.req.query("to") ?? "";
   const tz = c.req.query("tz") ?? "UTC";
   const calendars = c.req.query("calendars");
+  const include = c.req.query("include");
   let calendarIds: string[] | null = null;
   if (calendars !== undefined) {
     const ids = calendars.split(",").filter(Boolean);
     if (ids.length > MAX_CALENDAR_FILTER || ids.some((value) => !uuid.safeParse(value).success)) return "calendars must be up to 50 calendar ids";
     calendarIds = [...new Set(ids.map((value) => value.toLowerCase()))];
   }
-  return { from, to, tz, calendarIds };
+  if (include !== undefined && include !== "" && include !== "tasks") return "include must be tasks";
+  return { from, to, tz, calendarIds, includeTasks: include === "tasks" };
 }
 
 /** docs/plan/API_CONTRACTS.md § Calendar. JSON only; the global session, Origin, CSRF, and TOTP middleware apply. */
@@ -147,7 +150,10 @@ export function registerCalendarRoutes(app: Hono<AppEnv>) {
     return respond(c, () => {
       const userId = c.get("user").id;
       const range = rangeFor(query.from, query.to, query.tz);
-      return listOccurrences(userId, range, query.calendarIds);
+      const result: ReturnType<typeof listOccurrences> & { tasks?: DueTask[] } = listOccurrences(userId, range, query.calendarIds);
+      // The "Tasks due" overlay (D67): present only when asked for, empty until migration 011 adds cards.due_on.
+      if (query.includeTasks) result.tasks = listDueTasks(userId, range);
+      return result;
     });
   });
 
