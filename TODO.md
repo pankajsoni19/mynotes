@@ -67,6 +67,13 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [ ] Upload env vars, Compose pass-through, and backup staging exclusion
 - [ ] Wave tests, RSS streaming check, and independent security review
 
+### Wave 3c — Note editor: inline images, tables, PDF export (operator request 2026-09-25, ships with v0.3.0 or the next release)
+
+- [ ] `/image` slash command plus paste and drop: uploads through `POST /api/files` into the note's folder and embeds `![alt](/api/files/<id>/content?disposition=inline)`; image visibility follows the folder share, not the note override (documented limitation)
+- [ ] `/table` with Tiptap table extensions (pinned 3.31.3), row/column controls, GFM pipe-table Markdown round trip, dark-theme and mobile styles
+- [ ] "Download as PDF" in the editor toolbar and mobile actions menu via a print stylesheet and `window.print()` (no new server work)
+- [ ] Independent review, desktop + 390 px QA, then release
+
 ### Wave 4 — Shared 30-day Bin (v0.3.0)
 
 - [ ] Migration `007_bin` with legacy soft-deleted note backfill
