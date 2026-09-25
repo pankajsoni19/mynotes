@@ -1,15 +1,39 @@
 import { useEffect, useRef } from "react";
-import type { Editor } from "@tiptap/core";
+import type { ChainedCommands, Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
-import { Bold, Code2, Italic, Link2, Strikethrough } from "lucide-react";
+import {
+  BetweenHorizontalEnd, BetweenHorizontalStart, BetweenVerticalEnd, BetweenVerticalStart, Bold, Code2, Grid2x2X, Italic, Link2,
+  Strikethrough, TableColumnsSplit, TableRowsSplit, type LucideIcon
+} from "lucide-react";
 import { SlashCommands } from "./slash";
 import { markdownOptions, noteContentExtensions } from "./extensions";
 import { ImageInsert } from "./imageInsert";
 import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
 import "./editor.css";
+
+const tableActions: { label: string; Icon: LucideIcon; run: (chain: ChainedCommands) => ChainedCommands }[] = [
+  { label: "Add row above", Icon: BetweenHorizontalStart, run: (chain) => chain.addRowBefore() },
+  { label: "Add row below", Icon: BetweenHorizontalEnd, run: (chain) => chain.addRowAfter() },
+  { label: "Add column before", Icon: BetweenVerticalStart, run: (chain) => chain.addColumnBefore() },
+  { label: "Add column after", Icon: BetweenVerticalEnd, run: (chain) => chain.addColumnAfter() },
+  { label: "Delete row", Icon: TableRowsSplit, run: (chain) => chain.deleteRow() },
+  { label: "Delete column", Icon: TableColumnsSplit, run: (chain) => chain.deleteColumn() },
+  { label: "Delete table", Icon: Grid2x2X, run: (chain) => chain.deleteTable() }
+];
+
+// The table (or its scroll wrapper) around the cursor, used to anchor the table toolbar.
+function currentTableElement(editor: Editor): HTMLElement | null {
+  const { $from } = editor.state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if ($from.node(depth).type.name !== "table") continue;
+    const dom = editor.view.nodeDOM($from.before(depth));
+    return dom instanceof HTMLElement ? dom : null;
+  }
+  return null;
+}
 
 type Props = {
   markdown: string;
@@ -92,6 +116,23 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
             if (!href) editor.chain().focus().unsetLink().run();
             else editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
           }} aria-label="Add link"><Link2 /></button>
+        </BubbleMenu>
+      )}
+      {editable && (
+        <BubbleMenu
+          editor={editor}
+          pluginKey="tableMenu"
+          className="bubble-menu table-menu"
+          shouldShow={({ editor: activeEditor, view }) => activeEditor.isEditable && view.hasFocus() && activeEditor.isActive("table")}
+          getReferencedVirtualElement={() => {
+            const element = currentTableElement(editor);
+            return element ? { getBoundingClientRect: () => element.getBoundingClientRect() } : null;
+          }}
+          options={{ placement: "top-start", offset: 8 }}
+        >
+          {tableActions.map(({ label, Icon, run }) => (
+            <button key={label} type="button" onClick={() => run(editor.chain().focus()).run()} aria-label={label} title={label}><Icon /></button>
+          ))}
         </BubbleMenu>
       )}
       <EditorContent editor={editor} />

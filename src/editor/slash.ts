@@ -20,6 +20,7 @@ const commands: Command[] = [
   { label: "Quote", hint: "Capture a quotation", keywords: "blockquote quote", run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBlockquote().run() },
   { label: "Code block", hint: "Monospace code", keywords: "code pre", run: (editor, range) => editor.chain().focus().deleteRange(range).toggleCodeBlock().run() },
   { label: "Image", hint: "Upload a picture", keywords: "image picture photo upload img", run: (editor, range) => editor.chain().focus().deleteRange(range).openImagePicker().run() },
+  { label: "Table", hint: "3 × 3 grid with a header row", keywords: "table grid columns rows", run: (editor, range) => editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { label: "Divider", hint: "Separate sections", keywords: "rule divider hr", run: (editor, range) => editor.chain().focus().deleteRange(range).setHorizontalRule().run() },
   { label: "Today", hint: "Insert today’s date", keywords: "date today", run: (editor, range) => editor.chain().focus().deleteRange(range).insertContent(new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(new Date())).run() }
 ];

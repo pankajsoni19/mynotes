@@ -1,3 +1,13 @@
 /* Editor content that the base prose styles in styles.css do not cover. */
 .note-prose img.note-image { display: block; max-width: 100%; height: auto; margin: 1.1em 0; border-radius: 8px; }
 .note-prose img.note-image.ProseMirror-selectednode { outline: 2px solid var(--yellow); outline-offset: 2px; }
+
+/* Tables: the wrapper scrolls sideways so wide tables never widen the page on mobile. */
+.note-prose .tableWrapper { max-width: 100%; margin: 1.2em 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.note-prose table { width: max-content;border-collapse: collapse; font-family: ui-sans-serif, system-ui, sans-serif; font-size: .92rem; line-height: 1.5; }
+.note-prose th, .note-prose td { position: relative; min-width: 6em; padding: 7px 11px; border: 1px solid #34343a; vertical-align: top; text-align: left; }
+.note-prose th { background: #1c1c20; color: #f0f0f1; font-weight: 650; }
+.note-prose td { background: #121215; }
+.note-prose th > p, .note-prose td > p { margin: 0; }
+.note-prose .selectedCell::after { content: ""; position: absolute; inset: 0; background: rgb(246 196 83 / 14%); pointer-events: none; }
+.table-menu { flex-wrap: wrap; max-width: calc(100vw - 24px); }

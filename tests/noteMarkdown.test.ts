@@ -29,3 +29,29 @@ test("only image kinds the server previews inline are insertable", () => {
   for (const type of ["image/png", "image/jpeg", "image/gif", "image/webp", "IMAGE/PNG"]) expect(isInsertableImageType(type)).toBe(true);
   for (const type of ["image/svg+xml", "image/heic", "application/pdf", ""]) expect(isInsertableImageType(type)).toBe(false);
 });
+
+test("tables round-trip as GitHub-flavoured pipe tables", () => {
+  const markdown = "Before\n\n| Name | Qty |\n| --- | --- |\n| Tea | **2** |\n| Rice | `1kg` |\n\nAfter";
+  const md = manager();
+  const json = md.parse(markdown);
+  const table = json.content?.find((node) => node.type === "table");
+  expect(table?.content?.map((row) => row.content?.map((cell) => cell.type))).toEqual([
+    ["tableHeader", "tableHeader"], ["tableCell", "tableCell"], ["tableCell", "tableCell"]
+  ]);
+  const once = md.serialize(json);
+  expect(once).toMatch(/^\| Name +\| Qty +\|$/m);
+  expect(once).toMatch(/^\| -+ \| -+ \|$/m);
+  expect(once).toContain("**2**");
+  // Serialising the re-parsed output is stable, so autosave does not churn the note.
+  expect(roundTrip(once)).toBe(once.trim());
+});
+
+test("an empty inserted table stays a 3 x 3 table after a save and reload", () => {
+  const md = manager();
+  const cell = (type: string) => ({ type, content: [{ type: "paragraph" }] });
+  const row = (type: string) => ({ type: "tableRow", content: [cell(type), cell(type), cell(type)] });
+  const doc = { type: "doc", content: [{ type: "table", content: [row("tableHeader"), row("tableCell"), row("tableCell")] }] };
+  const table = md.parse(md.serialize(doc)).content?.find((node) => node.type === "table");
+  expect(table?.content).toHaveLength(3);
+  expect(table?.content?.every((tableRow) => tableRow.content?.length === 3)).toBe(true);
+});
