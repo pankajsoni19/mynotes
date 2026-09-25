@@ -265,7 +265,9 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     // After React commits (a restored row only exists then). A timer, unlike requestAnimationFrame, also runs in background tabs.
     window.setTimeout(() => {
       const element = typeof target === "string" ? window.document.querySelector<HTMLElement>(`[data-document-id="${CSS.escape(target)}"]`) : target;
+      // The row can be gone (moved out of this folder, deleted): fall back to the list itself.
       if (element?.isConnected) element.focus();
+      else window.document.getElementById("file-list")?.focus();
     }, 0);
   }
 
@@ -392,7 +394,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   // ↑/↓ move the selection, Enter opens the preview (the row's own click), F2 renames, Delete/Backspace deletes.
   function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || dialogOpenRef.current) return;
     const rowId = shortcutDocumentId(event.target instanceof Element ? event.target : null, documentId);
     const index = rowId ? visible.findIndex((item) => item.id === rowId) : -1;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -636,7 +638,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <label className="search-box file-search"><Search aria-hidden="true" /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && query) { event.preventDefault(); setQuery(""); } }} placeholder="Filter files" aria-label="Filter files by name" /></label>
       </header>
       <p id="file-list-keys" className="sr-only">Use the up and down arrow keys to move between files. On your own files, F2 renames and Delete moves the file to the Bin.</p>
-      <div className="note-list file-list" role="list" aria-label={folderTitle} aria-describedby="file-list-keys" aria-busy={!data && !loadError ? true : undefined} onKeyDown={onListKeyDown}>
+      <div id="file-list" tabIndex={-1} className="note-list file-list" role="list" aria-label={folderTitle} aria-describedby="file-list-keys" aria-busy={!data && !loadError ? true : undefined} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
           const Icon = kindIcon(item.preview_kind);
           return <div role="listitem" className="file-row-item" key={item.id} {...{ [ROW_ITEM_ATTRIBUTE]: item.id }}>

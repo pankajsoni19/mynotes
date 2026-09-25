@@ -3,6 +3,7 @@ import { Download, ExternalLink, FolderInput, Pencil, Share2, Trash2, X } from "
 import type { DocumentSummary } from "../types";
 import { canManage } from "./fileActions";
 import { contentUrl } from "./filesApi";
+import { trapTabKey } from "./Dialog";
 
 export type FileSheetAction = "rename" | "move" | "share" | "delete";
 
@@ -25,7 +26,7 @@ export function FileActionSheet({ document, onAction, onClose }: FileActionSheet
 
   return <>
     <button className="panel-scrim file-sheet-scrim" onClick={onClose} aria-label="Close actions" tabIndex={-1} />
-    <div className="file-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+    <div className="file-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={trapTabKey}>
       <header>
         <strong id={titleId} title={document.name}>{document.name}</strong>
         <button className="icon-button" onClick={onClose} aria-label="Close actions"><X /></button>

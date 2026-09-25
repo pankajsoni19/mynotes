@@ -173,3 +173,4 @@
 @media (max-width: 760px) {
   .files-workspace .empty-state button { min-height: 44px; }
 }
+#file-list:focus { outline: none; }

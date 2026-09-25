@@ -1,5 +1,27 @@
-import { useEffect, useId, type ReactNode } from "react";
+import { useEffect, useId, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { X } from "lucide-react";
+
+const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Keeps Tab and Shift+Tab inside a modal container. */
+export function trapTabKey(event: ReactKeyboardEvent<HTMLElement>) {
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => !element.hasAttribute("hidden"));
+  if (!focusable.length) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || !event.currentTarget.contains(active))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (active === last || !event.currentTarget.contains(active))) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 type ModalDialogProps = {
   title: string;
@@ -30,7 +52,7 @@ export function ModalDialog({ title, eyebrow, onClose, children, variant = "dial
 
   return <>
     <button className="panel-scrim file-dialog-scrim" onClick={() => { if (!busy) onClose(); }} aria-label="Close dialog" tabIndex={-1} />
-    <section className={`file-dialog${variant === "sheet" ? " file-dialog-sheet" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy} aria-busy={busy || undefined}>
+    <section className={`file-dialog${variant === "sheet" ? " file-dialog-sheet" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy} aria-busy={busy || undefined} onKeyDown={trapTabKey}>
       <header className="file-dialog-header">
         <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2 id={titleId} title={title}>{title}</h2></div>
         <button className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>

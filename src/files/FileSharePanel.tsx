@@ -3,6 +3,7 @@ import { Folder as FolderIcon, Lock, Share2, Users, X } from "lucide-react";
 import { api } from "../api";
 import type { DocumentSummary, User } from "../types";
 import { getFileSharing, saveFileSharing, type FileSharingVisibility } from "./filesApi";
+import { trapTabKey } from "./Dialog";
 
 type FileSharePanelProps = {
   document: DocumentSummary;
@@ -56,7 +57,7 @@ export function FileSharePanel({ document, onClose, onChanged }: FileSharePanelP
 
   return <>
     <button className="panel-scrim" onClick={onClose} aria-label="Close sharing" tabIndex={-1} />
-    <aside className="side-panel share-panel file-share-panel" role="dialog" aria-modal="true" aria-labelledby="file-share-title">
+    <aside className="side-panel share-panel file-share-panel" role="dialog" aria-modal="true" aria-labelledby="file-share-title" onKeyDown={trapTabKey}>
       <header><div><span className="eyebrow">Access</span><h2 id="file-share-title" title={document.name}>Share file</h2></div><button className="icon-button" onClick={onClose} aria-label="Close sharing"><X /></button></header>
       <div className="share-options" role="radiogroup" aria-label="Who can open this file">
         {option("inherit", FolderIcon, "Use folder access", "Inherit this file’s folder sharing")}
