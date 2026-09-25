@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Source for the web-app icons. nook-192.png and nook-512.png are rendered from this file by
+       the director and approved by the operator before they are committed. Full-bleed background
+       and the mark inside the central 80% so the 512 px render also works as a maskable icon. -->
+  <rect width="512" height="512" fill="#111113"/>
+  <path d="M160 128h168l64 64v192H160z" fill="#f7c948"/>
+  <path d="M328 128v80h64" fill="none" stroke="#7a5b00" stroke-width="22" stroke-linejoin="round"/>
+  <path d="M214 272h124M214 326h100" stroke="#3a2d00" stroke-width="22" stroke-linecap="round"/>
+</svg>

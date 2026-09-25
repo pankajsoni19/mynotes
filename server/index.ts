@@ -845,6 +845,12 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
 app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
 
+// The service worker must be revalidated on every registration check (T69).
+app.use("/sw.js", async (c, next) => {
+  await next();
+  c.header("Cache-Control", "no-cache");
+});
+
 if (config.isProduction) {
   app.use("/*", serveStatic({ root: "./dist" }));
   app.get("/*", serveStatic({ path: "./dist/index.html" }));
