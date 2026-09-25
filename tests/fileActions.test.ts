@@ -7,6 +7,8 @@ import {
   isDocumentDrag,
   isOsFileDrag,
   readDocumentDragPayload,
+  ROW_ITEM_ATTRIBUTE,
+  shortcutDocumentId,
   uploadDropMessage,
   compareDocuments,
   DEFAULT_FILE_SORT,
@@ -186,4 +188,13 @@ test("each Files view has its own empty state", () => {
   expect(filesEmptyState({ kind: "shared" }).body).toBe("Files other people share with you will appear here.");
   expect(filesEmptyState({ kind: "folder", name: "Projects", owned: true, ownerName: "Ada" })).toEqual({ title: "This folder is empty", body: "Upload a file, or drop files here, to add it to Projects." });
   expect(filesEmptyState({ kind: "folder", name: "Team", owned: false, ownerName: "Grace" }).body).toBe("Nothing in Grace’s folder is shared with you yet.");
+});
+
+test("list shortcuts act on the item holding focus, including its ⋯ button", () => {
+  // A minimal element: closest() finds the list item that wraps both the row and its ⋯ button.
+  const item = { getAttribute: (name: string) => name === ROW_ITEM_ATTRIBUTE ? "doc-b" : null };
+  const moreButton = { closest: (selector: string) => selector === `[${ROW_ITEM_ATTRIBUTE}]` ? item : null };
+  expect(shortcutDocumentId(moreButton, "doc-a")).toBe("doc-b");
+  expect(shortcutDocumentId({ closest: () => null }, "doc-a")).toBe("doc-a");
+  expect(shortcutDocumentId(null, null)).toBeNull();
 });

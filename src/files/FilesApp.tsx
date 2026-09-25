@@ -26,6 +26,8 @@ import {
   isOsFileDrag,
   movedMessage,
   readDocumentDragPayload,
+  ROW_ITEM_ATTRIBUTE,
+  shortcutDocumentId,
   readFileSort,
   sortDocuments,
   toastDuration,
@@ -391,7 +393,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   // ↑/↓ move the selection, Enter opens the preview (the row's own click), F2 renames, Delete/Backspace deletes.
   function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const rowId = (event.target as HTMLElement).closest<HTMLElement>("[data-document-id]")?.dataset.documentId ?? documentId;
+    const rowId = shortcutDocumentId(event.target instanceof Element ? event.target : null, documentId);
     const index = rowId ? visible.findIndex((item) => item.id === rowId) : -1;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       if (!visible.length) return;
@@ -637,7 +639,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       <div className="note-list file-list" role="list" aria-label={folderTitle} aria-describedby="file-list-keys" aria-busy={!data && !loadError ? true : undefined} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
           const Icon = kindIcon(item.preview_kind);
-          return <div role="listitem" className="file-row-item" key={item.id}>
+          return <div role="listitem" className="file-row-item" key={item.id} {...{ [ROW_ITEM_ATTRIBUTE]: item.id }}>
             <button
               className={`file-row${documentId === item.id ? " selected" : ""}${draggingId === item.id ? " dragging" : ""}`}
               draggable={canManage(item)}

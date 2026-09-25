@@ -228,3 +228,14 @@ export function filesEmptyState(view: FilesView): { title: string; body: string 
         : { title: "No files in this folder", body: `Nothing in ${view.ownerName}’s folder is shared with you yet.` };
   }
 }
+
+/** Marks the list item wrapping a row and its ⋯ button, so shortcuts work from either. */
+export const ROW_ITEM_ATTRIBUTE = "data-row-document-id";
+
+type ClosestCapable = { closest: (selector: string) => { getAttribute: (name: string) => string | null } | null };
+
+/** The document a list shortcut acts on: the item holding the focused element, else the selection. */
+export function shortcutDocumentId(target: ClosestCapable | null, selectedId: string | null) {
+  const item = target && typeof target.closest === "function" ? target.closest(`[${ROW_ITEM_ATTRIBUTE}]`) : null;
+  return item?.getAttribute(ROW_ITEM_ATTRIBUTE) || selectedId;
+}
