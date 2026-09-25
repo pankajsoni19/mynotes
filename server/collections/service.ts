@@ -627,6 +627,7 @@ export async function undoRow(userId: string, rowId: string, input: { revision: 
     const links = storedLinks(previous);
     const undoErrors = undoValueErrors(schema, restored, readValues(schema, JSON.parse(row.values_json)), userId);
     if (undoErrors) throw invalidValues(undoErrors);
+    if (links) assertUndoLinksAllowed(rowId, links, collection, userId);
     db.transaction(() => {
       const timestamp = now();
       const updated = db.query(`UPDATE collection_rows SET values_json = ?, prev_values_json = NULL, prev_revision = NULL, revision = revision + 1,
@@ -793,9 +794,36 @@ function storedLinks(prevValues: unknown): LinkSnapshot[] | null {
 }
 
 /**
+ * An undo that changes links is held to the attach and unlink rules (D58): every link it would
+ * add back must be to a document the undoer owns (a live one, or a collection upload in the Bin
+ * that the unlink moved there), and every link it would remove must be one the undoer created,
+ * unless the undoer owns the collection. Documents restoreLinks would skip (purged, or a binned
+ * Files item) are ignored. Any other link refuses the whole undo with 403 `NOT_LINKER`.
+ */
+function assertUndoLinksAllowed(rowId: string, target: LinkSnapshot[], collection: CollectionRecord, userId: string) {
+  const current = rowLinks(rowId);
+  const wanted = new Set(target.map((link) => link[0]));
+  const present = new Set(current.map((link) => link[0]));
+  const refused: string[] = [];
+  if (collection.owner_id !== userId) {
+    for (const [documentId, , linkedBy] of current) if (!wanted.has(documentId) && linkedBy !== userId) refused.push(documentId);
+  }
+  for (const [documentId] of target) {
+    if (present.has(documentId)) continue;
+    const document = db.query("SELECT owner_id, purpose, deleted_at, purge_started_at FROM documents WHERE id = ?").get(documentId) as { owner_id: string; purpose: string; deleted_at: string | null; purge_started_at: string | null } | null;
+    if (!document || document.purge_started_at !== null || (document.deleted_at !== null && document.purpose !== "collection_attachment")) continue;
+    if (document.owner_id !== userId) refused.push(documentId);
+  }
+  if (refused.length) {
+    throw new CollectionError(403, "Only the person who attached these files or the collection owner can undo this change", "NOT_LINKER", { documentIds: refused });
+  }
+}
+
+/**
  * Puts a row's links back to `target` (an Undo of attach or unlink). A collection upload the unlink
  * moved to the Bin comes back with its link; documents purged since, or Files items binned since, are
- * skipped. Uploads no row links any more go to the Bin, as after an unlink. Call inside a transaction.
+ * skipped. Uploads no row links any more go to the Bin, as after an unlink. The caller checks
+ * assertUndoLinksAllowed first, so every link put back is the undoer's own. Call inside a transaction.
  */
 function restoreLinks(rowId: string, target: LinkSnapshot[], userId: string) {
   const current = rowLinks(rowId);
@@ -804,7 +832,7 @@ function restoreLinks(rowId: string, target: LinkSnapshot[], userId: string) {
   const unlinked = current.filter((link) => !wanted.has(link[0])).map((link) => link[0]);
   for (const documentId of unlinked) db.query("DELETE FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").run(rowId, documentId);
   let relinked = 0;
-  for (const [documentId, fieldId, linkedBy, createdAt] of target) {
+  for (const [documentId, fieldId, , createdAt] of target) {
     if (present.has(documentId)) continue;
     const document = db.query("SELECT purpose, deleted_at, purge_started_at FROM documents WHERE id = ?").get(documentId) as { purpose: string; deleted_at: string | null; purge_started_at: string | null } | null;
     if (!document || document.purge_started_at !== null) continue;
@@ -814,8 +842,7 @@ function restoreLinks(rowId: string, target: LinkSnapshot[], userId: string) {
       if (restored.changes !== 1) continue;
       audit(userId, null, "document.restore", { documentId, reason: "attachment_undo" });
     }
-    const linker = linkedBy !== null && db.query("SELECT 1 FROM users WHERE id = ?").get(linkedBy) ? linkedBy : null;
-    db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)").run(rowId, documentId, fieldId, linker, createdAt);
+    db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)").run(rowId, documentId, fieldId, userId, createdAt);
     relinked += 1;
   }
   const binned = binUnlinkedAttachments(unlinked, userId);

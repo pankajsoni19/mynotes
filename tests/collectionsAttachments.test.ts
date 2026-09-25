@@ -126,6 +126,45 @@ describe("row attachments", () => {
     expect(await content(owner, second)).toBe(200);
   });
 
+  test("Undo of a link change follows the attach and unlink rules for the undoer", async () => {
+    const { owner, member, stranger, collection, row, receipt } = await setup("Undo rules");
+    await shareCollection(owner, collection.id, "selected", [member.userId, stranger.userId], "editor");
+    const linkedDocument = (documentId: string) => db.query("SELECT linked_by FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(row.id, documentId) as { linked_by: string } | null;
+
+    // Editor A links, then unlinks, a private Files item; editor B cannot undo the unlink.
+    const privateFile = await upload(member, "file", "private.txt");
+    await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: privateFile, fieldId: receipt.id });
+    const unlinked = await call(member, "DELETE", `/rows/${row.id}/attachments/${privateFile}`);
+    expect(unlinked.status).toBe(200);
+    const refused = await call(stranger, "POST", `/rows/${row.id}/undo`, { revision: unlinked.body.row.revision });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ code: "NOT_LINKER", documentIds: [privateFile] });
+    expect(linkedDocument(privateFile)).toBeNull();
+    expect(await content(stranger, privateFile)).toBe(404);
+    // Even the collection owner cannot link a document someone else owns.
+    expect((await call(owner, "POST", `/rows/${row.id}/undo`, { revision: unlinked.body.row.revision })).status).toBe(403);
+    // A can undo their own unlink.
+    const ownUndo = await call(member, "POST", `/rows/${row.id}/undo`, { revision: unlinked.body.row.revision });
+    expect(ownUndo.status).toBe(200);
+    expect(linkedDocument(privateFile)).toEqual({ linked_by: member.userId });
+    await call(member, "DELETE", `/rows/${row.id}/attachments/${privateFile}`);
+
+    // B cannot undo A's attach: A's link stays and A's upload is not binned.
+    const upload1 = await upload(member, "collection_attachment", "a.txt");
+    const attached = await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: upload1, fieldId: receipt.id });
+    const blocked = await call(stranger, "POST", `/rows/${row.id}/undo`, { revision: attached.body.row.revision });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body).toMatchObject({ code: "NOT_LINKER", documentIds: [upload1] });
+    expect(linkedDocument(upload1)).toEqual({ linked_by: member.userId });
+    expect((db.query("SELECT deleted_at FROM documents WHERE id = ?").get(upload1) as { deleted_at: string | null }).deleted_at).toBeNull();
+
+    // The collection owner may undo anyone's attach, as they may unlink anyone's file.
+    const ownerUndo = await call(owner, "POST", `/rows/${row.id}/undo`, { revision: attached.body.row.revision });
+    expect(ownerUndo.status).toBe(200);
+    expect(linkedDocument(upload1)).toBeNull();
+    expect(db.query("SELECT deleted_by FROM documents WHERE id = ? AND deleted_at IS NOT NULL").get(upload1)).toEqual({ deleted_by: owner.userId });
+  });
+
   test("Files items the linker owns can be linked and are never binned on unlink", async () => {
     const { owner, member, collection, row, receipt } = await setup("Own file");
     const fileId = await upload(owner, "file", "manual.txt");

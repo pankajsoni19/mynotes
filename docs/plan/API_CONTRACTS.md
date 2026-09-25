@@ -620,7 +620,7 @@ type RowSummary = {
 | `POST /:c/rows { values, afterRowId? }` | editor | 201 `{ row }`. Omitted `afterRowId` = bottom, `null` = top. | 400 `INVALID_VALUES`, 403 `READ_ONLY`, 404 (collection, or an anchor not in it), 409 `LIMIT_REACHED` |
 | `GET /rows/:r` | reader | 200 `{ row, role, schemaVersion }` | 404 |
 | `PATCH /rows/:r { values, revision }` | editor | 200 `{ row }`: `values` is merged; `revision + 1`; the previous values are kept for undo | 400, 403, 404, 409 `{ code: "ROW_CHANGED", row }` |
-| `POST /rows/:r/undo { revision }` | editor | 200 `{ row }`: the previous values, projected onto the current schema; undo is one step | 403, 404, 409 `ROW_CHANGED` or `NOTHING_TO_UNDO` |
+| `POST /rows/:r/undo { revision }` | editor | 200 `{ row }`: the previous values, projected onto the current schema; undo is one step | 403, 404, 409 `ROW_CHANGED` or `NOTHING_TO_UNDO`. An undo of an attach or unlink follows those routes' rules for the caller: every link it puts back must be to a document the caller owns, and every link it removes must be the caller's own unless the caller owns the collection; otherwise the whole undo is refused with 403 `{ code: "NOT_LINKER", documentIds }` and nothing changes |
 | `DELETE /rows/:r` | editor | 200 `{ ok: true, purgeAfter }`: to the Bin | 403, 404 |
 
 ### Saved views
