@@ -5,6 +5,7 @@ export type Route =
   | { app: "notes"; folder: "all" | "shared" | string; noteId: string | null }
   | { app: "files"; folder: "all" | "shared" | string; documentId: string | null }
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
+  | { app: "notifications" }
   | { app: "bin" };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -53,6 +54,7 @@ export function parseRoute(pathname: string): Route {
     return { app: "files", folder, documentId: itemId };
   }
   if (app === "calendar") return parseCalendar(rest);
+  if (app === "notifications" && rest.length === 0) return { app: "notifications" };
   if (app === "bin" && rest.length === 0) return { app: "bin" };
   return { app: "home" };
 }
@@ -73,6 +75,7 @@ export function formatRoute(route: Route): string {
     if (route.view === "month") return route.month && isRouteMonth(route.month) ? `/calendar/month/${route.month}` : "/calendar/month";
     return "/calendar";
   }
+  if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
   return "/";
 }

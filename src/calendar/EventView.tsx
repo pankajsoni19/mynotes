@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, Bell, CalendarX2, Clock, MapPin, Pencil, Repeat, RotateCcw, Trash2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowLeft, CalendarX2, Clock, MapPin, Pencil, Repeat, RotateCcw, Trash2, TriangleAlert, Undo2 } from "lucide-react";
 import { ApiError } from "../api";
 import { getEvent, viewerTimeZone, type EventResponse } from "./calendarApi";
 import { eventWhen, repeatSummary, shortDate } from "./calendarFormat";
@@ -16,10 +16,11 @@ type EventViewProps = {
   onDelete: (data: EventResponse) => void;
   onLoaded?: (data: EventResponse) => void;
   renderLinks?: (data: EventResponse) => ReactNode;
+  renderReminders?: (data: EventResponse) => ReactNode;
 };
 
-/** /calendar/event/:e: the event, what it links to, and (in a later stage) my reminders. */
-export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, onEdit, onUndo, onSkip, onDelete, onLoaded, renderLinks }: EventViewProps) {
+/** /calendar/event/:e: the event, what it links to, and the viewer's own reminders. */
+export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, onEdit, onUndo, onSkip, onDelete, onLoaded, renderLinks, renderReminders }: EventViewProps) {
   const [data, setData] = useState<EventResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -85,9 +86,6 @@ export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, o
 
     {renderLinks?.(data)}
 
-    <section className="calendar-event-section" aria-labelledby="calendar-reminders-title">
-      <h2 id="calendar-reminders-title"><Bell />My reminders</h2>
-      <p className="calendar-note">Reminders are private to you. Setting them arrives in a later update.</p>
-    </section>
+    {renderReminders?.(data)}
   </article>;
 }

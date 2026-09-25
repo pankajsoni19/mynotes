@@ -1,5 +1,6 @@
 import { Archive, ArrowRight, CalendarDays, FileText, LogOut, Settings, Sparkles, Trash2 } from "lucide-react";
 import "./appShell.css";
+import { NotificationBell } from "./notifications/NotificationBell";
 import type { AppSection } from "./appShellNavigation";
 
 type AccountProps = {
@@ -13,11 +14,12 @@ type ShellProps = AccountProps & {
 };
 
 export function AccountActions({ displayName, onSettings, onSignOut }: AccountProps) {
-  return <div className="app-account" role="group" aria-label="Account">
+  // The bell sits beside the group (it renders only inside the signed-in shell).
+  return <><div className="app-account" role="group" aria-label="Account">
     <span className="app-home-user">{displayName}</span>
     <button className="app-account-button" onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>
     <button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button>
-  </div>;
+  </div><NotificationBell /></>;
 }
 
 const cards: Array<{ section: Exclude<AppSection, "home">; icon: typeof Archive; eyebrow: string; title: string; copy: string; status: string }> = [

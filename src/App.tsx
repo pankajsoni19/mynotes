@@ -40,6 +40,8 @@ import { AppHome } from "./AppShell";
 import { BinApp } from "./bin/BinApp";
 import { FilesApp } from "./files/FilesApp";
 import { CalendarApp } from "./calendar/CalendarApp";
+import { NotificationsApp } from "./notifications/NotificationsApp";
+import { NotificationsContext } from "./notifications/notificationsApi";
 import { carriedCalendarState } from "./calendarNavigation";
 import { calendarHomeRoute, localDate } from "./calendarRoute";
 import { popStateClosedDialog } from "./historyDialogs";
@@ -638,6 +640,8 @@ export function App() {
   const searchHintRef = useRef<SearchHint | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("folders");
+  // Bumped to remount Calendar when a notification opens a Calendar URL while it is on screen.
+  const [calendarKey, setCalendarKey] = useState(0);
   const [panel, setPanel] = useState<"history" | "share" | null>(null);
   const [mobileActions, setMobileActions] = useState(false);
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
@@ -752,7 +756,7 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", calendar: "Calendar", bin: "Bin" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", calendar: "Calendar", notifications: "Notifications", bin: "Bin" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session]);
@@ -1202,6 +1206,15 @@ export function App() {
     return openApp("home");
   }
 
+  // A notification opens its in-app path as a new entry (paths are checked by safeNotificationPath).
+  // Opening a Calendar path while Calendar is on screen remounts it on the new URL.
+  function openNotificationPath(path: string) {
+    const route = parseRoute(path);
+    if (route.app === "calendar") setCalendarKey((value) => value + 1);
+    navigate(route);
+    setActiveApp(route.app);
+  }
+
   // A note linked from a calendar event opens in Notes as a new entry, so Back returns to the event.
   function openLinkedNote(noteId: string) {
     setSelectedFolder("all");
@@ -1421,15 +1434,16 @@ export function App() {
   const toastStatus = toast && <div className="toast" role="status">{toast}</div>;
   const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
 
-  if (activeApp !== "notes" && !session.totp.setupRequired) return <>
+  if (activeApp !== "notes" && !session.totp.setupRequired) return <NotificationsContext.Provider value={{ openList: () => { void openApp("notifications"); }, openPath: openNotificationPath }}>
     {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
-      : activeApp === "calendar" ? <CalendarApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
+      : activeApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
+      : activeApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}
-  </>;
+  </NotificationsContext.Provider>;
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>

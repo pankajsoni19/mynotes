@@ -7,15 +7,25 @@
 /** Receives the state of the entry the browser moved to; returns true when it closed a dialog. */
 type DialogGuard = (poppedState: unknown) => boolean;
 
-let guard: DialogGuard | null = null;
+// A stack: the app on screen registers one guard, and shared chrome (the notification bell's
+// popover) may register another. The newest guard is asked first; the first to close a dialog wins.
+const guards: DialogGuard[] = [];
 let ignoring = 0;
 let ignoreTimer: ReturnType<typeof setTimeout> | null = null;
 const consumed = new WeakSet<object>();
 
-/** Registers the guard for the dialogs of the app on screen. Returns the unregister function. */
+/** Registers a guard for the dialogs of the app on screen (or shared chrome). Returns the unregister function. */
 export function registerHistoryDialogGuard(next: DialogGuard) {
-  guard = next;
-  return () => { if (guard === next) guard = null; };
+  guards.push(next);
+  return () => {
+    const index = guards.lastIndexOf(next);
+    if (index >= 0) guards.splice(index, 1);
+  };
+}
+
+function runGuards(state: unknown) {
+  for (let index = guards.length - 1; index >= 0; index -= 1) if (guards[index]!(state)) return true;
+  return false;
 }
 
 /** True when this popstate only closed a dialog (or undid that move), so the caller must not restore a route for it. */
@@ -26,7 +36,7 @@ export function popStateClosedDialog(event: { state?: unknown }) {
     consumed.add(event);
     return true;
   }
-  if (!guard?.(event.state)) return false;
+  if (!runGuards(event.state)) return false;
   consumed.add(event);
   return true;
 }

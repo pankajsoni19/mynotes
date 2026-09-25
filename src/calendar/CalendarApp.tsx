@@ -32,6 +32,7 @@ import { formFromEvent, formToInput, newEventForm, sameForm, shortDate, type Eve
 import { CalendarSharePanel, CalendarsDialog } from "./CalendarsDialog";
 import { EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
+import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderSummary } from "./EventReminders";
 import { EventView } from "./EventView";
 import { PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
 import { MonthView } from "./MonthView";
@@ -120,6 +121,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   const [calendarsOpen, setCalendarsOpen] = useState(false);
   const [sharing, setSharing] = useState<CalendarSummary | null>(null);
   const [picker, setPicker] = useState<EventResponse | null>(null);
+  const [reminderPicker, setReminderPicker] = useState<{ eventId: string; allDay: boolean; existing: number[] } | null>(null);
   const [showTasks, setShowTasks] = useState(() => readShowTasks(userId));
   const [busy, setBusy] = useState(false);
   const phone = useMediaQuery(PHONE_QUERY);
@@ -183,7 +185,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
 
   // ---- dialogs ---------------------------------------------------------------------------------
 
-  const dialogOpen = sheet !== null || repeatOpen || confirm !== null || calendarsOpen || sharing !== null || picker !== null;
+  const dialogOpen = sheet !== null || repeatOpen || confirm !== null || calendarsOpen || sharing !== null || picker !== null || reminderPicker !== null;
   const sheetDirty = sheet !== null && !sameForm(sheet.initial, sheet.form);
 
   function closeSheet() {
@@ -202,6 +204,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       closeSheet();
       setSharing(null);
       setPicker(null);
+      setReminderPicker(null);
       setCalendarsOpen(false);
       return;
     }
@@ -209,6 +212,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     else if (repeatOpen) setRepeatOpen(false);
     else if (sheet) requestCloseSheet();
     else if (picker) setPicker(null);
+    else if (reminderPicker) setReminderPicker(null);
     else if (sharing) setSharing(null);
     else setCalendarsOpen(false);
   });
@@ -323,6 +327,23 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     });
   }
 
+  async function addReminder(eventId: string, offset: number) {
+    await addEventReminder(eventId, offset, zone);
+    setReminderPicker(null);
+    setReloadKey((value) => value + 1);
+    flash("Reminder added. Only you will see it.");
+  }
+
+  async function dropReminder(reminder: ReminderSummary, allDay: boolean) {
+    try {
+      await removeReminder(reminder.id);
+      flash(`Removed the reminder ${reminderLabel(reminder.offsetMinutes ?? 0, allDay).toLowerCase()}`);
+    } catch (reason) {
+      flash(errorMessage(reason, "Could not remove the reminder"));
+    }
+    setReloadKey((value) => value + 1);
+  }
+
   async function linkNote(data: EventResponse, noteId: string) {
     await addEventLink(data.event.id, "note", noteId);
     setPicker(null);
@@ -395,6 +416,9 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onUndo={(data) => { void undo(data); }}
       onSkip={(data, date) => { void skip(data, date); }}
       onDelete={(data) => setConfirm({ kind: "deleteEvent", data })}
+      renderReminders={(data) => <EventReminders eventId={data.event.id} allDay={data.event.all_day} reloadKey={reloadKey}
+        onAdd={(existing) => setReminderPicker({ eventId: data.event.id, allDay: data.event.all_day, existing })}
+        onRemove={(reminder) => { void dropReminder(reminder, data.event.all_day); }} />}
       renderLinks={(data) => <EventLinks data={data} canEdit={data.role !== "viewer"} onOpenNote={onOpenNote} onAddNote={() => setPicker(data)} onRemove={(link) => { void removeLink(data, link); }} />}
     />;
   } else if (route.view === "month") {
@@ -470,6 +494,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       showTasks={showTasks}
       onToggleTasks={toggleTasks}
     />}
+    {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} onPick={(offset) => addReminder(reminderPicker.eventId, offset)} onClose={() => setReminderPicker(null)} />}
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {sharing && <CalendarSharePanel calendar={sharing} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Sharing updated"); void loadCalendars(); }} />}
     {confirm?.kind === "discard" && <ConfirmDialog title="Discard changes?" message="Your changes to this event will be lost." confirmLabel="Discard" danger onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
