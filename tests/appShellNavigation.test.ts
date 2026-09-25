@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createAppHistoryState, readAppHistorySection, resolveAppHistorySection } from "../src/appShellNavigation";
+import { createAppHistoryState, readAppHistorySection, readHistoryDepth, resolveAppHistorySection, withHistoryDepth } from "../src/appShellNavigation";
 import { createHistoryState } from "../src/mobileNavigation";
 
 test("app shell history preserves existing panel state and round trips a section", () => {
@@ -34,4 +34,13 @@ test("a Notes entry pushed on top of a Home entry resolves back to Notes", () =>
   const notes = createAppHistoryState("user-1", "notes", createHistoryState("user-1", { panel: "folders", folder: "all", noteId: null }, home));
   expect(resolveAppHistorySection(notes, "user-1")).toBe("notes");
   expect(resolveAppHistorySection(home, "user-1")).toBe("home");
+});
+
+test("history depth defaults to zero for legacy entries and round trips", () => {
+  expect(readHistoryDepth(null)).toBe(0);
+  expect(readHistoryDepth(createAppHistoryState("user-1", "home", null))).toBe(0);
+  expect(readHistoryDepth({ "mynotes.depth": -3 })).toBe(0);
+  const state = withHistoryDepth(createAppHistoryState("user-1", "notes", null), 2);
+  expect(readHistoryDepth(state)).toBe(2);
+  expect(readAppHistorySection(state, "user-1")).toBe("notes");
 });

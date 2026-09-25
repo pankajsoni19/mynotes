@@ -31,3 +31,17 @@ export function readAppHistorySection(state: unknown, userId: string): AppSectio
 export function resolveAppHistorySection(state: unknown, userId: string): AppSection | null {
   return readAppHistorySection(state, userId) ?? (readHistorySnapshot(state, userId) ? "notes" : null);
 }
+
+const depthKey = "mynotes.depth";
+
+// How many entries this app pushed below the current one. Entries without the key (legacy, or the
+// first entry of a visit) count as 0, so in-app Back never leaves the SPA from them.
+export function readHistoryDepth(state: unknown): number {
+  if (!state || typeof state !== "object") return 0;
+  const depth = (state as Record<string, unknown>)[depthKey];
+  return typeof depth === "number" && Number.isInteger(depth) && depth > 0 ? depth : 0;
+}
+
+export function withHistoryDepth<T extends object>(state: T, depth: number): T & { [depthKey]: number } {
+  return { ...state, [depthKey]: Math.max(0, Math.floor(depth)) };
+}

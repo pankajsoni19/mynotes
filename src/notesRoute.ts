@@ -1,0 +1,48 @@
+import type { FolderSelection, MobileNavigationSnapshot, MobilePanel } from "./mobileNavigation";
+import type { Route } from "./router";
+
+export type NotesRoute = Extract<Route, { app: "notes" }>;
+export type NotesSelection = { folder: FolderSelection; noteId: string | null };
+export type NotesRouteResolution = NotesSelection & { missing: "note" | "folder" | null };
+
+type FolderRow = { id: string };
+type NoteRow = { id: string; folder_id: string | null; is_owner: number };
+
+export function notesRoute(folder: FolderSelection, noteId: string | null): NotesRoute {
+  return { app: "notes", folder, noteId };
+}
+
+export function noteInFolder(note: NoteRow, folder: FolderSelection) {
+  return folder === "all" || (folder === "shared" ? note.is_owner === 0 : note.folder_id === folder);
+}
+
+function knownFolder(folder: FolderSelection, folders: FolderRow[]) {
+  return folder === "all" || folder === "shared" || folders.some((item) => item.id === folder);
+}
+
+// Maps a Notes URL onto loaded data. A note URL keeps the folder from its own history entry when
+// that entry still matches, then the note's folder, then the last selected folder, then "all".
+export function resolveNotesRoute(route: NotesRoute, data: { folders: FolderRow[]; notes: NoteRow[] }, context: { snapshot: MobileNavigationSnapshot | null; lastFolder: FolderSelection }): NotesRouteResolution {
+  if (route.noteId) {
+    const note = data.notes.find((item) => item.id === route.noteId);
+    if (!note) return { folder: "all", noteId: null, missing: "note" };
+    const candidates: FolderSelection[] = [];
+    if (context.snapshot?.noteId === note.id) candidates.push(context.snapshot.folder);
+    if (note.folder_id) candidates.push(note.folder_id);
+    candidates.push(context.lastFolder);
+    const folder = candidates.find((candidate) => knownFolder(candidate, data.folders) && noteInFolder(note, candidate)) ?? "all";
+    return { folder, noteId: note.id, missing: null };
+  }
+  if (!knownFolder(route.folder, data.folders)) return { folder: "all", noteId: null, missing: "folder" };
+  return { folder: route.folder, noteId: null, missing: null };
+}
+
+// The phone panel for a Notes entry: the entry's own hint when it describes the same selection,
+// otherwise the editor for an open note, the folders panel for bare /notes, and the list elsewhere.
+export function resolveNotesPanel(selection: NotesSelection, snapshot: MobileNavigationSnapshot | null): MobilePanel {
+  if (snapshot && snapshot.folder === selection.folder && snapshot.noteId === selection.noteId) {
+    return snapshot.panel === "editor" && !selection.noteId ? "notes" : snapshot.panel;
+  }
+  if (selection.noteId) return "editor";
+  return selection.folder === "all" ? "folders" : "notes";
+}
