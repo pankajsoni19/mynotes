@@ -53,7 +53,9 @@ Operator request (2026-09-25): every module, page, note, file, and view gets its
 - [x] Operator feedback (2026-09-25): the MyNotes wordmark was the only way back from Notes and the Home header read "MyNotes". Added a labelled Home row to the Notes folder nav (desktop + mobile), a wordmark tooltip, per-app header labels (MyNotes eyebrow over Home/Notes/Files/Bin), and route-aware browser tab titles (`ce58a40`, cherry-picked as `9c76d32` onto the v0.2.4 line so the unreviewed Wave 3 backend stayed out of the deploy)
 - [x] Released from branch `release/0.2.5` (`1f86d83`), merged back into main (`f9aa328`); container healthy, `/api/about` reports `0.2.5` / `1f86d83053cb48ca8494b5e89792ee40a131d582`
 
-### Wave 3 — Secure documents backend (released with Wave 4 as v0.3.0)
+### Wave 3 — Secure documents backend (released v0.3.0 ahead of Wave 4, deployed at `4e98d8f`)
+
+- [x] **Released v0.3.0 (2026-09-25):** bump `4e98d8f`, pushed to `origin/main`; forced full-data backup taken first (`scripts/backup.sh --force`); deployed with Docker Compose on Bun 1.4.2; container healthy, `/api/about` reports `0.3.0` / `4e98d8f8ee509024360906f4b775fb67481865c8`, `schema_migrations` = 1–6, `documents`/`document_shares` tables present, `/data/documents/{objects,.staging}` at 0700, `/files` serves the SPA, `/api/files` unauthenticated → 401. Scope: Files backend, minimal Files app, editor images/tables/PDF. Files delete UI still waits for the Bin (D19); `DELETE /api/files/:id` only soft-deletes, so nothing is lost before Wave 4.
 
 Operator direction (2026-09-25): build backend and frontend together so each stage is visible. Wave 3 therefore also ships a **minimal Files slice** in the Files app (upload with progress, list, preview/download, routed through `/files` and `/files/folder/:id`). Rename, move, share, and delete UI wait for Wave 5 so nothing can be deleted before the Bin exists (D19).
 
@@ -76,7 +78,7 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] "Download as PDF" in the editor toolbar and mobile actions menu via `@media print` rules and `window.print()` (`66c65c8`); the tab title carries the note title during printing and is restored after
 - [x] Merged in `a98f427` (+ `b0ad1c3` duplicate-export fix). Director QA on the isolated instance: pasted PNG uploaded and embedded, saved in the draft Markdown; `/table` from the menu and from Enter, toolbar actions present, pipe table saved; PDF action calls print and restores the title.
 - [x] Independent review (fresh session): one high (unescaped `|` in table cells corrupted rows on reload) and three mediums (multi-paragraph cells reloaded as literal `<br>`, Retry offered for final 409/413/415 upload errors, note-level shares cannot see folder-private images). Fixes for the first three are being applied before release. Accepted and documented: images embedded in a note inherit the **folder's** sharing, so a note shared more widely than its folder shows broken images to those readers (no data leaks); a fix belongs to a later note-attachments design. Low items (data: image sources rendering, print title fallback, silent upload cancel on browser Back, cancel/finish race, unknown preview_kind icon, image inserted at the cursor on completion) are fixed where cheap or accepted.
-- [ ] Release with v0.3.0
+- [x] Released in v0.3.0 (see Wave 3 release line)
 
 ### Wave 4 — Shared 30-day Bin (v0.3.0)
 
