@@ -40,7 +40,8 @@ describe("search index sync", () => {
     await saveDraft(owner, id, "# Quokka plans\n\nSee [the zoo](https://zoo.example/path).");
     const draftRows = rows(id);
     expect(draftRows).toHaveLength(1);
-    expect(draftRows[0]).toMatchObject({ kind: "draft", title: "Quokka plans", body: "Quokka plans\nSee the zoo ." });
+    expect(draftRows[0]).toMatchObject({ kind: "draft", title: "Quokka plans", body: "See the zoo ." });
+    // The title line is kept out of the body so snippets do not repeat it.
     expect(draftRows[0]!.source_checksum).toBe((db.query("SELECT draft_checksum FROM notes WHERE id = ?").get(id) as { draft_checksum: string }).draft_checksum);
 
     await saveDraft(owner, id, "   ");

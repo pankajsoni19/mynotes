@@ -49,6 +49,10 @@ import { finalizeOpenNote } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
+import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
+import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
+import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
+import { useNoteSearch } from "./search/useNoteSearch";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
@@ -580,8 +584,10 @@ function filesSnapshotFor(userId: string, route: Extract<Route, { app: "files" }
   return { ...selection, panel: filesPanel ?? resolveFilesPanel(selection, readFilesHistorySnapshot(window.history.state, userId)) };
 }
 
-function historyStateFor(userId: string, route: Route, panel: MobilePanel, filesPanel?: FilesPanel) {
-  const appState = route.app === "notes" ? createHistoryState(userId, { panel, folder: route.folder, noteId: route.noteId }, null)
+// Notes entries also carry the search hint (src/search/searchHistory.ts), so Back and Forward
+// return to the results a note was opened from, with the query kept.
+function historyStateFor(userId: string, route: Route, panel: MobilePanel, filesPanel?: FilesPanel, search: SearchHint | null = null) {
+  const appState = route.app === "notes" ? withSearchHint(userId, search, createHistoryState(userId, { panel, folder: route.folder, noteId: route.noteId }, null))
     : route.app === "files" ? createFilesHistoryState(userId, filesSnapshotFor(userId, route, filesPanel), null) : null;
   return createAppHistoryState(userId, route.app, appState);
 }
@@ -589,7 +595,7 @@ function historyStateFor(userId: string, route: Route, panel: MobilePanel, files
 // The URL carries the app, folder, and item; the state payload adds the phone panel hint (and the
 // folder a note was opened from). A change that keeps the URL is a pure panel step: phones get a Back
 // entry for it, desktops just update the current entry.
-function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push", filesPanel?: FilesPanel) {
+function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push", filesPanel?: FilesPanel, search: SearchHint | null = null) {
   const url = formatRoute(route);
   const current: unknown = window.history.state;
   const samePath = url === window.location.pathname;
@@ -597,10 +603,11 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
   const currentFilesSnapshot = readFilesHistorySnapshot(current, userId);
   const sameEntry = samePath && resolveAppHistorySection(current, userId) === route.app
     && (route.app !== "notes" || (currentSnapshot !== null && sameSnapshot(currentSnapshot, { panel, folder: route.folder, noteId: route.noteId })))
-    && (route.app !== "files" || (currentFilesSnapshot !== null && sameFilesSnapshot(currentFilesSnapshot, filesSnapshotFor(userId, route, filesPanel))));
+    && (route.app !== "files" || (currentFilesSnapshot !== null && sameFilesSnapshot(currentFilesSnapshot, filesSnapshotFor(userId, route, filesPanel))))
+    && (route.app !== "notes" || sameSearchHint(readSearchHint(current, userId), search));
   if (sameEntry && mode === "push") return;
   const depth = readHistoryDepth(current);
-  const state = historyStateFor(userId, route, panel, filesPanel);
+  const state = historyStateFor(userId, route, panel, filesPanel, search);
   if (mode === "push" && !(samePath && !isMobileViewport())) window.history.pushState(withHistoryDepth(state, depth + 1), "", url);
   else window.history.replaceState(withHistoryDepth(state, depth), "", url);
 }
@@ -618,6 +625,13 @@ export function App() {
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [query, setQuery] = useState("");
+  // "Search all notes" widens a search beyond the current section.
+  const [searchAll, setSearchAll] = useState(false);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // The search hint new Notes history entries carry. Updated during render, and directly when
+  // history or a folder switch changes the search before the next render.
+  const searchHintRef = useRef<SearchHint | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("folders");
   const [panel, setPanel] = useState<"history" | "share" | null>(null);
@@ -698,6 +712,11 @@ export function App() {
         routeAppliedUserRef.current = userId;
         startupFailedUserRef.current = null;
         const snapshot = readHistorySnapshot(window.history.state, userId);
+        // A reload keeps the search that this entry was showing.
+        const searchHint = route.app === "notes" ? readSearchHint(window.history.state, userId) : null;
+        searchHintRef.current = searchHint;
+        setQuery(searchHint?.query ?? "");
+        setSearchAll(searchHint?.all ?? false);
         let selection: { folder: FolderSelection; noteId: string | null };
         let panel: MobilePanel = "folders";
         if (route.app === "notes" && (route.noteId || route.folder !== "all")) {
@@ -721,7 +740,7 @@ export function App() {
         setMobilePanel(panel);
         setActiveApp(route.app);
         const target: Route = route.app === "notes" ? notesRoute(selection.folder, selection.noteId) : route;
-        writeHistory(userId, target, panel, "replace");
+        writeHistory(userId, target, panel, "replace", undefined, route.app === "notes" ? searchHint : null);
       }).catch((reason) => {
         if (applyRoute && sessionUserRef.current === userId && routeAppliedUserRef.current !== userId) startupFailedUserRef.current = userId;
         flash(reason instanceof Error ? reason.message : "Could not open your notes");
@@ -823,6 +842,13 @@ export function App() {
     return noteSort.endsWith("desc") ? -delta : delta;
   }), [noteSort, notes, query, selectedFolder]);
 
+  const searchFolder: FolderSelection = searchAll ? "all" : selectedFolder;
+  const search = useNoteSearch(query, searchFolder, notes);
+  const showingSearchResults = search.active && search.status === "ready";
+  searchHintRef.current = search.active ? { query, all: searchAll } : null;
+  const activeSearchHit = showingSearchResults ? search.results[activeSearchIndex] ?? null : null;
+  useEffect(() => setActiveSearchIndex(-1), [query, searchFolder]);
+
   // Also locked while the previous note is still shown but a different note is loading.
   const editorLocked = leavingNotes || switchingNote || (note !== null && note.id !== selectedNoteId);
   const hasPublishableDelta = Boolean(note?.isOwner && (note.hasDelta || markdown !== loadedRef.current));
@@ -834,7 +860,7 @@ export function App() {
 
   function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
     if (!session) return;
-    writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel);
+    writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel, route.app === "notes" ? searchHintRef.current : null);
     // While the first load is in flight, the newest URL is the one to apply once it lands.
     if (pendingRouteRef.current) pendingRouteRef.current = route;
     if (startupRouteState(session.user.id, routeAppliedUserRef.current, startupFailedUserRef.current) === "retry") retryStartup(route);
@@ -969,10 +995,12 @@ export function App() {
     return true;
   }
 
-  async function selectNote(nextId: string) {
+  // `folder` is the section to open the note in: a search hit from outside the current section opens under All notes.
+  async function selectNote(nextId: string, folder: FolderSelection = selectedFolder) {
     if (nextId === selectedNoteId) {
+      setSelectedFolder(folder);
       setMobilePanel("editor");
-      navigate(notesRoute(selectedFolder, nextId), { panel: "editor" });
+      navigate(notesRoute(folder, nextId), { panel: "editor" });
       return;
     }
     if (switchingRef.current) return;
@@ -980,9 +1008,10 @@ export function App() {
     setSwitchingNote(true);
     try {
       const finalized = await finalizeCurrentNote();
+      setSelectedFolder(folder);
       setSelectedNoteId(nextId);
       setMobilePanel("editor");
-      navigate(notesRoute(selectedFolder, nextId), { panel: "editor", replace: finalized === "removed-empty" });
+      navigate(notesRoute(folder, nextId), { panel: "editor", replace: finalized === "removed-empty" });
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : "Could not switch notes");
     } finally {
@@ -1003,6 +1032,9 @@ export function App() {
     setSwitchingNote(true);
     try {
       const finalized = await finalizeCurrentNote();
+      // A search in progress continues in the new section.
+      setSearchAll(false);
+      if (searchHintRef.current) searchHintRef.current = { ...searchHintRef.current, all: false };
       setSelectedFolder(nextFolder);
       setSelectedNoteId(null);
       setNote(null);
@@ -1173,6 +1205,89 @@ export function App() {
     navigate(currentNotesRoute(), { replace: true });
   }
 
+  // Records the search on the current Notes entry. On phones the first search from an entry pushes
+  // one entry of its own (same URL), so Back from the results returns to the list without them;
+  // later changes update that entry in place. Desktops only update the current entry.
+  function syncSearchHistory() {
+    if (!session || activeApp !== "notes" || selectionOwner !== session.user.id) return;
+    const userId = session.user.id;
+    const state: unknown = window.history.state;
+    if (resolveAppHistorySection(state, userId) !== "notes") return;
+    const current = readSearchHint(state, userId);
+    const next = nextSearchHint(search.active, query, searchAll, current);
+    if (sameSearchHint(current, next)) return;
+    if (current === null && next && isMobileViewport()) {
+      window.history.pushState(withHistoryDepth(withSearchHint(userId, next, state), readHistoryDepth(state) + 1), "", window.location.pathname);
+    } else {
+      window.history.replaceState(withSearchHint(userId, next, state), "", window.location.pathname);
+    }
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(syncSearchHistory, 250);
+    return () => window.clearTimeout(timer);
+  });
+
+  function openSearchHit(hit: NoteSearchHit) {
+    syncSearchHistory();
+    const folder = noteInFolder(hit, selectedFolder) ? selectedFolder : "all";
+    void selectNote(hit.id, folder);
+  }
+
+  function clearSearch() {
+    setQuery("");
+    setSearchAll(false);
+  }
+
+  function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      if (!query) return;
+      event.preventDefault();
+      clearSearch();
+      return;
+    }
+    if (!showingSearchResults || !search.results.length) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const last = search.results.length - 1;
+      setActiveSearchIndex((index) => event.key === "ArrowDown" ? (index >= last ? 0 : index + 1) : (index <= 0 ? last : index - 1));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      openSearchHit(activeSearchHit ?? search.results[0]!);
+    }
+  }
+
+  useEffect(() => {
+    if (activeSearchIndex < 0 || !activeSearchHit) return;
+    document.getElementById(searchOptionId(activeSearchHit.id))?.scrollIntoView({ block: "nearest" });
+  }, [activeSearchHit, activeSearchIndex]);
+
+  // Ctrl/⌘+K anywhere in Notes, or "/" outside a text field, focuses search.
+  useEffect(() => {
+    if (!session || activeApp !== "notes" || settingsOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const typing = Boolean(target && (target.isContentEditable || target.closest("input, textarea, select, [contenteditable='true']")));
+      const commandK = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
+      const slash = event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !typing;
+      if (!commandK && !slash) return;
+      event.preventDefault();
+      const focusSearch = () => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      };
+      // On phones the list panel must be visible before its input can take focus.
+      if (isMobileViewport() && mobilePanel !== "notes") {
+        showMobilePanel("notes");
+        window.requestAnimationFrame(focusSearch);
+      } else {
+        focusSearch();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   function mobileBack(fallback: MobilePanel) {
     // Only step back through entries this visit pushed, so the in-app Back never leaves MyNotes.
     if (session && isMobileViewport() && readHistoryDepth(window.history.state) > 0 && readHistorySnapshot(window.history.state, session.user.id)) {
@@ -1209,6 +1324,11 @@ export function App() {
         if (formatRoute(route) !== window.location.pathname) navigate(route, { replace: true });
         return;
       }
+      // Each Notes entry records the search it showed; entries from before a search clear it.
+      const searchHint = readSearchHint(event.state, session.user.id);
+      searchHintRef.current = searchHint;
+      setQuery(searchHint?.query ?? "");
+      setSearchAll(searchHint?.all ?? false);
       void restoreNotesRoute(route, readHistorySnapshot(event.state, session.user.id));
     };
     window.addEventListener("popstate", onPopState);
@@ -1238,6 +1358,9 @@ export function App() {
     setFolders([]);
     setNotes([]);
     setSelectionOwner(null);
+    setQuery("");
+    setSearchAll(false);
+    searchHintRef.current = null;
     revisionRef.current = null;
     loadedRef.current = "";
     newlyCreatedNoteIdRef.current = null;
@@ -1344,10 +1467,48 @@ export function App() {
             </div>
             <button className="icon-button new-note-button" onClick={createNote} aria-label="New note"><FilePlus2 /></button>
           </div>
-          <label className="search-box"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search notes" aria-label="Search notes" /></label>
+          <div className="search-box">
+            <Search aria-hidden="true" />
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={query}
+              maxLength={SEARCH_MAX_CHARS}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder="Search notes"
+              aria-label="Search notes"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={showingSearchResults}
+              aria-controls={searchListId}
+              aria-activedescendant={activeSearchHit ? searchOptionId(activeSearchHit.id) : undefined}
+              enterKeyHint="search"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            {query ? <button type="button" className="search-clear" onClick={() => { clearSearch(); searchInputRef.current?.focus(); }} aria-label="Clear search"><X /></button> : <kbd aria-hidden="true">/</kbd>}
+          </div>
+          {search.active && selectedFolder !== "all" && <div className="search-scope">
+            {!searchAll && <span>Searching {selectedFolder === "shared" ? "Shared with me" : folders.find((folder) => folder.id === selectedFolder)?.name ?? "this folder"}</span>}
+            <button type="button" className="search-scope-chip" aria-pressed={searchAll} onClick={() => setSearchAll((all) => !all)}>{searchAll ? <Check aria-hidden="true" /> : <Archive aria-hidden="true" />}Search all notes</button>
+          </div>}
+          <p className="sr-only" aria-live="polite" aria-atomic="true">{showingSearchResults ? (search.results.length ? `${search.results.length}${search.truncated ? " or more" : ""} ${search.results.length === 1 && !search.truncated ? "result" : "results"}` : "No results") : ""}</p>
         </header>
         <div className="note-list">
-          {visibleNotes.map((item) => <article
+          {search.status === "error" && <p className="search-error" role="alert">{search.error}</p>}
+          {showingSearchResults && <SearchResults
+            results={search.results}
+            truncated={search.truncated}
+            activeIndex={activeSearchIndex}
+            selectedNoteId={selectedNoteId}
+            folders={folders}
+            relativeTime={relativeTime}
+            onOpen={openSearchHit}
+            onHover={setActiveSearchIndex}
+          />}
+          {showingSearchResults && !search.results.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>{searchAll || selectedFolder === "all" ? "Try other words, or fewer of them." : "Try other words, or search all notes."}</p></div>}
+          {!showingSearchResults && visibleNotes.map((item) => <article
             key={item.id}
             className={`note-card${selectedNoteId === item.id ? " selected" : ""}${draggingNoteId === item.id ? " dragging" : ""}`}
             draggable={item.is_owner === 1}
@@ -1367,7 +1528,7 @@ export function App() {
             </button>
             {item.is_owner === 1 && <button className="note-delete-button" disabled={editorLocked} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
           </article>)}
-          {!visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? "Try another search." : selectedFolder === "shared" ? "Notes shared with you will appear here." : "Create a note and start writing."}</p>{!query && selectedFolder !== "shared" && <button onClick={createNote}>New note</button>}</div>}
+          {!showingSearchResults && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : "Create a note and start writing."}</p>{!query && selectedFolder !== "shared" && <button onClick={createNote}>New note</button>}</div>}
         </div>
       </section>
 

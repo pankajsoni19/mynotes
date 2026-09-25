@@ -59,7 +59,8 @@ describe("GET /api/search matching", () => {
     expect(hit).toMatchObject({ id, source: "published", is_owner: 1, owner_name: "Search matcher", visibility: "private" });
     expect(text(hit!.title)).toBe("Crème brûlée");
     expect(hits(hit!.title)).toEqual(["Crème"]);
-    expect(hits(hit!.snippet)).toEqual(expect.arrayContaining(["Crème", "custard"]));
+    expect(hits(hit!.snippet)).toEqual(["custard"]);
+    expect(text(hit!.snippet)).not.toContain("brûlée");
     expect(text(hit!.snippet)).not.toContain("<b>");
     expect(Object.keys(hit!)).not.toContain("score");
   });

@@ -29,10 +29,14 @@ export function unindexNote(noteId: string, kind: SearchKind) {
  */
 export function indexNote(noteId: string, kind: SearchKind, title: string, markdown: string, sourceChecksum: string) {
   deleteRow.run(noteId, kind);
-  const body = searchText(markdown);
-  if (body === "") return false;
+  const text = searchText(markdown);
+  if (text === "") return false;
+  const indexedTitle = cleanIndexText(title);
+  // The title is usually the first line; keep it out of the body so snippets do not repeat it.
+  const [firstLine, ...rest] = text.split("\n");
+  const body = firstLine === indexedTitle ? rest.join("\n") : text;
   const rowid = Number(insertRow.run(noteId, kind, sourceChecksum, now()).lastInsertRowid);
-  insertFts.run(rowid, cleanIndexText(title), body);
+  insertFts.run(rowid, indexedTitle, body);
   return true;
 }
 
