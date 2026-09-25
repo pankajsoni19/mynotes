@@ -2,6 +2,16 @@ import { expect, test } from "bun:test";
 import { sanitizeDisplayName } from "../server/validation";
 import {
   baseNameRange,
+  compareDocuments,
+  DEFAULT_FILE_SORT,
+  fileCountLabel,
+  fileSortOptions,
+  fileSortStorageKey,
+  filterDocuments,
+  readFileSort,
+  sortDocuments,
+  validateFolderName,
+  writeFileSort,
   deleteConfirmMessage,
   emptyToastState,
   fileToastReducer,
@@ -11,12 +21,12 @@ import {
   toastDuration,
   validateRename
 } from "../src/files/fileActions";
-import type { Folder } from "../src/types";
+import type { DocumentSummary, Folder } from "../src/types";
 
 test("the client rename sanitizer matches the server for every rule", () => {
   const inputs = [
-    "report.pdf", "  spaced   out  .txt ", "a/b\\c:d.txt", "‮evil‬.txt", "zero​width", "tab\tand\nnewline",
-    ".", "..", "...", "   ", "", "\u0000\u0007", ".hidden", "trailing.", "éclair.md", "x".repeat(255), "x".repeat(256),
+    "report.pdf", "  spaced   out  .txt ", "a/b\\c:d.txt", "\u202Eevil\u202C.txt", "zero\u200Bwidth", "tab\tand\nnewline",
+    ".", "..", "...", "   ", "", "\u0000\u0007", ".hidden", "trailing.", "e\u0301clair.md", "x".repeat(255), "x".repeat(256),
     "é".repeat(127) + "a", "é".repeat(128), "\uD800lonely", "日本語のファイル.txt", "emoji 😀.png"
   ];
   for (const input of inputs) expect(sanitizeRenameInput(input)).toBe(sanitizeDisplayName(input, "rename"));
@@ -68,4 +78,66 @@ test("the toast reducer keeps one toast and only dismisses the one a timer start
   expect(fileToastReducer(state, { type: "dismiss", id: first.id })).toBe(state);
   expect(fileToastReducer(state, { type: "dismiss", id: 2 }).toast).toBeNull();
   expect(fileToastReducer(fileToastReducer(state, { type: "clear" }), { type: "clear" }).toast).toBeNull();
+});
+
+const doc = (id: string, name: string, updated_at: string, size_bytes: number, extra: Partial<DocumentSummary> = {}): DocumentSummary => ({
+  id, owner_id: "u1", owner_name: "Ada", is_owner: 1, folder_id: null, name, mime_type: "text/plain", preview_kind: "text",
+  size_bytes, visibility: "private", sharing_override: 0, created_at: updated_at, updated_at, ...extra
+});
+const docs = [
+  doc("d1", "file10.txt", "2026-09-03T00:00:00.000Z", 300),
+  doc("d2", "File2.txt", "2026-09-01T00:00:00.000Z", 5000),
+  doc("d3", "alpha.pdf", "2026-09-02T00:00:00.000Z", 300),
+  doc("d4", "Zeta notes.md", "2026-09-04T00:00:00.000Z", 12, { owner_name: "Grace", is_owner: 0 })
+];
+const names = (items: DocumentSummary[]) => items.map((item) => item.name);
+
+test("the sort comparator covers every option with a stable tie-break", () => {
+  expect(names(sortDocuments(docs, "name-asc"))).toEqual(["alpha.pdf", "File2.txt", "file10.txt", "Zeta notes.md"]);
+  expect(names(sortDocuments(docs, "name-desc"))).toEqual(["Zeta notes.md", "file10.txt", "File2.txt", "alpha.pdf"]);
+  expect(names(sortDocuments(docs, "updated-desc"))).toEqual(["Zeta notes.md", "file10.txt", "alpha.pdf", "File2.txt"]);
+  expect(names(sortDocuments(docs, "updated-asc"))).toEqual(["File2.txt", "alpha.pdf", "file10.txt", "Zeta notes.md"]);
+  expect(names(sortDocuments(docs, "size-desc"))).toEqual(["File2.txt", "alpha.pdf", "file10.txt", "Zeta notes.md"]);
+  expect(names(sortDocuments(docs, "size-asc"))).toEqual(["Zeta notes.md", "alpha.pdf", "file10.txt", "File2.txt"]);
+  // Same size: name decides, then id.
+  const twins = [doc("b", "same.txt", "2026-09-01T00:00:00.000Z", 1), doc("a", "same.txt", "2026-09-01T00:00:00.000Z", 1)];
+  expect(sortDocuments(twins, "size-desc").map((item) => item.id)).toEqual(["a", "b"]);
+  expect(compareDocuments("name-asc")(docs[0], docs[0])).toBe(0);
+  expect(sortDocuments(docs, "name-asc")).not.toBe(docs);
+  expect(fileSortOptions.map((option) => option.label)).toEqual(["Name A–Z", "Name Z–A", "Newest modified", "Oldest modified", "Largest", "Smallest"]);
+});
+
+test("the filter matches every word in the name or owner, ignoring case and spacing", () => {
+  expect(names(filterDocuments(docs, "  "))).toEqual(names(docs));
+  expect(names(filterDocuments(docs, "FILE"))).toEqual(["file10.txt", "File2.txt"]);
+  expect(names(filterDocuments(docs, "txt  2"))).toEqual(["File2.txt"]);
+  expect(names(filterDocuments(docs, "grace"))).toEqual(["Zeta notes.md"]);
+  expect(filterDocuments(docs, "nothing")).toEqual([]);
+  expect(fileCountLabel(4, 4)).toBe("4 files");
+  expect(fileCountLabel(1, 1)).toBe("1 file");
+  expect(fileCountLabel(1, 4)).toBe("1 of 4 files");
+});
+
+test("the sort choice is remembered per user and survives broken storage", () => {
+  const store = new Map<string, string>();
+  const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } };
+  expect(readFileSort(storage, "u1")).toBe(DEFAULT_FILE_SORT);
+  writeFileSort(storage, "u1", "size-asc");
+  expect(store.get(fileSortStorageKey("u1"))).toBe("size-asc");
+  expect(readFileSort(storage, "u1")).toBe("size-asc");
+  expect(readFileSort(storage, "u2")).toBe(DEFAULT_FILE_SORT);
+  store.set(fileSortStorageKey("u1"), "bogus");
+  expect(readFileSort(storage, "u1")).toBe(DEFAULT_FILE_SORT);
+  const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+  expect(readFileSort(broken, "u1")).toBe(DEFAULT_FILE_SORT);
+  expect(() => writeFileSort(broken, "u1", "name-asc")).not.toThrow();
+  expect(readFileSort(null, "u1")).toBe(DEFAULT_FILE_SORT);
+});
+
+test("folder names follow the server rules", () => {
+  expect(validateFolderName("  Projects ")).toEqual({ ok: true, name: "Projects", changed: true });
+  expect(validateFolderName("   ").ok).toBe(false);
+  expect(validateFolderName("default").ok).toBe(false);
+  expect(validateFolderName("x".repeat(120)).ok).toBe(true);
+  expect(validateFolderName("x".repeat(121)).ok).toBe(false);
 });

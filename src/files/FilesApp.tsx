@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ChevronDown, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Settings, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
@@ -10,12 +10,27 @@ import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
 import { ConfirmDialog } from "./Dialog";
-import { canManage, deleteConfirmMessage, emptyToastState, fileToastReducer, movedMessage, toastDuration } from "./fileActions";
+import {
+  canManage,
+  deleteConfirmMessage,
+  emptyToastState,
+  fileCountLabel,
+  fileSortOptions,
+  fileToastReducer,
+  filterDocuments,
+  movedMessage,
+  readFileSort,
+  sortDocuments,
+  toastDuration,
+  validateFolderName,
+  writeFileSort,
+  type FileSort
+} from "./fileActions";
 import { deleteFile, formatBytes, getFile, listFiles, moveFile, renameFile, uploadFile, UploadRequestError } from "./filesApi";
 import { FilePreview } from "./FilePreview";
 import { FileSharePanel } from "./FileSharePanel";
 import { MoveSheet } from "./MoveSheet";
-import { RenameDialog } from "./RenameDialog";
+import { NameDialog, RenameDialog } from "./RenameDialog";
 import { kindIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
@@ -54,7 +69,12 @@ const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payl
   : undefined;
 const errorMessage = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
 
-type FilesDialog = { kind: "rename" | "move" | "share" | "delete"; documentId: string };
+type FilesDialog = { kind: "rename" | "move" | "share" | "delete"; documentId: string } | { kind: "newFolder" };
+
+// localStorage can be missing (server render) or throw (blocked storage).
+function browserStorage(): Storage | null {
+  try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; }
+}
 
 const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", uploading: "Uploading", done: "Uploaded", failed: "Failed", canceled: "Canceled" };
 
@@ -80,9 +100,24 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const [dialog, setDialog] = useState<FilesDialog | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [toastState, toastDispatch] = useReducer(fileToastReducer, emptyToastState);
-  // The row that opened the current dialog, so focus can go back to it.
-  const returnFocusRef = useRef<string | null>(null);
+  // The row (document id) or control that opened the current dialog, so focus can go back to it.
+  const returnFocusRef = useRef<string | HTMLElement | null>(null);
+  const [sort, setSort] = useState<FileSort>(() => readFileSort(browserStorage(), userId));
+  const [sortOpen, setSortOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const notify = useCallback((message: string, undoDocumentId: string | null = null) => toastDispatch({ type: "show", message, undoDocumentId }), []);
+
+  useEffect(() => {
+    if (!sortOpen) return;
+    const closeSort = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+      if (event instanceof MouseEvent && event.target instanceof Element && event.target.closest(".file-sort-control")) return;
+      setSortOpen(false);
+    };
+    window.addEventListener("click", closeSort);
+    window.addEventListener("keydown", closeSort);
+    return () => { window.removeEventListener("click", closeSort); window.removeEventListener("keydown", closeSort); };
+  }, [sortOpen]);
 
   const toast = toastState.toast;
   useEffect(() => {
@@ -154,14 +189,15 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const currentFolder = folders.find((item) => item.id === folder) ?? null;
   const uploadFolderId = folder === "all" ? defaultFolder?.id ?? null : currentFolder?.is_owner === 1 ? currentFolder.id : undefined;
   const canUpload = uploadFolderId !== undefined && data !== null;
-  const visible = documents.filter((item) => documentInFolder(item, folder));
+  const inFolder = useMemo(() => documents.filter((item) => documentInFolder(item, folder)), [documents, folder]);
+  const visible = useMemo(() => sortDocuments(filterDocuments(inFolder, query), sort), [inFolder, query, sort]);
   const selected = documents.find((item) => item.id === documentId) ?? (extraDocument?.id === documentId ? extraDocument : null);
   const folderTitle = folder === "all" ? "All files" : folder === "shared" ? "Shared with me" : currentFolder?.name ?? "Folder";
   const pendingUploads = queue.items.filter((item) => item.status === "queued" || item.status === "uploading").length;
   const summary = uploadQueueSummary(queue);
 
   const findDocument = (id: string) => documents.find((item) => item.id === id) ?? (extraDocument?.id === id ? extraDocument : null);
-  const dialogDocument = dialog ? findDocument(dialog.documentId) : null;
+  const dialogDocument = dialog && dialog.kind !== "newFolder" ? findDocument(dialog.documentId) : null;
 
   const setDocuments = (change: (documents: DocumentSummary[]) => DocumentSummary[]) =>
     setData((current) => current ? { ...current, documents: change(current.documents) } : current);
@@ -170,11 +206,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     setExtraDocument((current) => current?.id === document.id ? document : current);
   };
 
-  function focusRow(id: string | null) {
-    if (!id) return;
+  function focusRow(target: string | HTMLElement | null) {
+    if (!target) return;
     window.requestAnimationFrame(() => {
-      const row = window.document.querySelector<HTMLElement>(`[data-document-id="${CSS.escape(id)}"]`);
-      row?.focus();
+      const element = typeof target === "string" ? window.document.querySelector<HTMLElement>(`[data-document-id="${CSS.escape(target)}"]`) : target;
+      if (element?.isConnected) element.focus();
     });
   }
 
@@ -188,6 +224,27 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     setDialog(null);
     focusRow(returnFocusRef.current);
   }, []);
+
+  function chooseSort(next: FileSort) {
+    setSort(next);
+    setSortOpen(false);
+    writeFileSort(browserStorage(), userId, next);
+  }
+
+  function openNewFolder(trigger: HTMLElement) {
+    returnFocusRef.current = trigger;
+    setDialog({ kind: "newFolder" });
+  }
+
+  async function createFolder(name: string) {
+    const { folder: created } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
+    const { folders: reloaded } = await api<{ folders: Folder[] }>("/folders");
+    setData((current) => current ? { ...current, folders: reloaded } : current);
+    setDialog(null);
+    returnFocusRef.current = null;
+    selectFolder(created.id);
+    notify(`Created folder ${created.name}`);
+  }
 
   // Optimistic: the list shows the new name at once and goes back to the old one if the server refuses.
   function renameDocument(document: DocumentSummary, name: string) {
@@ -393,7 +450,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <button className="nav-home" onClick={() => leaveFiles(onHome)} title="Back to Home"><House /><span>Home</span></button>
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
         <button className={folder === "shared" ? "active" : ""} aria-current={folder === "shared" ? "page" : undefined} onClick={() => selectFolder("shared")}><Users /><span>Shared with me</span><b>{documents.filter((item) => item.is_owner === 0).length}</b></button>
-        <div className="nav-label"><span>Folders</span></div>
+        <div className="nav-label"><span>Folders</span><button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button></div>
         {owned.map((item) => <button key={item.id} className={`folder-link${folder === item.id ? " active" : ""}`} aria-current={folder === item.id ? "page" : undefined} onClick={() => selectFolder(item.id)}>
           <FolderIcon /><span className="folder-copy">{item.name}</span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
         </button>)}
@@ -417,10 +474,17 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <div className="mobile-header"><button className="icon-button" onClick={() => back("folders")} aria-label="Back to folders"><ChevronLeft /></button><strong>{folderTitle}</strong></div>
         <div className="note-heading"><span className="eyebrow">{folder === "shared" || currentFolder?.is_owner === 0 ? "Shared" : "Library"}</span><h1 title={folderTitle}>{folderTitle}</h1></div>
         <div className="file-header-row">
-          <span className="file-count">{visible.length === 1 ? "1 file" : `${visible.length} files`}</span>
+          <span className="file-count" aria-live="polite">{fileCountLabel(visible.length, inFolder.length)}</span>
+          <div className="sort-control file-sort-control">
+            <button className="icon-button" onClick={() => setSortOpen((open) => !open)} aria-label={`Sort files: ${fileSortOptions.find((option) => option.value === sort)?.label}`} aria-haspopup="menu" aria-expanded={sortOpen} title="Sort"><ArrowUpDown /></button>
+            {sortOpen && <div className="sort-menu" role="menu" aria-label="Sort files">
+              {fileSortOptions.map((option) => <button key={option.value} className={sort === option.value ? "active" : ""} onClick={() => chooseSort(option.value)} role="menuitemradio" aria-checked={sort === option.value}><span>{option.label}</span>{sort === option.value && <Check />}</button>)}
+            </div>}
+          </div>
           {canUpload && <button className="primary-button files-upload-button" onClick={() => fileInputRef.current?.click()} title={`Upload to ${uploadDestination}`}><Upload />Upload</button>}
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { chooseFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
+        <label className="search-box file-search"><Search aria-hidden="true" /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && query) { event.preventDefault(); setQuery(""); } }} placeholder="Filter files" aria-label="Filter files by name" /></label>
       </header>
       <div className="note-list file-list" role="list" aria-label={folderTitle} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
@@ -436,7 +500,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
             </button>
           </div>;
         })}
-        {data && !visible.length && <div className="empty-state"><div><Files /></div><h2>No files here</h2><p>{folder === "shared" ? "Files other people share with you will appear here." : canUpload ? `Upload a file to add it to ${uploadDestination}.` : "Nothing has been shared in this folder yet."}</p>{canUpload && <button onClick={() => fileInputRef.current?.click()}>Upload files</button>}</div>}
+        {data && inFolder.length > 0 && !visible.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>No file names here match “{query.trim()}”.</p><button onClick={() => setQuery("")}>Clear filter</button></div>}
+        {data && !inFolder.length && <div className="empty-state"><div><Files /></div><h2>No files here</h2><p>{folder === "shared" ? "Files other people share with you will appear here." : canUpload ? `Upload a file to add it to ${uploadDestination}.` : "Nothing has been shared in this folder yet."}</p>{canUpload && <button onClick={() => fileInputRef.current?.click()}>Upload files</button>}</div>}
         {!data && <p className="file-preview-note">Loading files…</p>}
       </div>
       <p className="sr-only" aria-live="polite">{summary}</p>
@@ -477,6 +542,16 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         : <div className="editor-empty"><div className="empty-glyph"><Files /></div><h2>Select a file</h2><p>Choose one from the list to preview it and see its details.</p></div>}
     </section>
 
+    {dialog?.kind === "newFolder" && <NameDialog
+      title="New folder"
+      eyebrow="Files"
+      label="Folder name"
+      initialValue=""
+      submitLabel="Create folder"
+      validate={validateFolderName}
+      onSubmit={createFolder}
+      onCancel={closeDialog}
+    />}
     {dialog?.kind === "rename" && dialogDocument && <RenameDialog document={dialogDocument} onSubmit={(name) => renameDocument(dialogDocument, name)} onCancel={closeDialog} />}
     {dialog?.kind === "move" && dialogDocument && <MoveSheet document={dialogDocument} folders={folders} onMove={async (target) => { await moveDocument(dialogDocument, target); closeDialog(); }} onCancel={closeDialog} />}
     {dialog?.kind === "share" && dialogDocument && <FileSharePanel document={dialogDocument} onClose={closeDialog} onChanged={() => {

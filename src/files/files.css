@@ -5,7 +5,10 @@
 .file-pane { position: relative; }
 .file-pane .note-heading h1 { margin-right: 0; margin-bottom: 8px; }
 .file-header-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; }
-.file-count { color: #77777e; font-size: .78rem; }
+.file-count { margin-right: auto; color: #77777e; font-size: .78rem; }
+.file-sort-control .sort-menu { top: 40px; right: 0; }
+.file-search { margin-top: 10px; }
+.file-search input::-webkit-search-cancel-button { filter: grayscale(1); }
 .files-upload-button { min-height: 38px; margin: 0; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; font-size: .82rem; }
 .files-upload-button svg { width: 16px; height: 16px; }
 

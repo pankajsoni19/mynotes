@@ -6,7 +6,7 @@ export const MAX_DISPLAY_NAME_BYTES = 255;
 
 // Same character classes as server/validation.ts: C0/C1 controls, DEL, bidi embeddings, overrides,
 // isolates and marks, and zero-width characters.
-const strippedCharacters = /[\u0000-\u001F\u007F-\u009F؜​-‏‪-‮⁦-⁩﻿]/g;
+const strippedCharacters = /[\u0000-\u001F\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 const encoder = new TextEncoder();
 export const utf8Length = (value: string) => encoder.encode(value).length;
 const cleanEdges = (value: string) => value.replace(/^[\s.]+|[\s.]+$/g, "");
@@ -95,3 +95,86 @@ export function fileToastReducer(state: FileToastState, action: FileToastAction)
 
 /** How long a toast stays: long enough to reach Undo. */
 export const toastDuration = (toast: FileToast) => toast.undoDocumentId ? 8000 : 3200;
+
+export type FileSort = "name-asc" | "name-desc" | "updated-desc" | "updated-asc" | "size-desc" | "size-asc";
+
+export const fileSortOptions: Array<{ value: FileSort; label: string }> = [
+  { value: "name-asc", label: "Name A–Z" },
+  { value: "name-desc", label: "Name Z–A" },
+  { value: "updated-desc", label: "Newest modified" },
+  { value: "updated-asc", label: "Oldest modified" },
+  { value: "size-desc", label: "Largest" },
+  { value: "size-asc", label: "Smallest" }
+];
+
+export const DEFAULT_FILE_SORT: FileSort = "updated-desc";
+
+export function isFileSort(value: unknown): value is FileSort {
+  return fileSortOptions.some((option) => option.value === value);
+}
+
+/** localStorage key for the remembered sort, one per signed-in user. */
+export const fileSortStorageKey = (userId: string) => `mynotes:files-sort:${userId}`;
+
+export function readFileSort(storage: Pick<Storage, "getItem"> | null, userId: string): FileSort {
+  try {
+    const value = storage?.getItem(fileSortStorageKey(userId));
+    return isFileSort(value) ? value : DEFAULT_FILE_SORT;
+  } catch {
+    return DEFAULT_FILE_SORT;
+  }
+}
+
+export function writeFileSort(storage: Pick<Storage, "setItem"> | null, userId: string, sort: FileSort) {
+  try { storage?.setItem(fileSortStorageKey(userId), sort); } catch { /* private mode or full storage: keep it for this visit only */ }
+}
+
+const compareNames = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: "base", numeric: true });
+
+type Sortable = Pick<DocumentSummary, "id" | "name" | "updated_at" | "size_bytes">;
+
+/** Comparator for the file list. Ties fall back to the name, then the id, so the order is stable. */
+export function compareDocuments(sort: FileSort) {
+  return (left: Sortable, right: Sortable) => {
+    let delta = 0;
+    if (sort === "name-asc") delta = compareNames(left.name, right.name);
+    else if (sort === "name-desc") delta = compareNames(right.name, left.name);
+    else if (sort === "updated-desc") delta = right.updated_at.localeCompare(left.updated_at);
+    else if (sort === "updated-asc") delta = left.updated_at.localeCompare(right.updated_at);
+    else if (sort === "size-desc") delta = right.size_bytes - left.size_bytes;
+    else if (sort === "size-asc") delta = left.size_bytes - right.size_bytes;
+    return delta || compareNames(left.name, right.name) || left.id.localeCompare(right.id);
+  };
+}
+
+export function sortDocuments<T extends Sortable>(documents: T[], sort: FileSort): T[] {
+  return [...documents].sort(compareDocuments(sort));
+}
+
+const normalizeQuery = (value: string) => value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
+
+/** Client-side filter: every word of the query must appear in the name (or the owner's name). */
+export function filterDocuments<T extends Pick<DocumentSummary, "name" | "owner_name">>(documents: T[], query: string): T[] {
+  const words = normalizeQuery(query).split(" ").filter(Boolean);
+  if (!words.length) return documents;
+  return documents.filter((document) => {
+    const haystack = normalizeQuery(`${document.name} ${document.owner_name}`);
+    return words.every((word) => haystack.includes(word));
+  });
+}
+
+export function fileCountLabel(shown: number, total: number) {
+  const noun = (count: number) => count === 1 ? "1 file" : `${count} files`;
+  return shown === total ? noun(total) : `${shown} of ${noun(total)}`;
+}
+
+export type FolderNameCheck = { ok: true; name: string; changed: boolean } | { ok: false; error: string };
+
+/** Mirrors the server's folder rules: 1 to 120 characters after trimming, and not "Default". */
+export function validateFolderName(input: string): FolderNameCheck {
+  const name = input.trim();
+  if (!name) return { ok: false, error: "Enter a folder name." };
+  if (name.length > 120) return { ok: false, error: "Use at most 120 characters." };
+  if (name.toLowerCase() === "default") return { ok: false, error: "The Default folder already exists." };
+  return { ok: true, name, changed: true };
+}
