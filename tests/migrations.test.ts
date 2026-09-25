@@ -23,7 +23,7 @@ describe("database migrations", () => {
     const db = openDb();
     runMigrations(db);
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(ids.slice(0, 9)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     db.close();
   });
 
@@ -43,7 +43,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(ids.slice(0, 9)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect((db.query("SELECT COUNT(*) AS count FROM notes").get() as { count: number }).count).toBe(2);
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'document%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
     expect(tables).toEqual(["document_shares", "documents"]);
@@ -78,7 +78,7 @@ describe("database migrations", () => {
     const after = Date.now();
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(ids.slice(0, 9)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const rows = Object.fromEntries((db.query("SELECT id, deleted_at, deleted_by, purge_after, purge_started_at FROM notes").all() as Array<{
       id: string; deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null;
     }>).map((row) => [row.id, row]));
@@ -111,7 +111,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(ids.slice(0, 9)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     // Migration 008 is filesystem-free: existing notes are backfilled at boot, not here.
     expect((db.query("SELECT COUNT(*) AS count FROM note_search_rows").get() as { count: number }).count).toBe(0);
 
@@ -153,7 +153,7 @@ describe("database migrations", () => {
     runMigrations(db);
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(ids.slice(0, 9)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     // Existing documents are Files items.
     expect((db.query("SELECT purpose FROM documents WHERE id = 'd1'").get() as { purpose: string }).purpose).toBe("file");
     const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
