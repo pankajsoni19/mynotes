@@ -19,7 +19,7 @@ export const MCP_LIMITS: Record<McpLimitBucket, Limit> = {
   call: { limit: 120, windowMs: MINUTE },
   write: { limit: 30, windowMs: MINUTE },
   create_note: { limit: 200, windowMs: DAY },
-  // Reserved for the task tools (tasks:write), which land after Task Boards.
+  // create_card, move_card, and comment_on_card (tasks:write).
   task_write: { limit: 500, windowMs: DAY }
 };
 
@@ -27,7 +27,8 @@ export const MCP_LIMITS: Record<McpLimitBucket, Limit> = {
 export const MCP_USER_LIMITS: Partial<Record<McpLimitBucket, Limit>> = {
   call: { limit: 1000, windowMs: MINUTE },
   write: { limit: 60, windowMs: MINUTE },
-  create_note: { limit: 400, windowMs: DAY }
+  create_note: { limit: 400, windowMs: DAY },
+  task_write: { limit: 1000, windowMs: DAY }
 };
 
 type Window = { count: number; resetAt: number };

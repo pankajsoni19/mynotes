@@ -1,0 +1,225 @@
+import { beforeEach, describe, expect, test } from "bun:test";
+import { createUser, db, origin, request, type Session } from "./support/harness";
+
+const { createMcpApiKey } = await import("../server/mcp");
+const { invokeMcpToolForTests } = await import("../server/mcpTools");
+const { taskErrorToMcp } = await import("../server/tasks/mcpTools");
+const { TaskError } = await import("../server/tasks/service");
+const { consumeMcpLimits, MCP_LIMITS, resetMcpLimits } = await import("../server/mcpRateLimit");
+type McpScope = import("../server/mcpScopes").McpScope;
+
+beforeEach(() => resetMcpLimits());
+
+type Key = { id: string; token: string; userId: string };
+
+function makeKey(session: Session, scopes: McpScope[]): Key {
+  const key = createMcpApiKey(session.userId, "Task agent", scopes);
+  return { id: key.id, token: key.token, userId: session.userId };
+}
+
+let rpcId = 0;
+async function rpc(key: Key, method: string, params: unknown = {}) {
+  const response = await fetch(`${origin}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.token}`, Accept: "application/json, text/event-stream", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params })
+  });
+  expect(response.status).toBe(200);
+  const text = await response.text();
+  const json = text.trimStart().startsWith("{") ? text : text.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("");
+  return JSON.parse(json) as { result?: { tools?: Array<{ name: string }>; isError?: boolean; content?: Array<{ text: string }> }; error?: { message: string } };
+}
+
+const toolNames = async (key: Key) => ((await rpc(key, "tools/list")).result!.tools!).map((tool) => tool.name).sort();
+
+type Outcome = { isError: boolean; value: Record<string, any> };
+async function callTool(key: Key, name: string, args: Record<string, unknown> = {}): Promise<Outcome> {
+  const body = await rpc(key, "tools/call", { name, arguments: args });
+  if (body.error) return { isError: true, value: { error: body.error.message } };
+  const text = body.result!.content![0]!.text;
+  let value: Record<string, any>;
+  try { value = JSON.parse(text); } catch { value = { error: text }; }
+  return { isError: body.result!.isError === true, value };
+}
+
+async function api(session: Session, method: string, path: string, body?: unknown) {
+  const response = await request(`/tasks${path}`, method === "GET" ? {} : { method, body: JSON.stringify(body ?? {}) }, session);
+  const text = await response.text();
+  return { status: response.status, body: (text ? JSON.parse(text) : null) as Record<string, any> };
+}
+
+async function setup(label: string) {
+  const owner = await createUser(`${label} owner`);
+  const member = await createUser(`${label} member`);
+  const stranger = await createUser(`${label} stranger`);
+  const created = await api(owner, "POST", "/boards", { name: `${label} board` });
+  const boardId = created.body.board.id as string;
+  const [todo, doing] = created.body.columns as Array<{ id: string }>;
+  expect((await api(owner, "PUT", `/boards/${boardId}/sharing`, { visibility: "selected", userIds: [member.userId] })).status).toBe(200);
+  const card = (await api(owner, "POST", `/boards/${boardId}/cards`, { columnId: todo!.id, title: "Owner card", description: "Read **the** [spec](https://example.test/spec)" })).body.card as { id: string };
+  // A private board the member is not on.
+  const privateBoard = await api(owner, "POST", "/boards", { name: `${label} private` });
+  const privateCard = (await api(owner, "POST", `/boards/${privateBoard.body.board.id}/cards`, { columnId: privateBoard.body.columns[0].id, title: "Secret" })).body.card as { id: string };
+  return {
+    owner, member, stranger, boardId, todo: todo!.id, doing: doing!.id, cardId: card.id,
+    privateBoardId: privateBoard.body.board.id as string, privateColumnId: privateBoard.body.columns[0].id as string, privateCardId: privateCard.id
+  };
+}
+
+const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
+  .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
+
+const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards"];
+const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "move_card"];
+
+describe("MCP task tools", () => {
+  test("task tools appear only for task scopes, write implies read, and there is nothing that deletes", async () => {
+    const user = await createUser("Task scopes");
+    expect(await toolNames(makeKey(user, ["tasks:read"]))).toEqual(TASK_READ_TOOLS);
+    const writer = await toolNames(makeKey(user, ["tasks:write"]));
+    expect(writer).toEqual([...TASK_READ_TOOLS, ...TASK_WRITE_TOOLS].sort());
+    expect(writer.some((name) => /delete|remove|purge|share|column|rename/.test(name))).toBe(false);
+    const notesOnly = makeKey(user, ["notes:read", "notes:write-draft", "files:read"]);
+    const notesTools = await toolNames(notesOnly);
+    for (const name of [...TASK_READ_TOOLS, ...TASK_WRITE_TOOLS]) expect(notesTools).not.toContain(name);
+    expect((await callTool(notesOnly, "list_boards")).isError).toBe(true);
+
+    const reader = makeKey(user, ["tasks:read"]);
+    const direct = await invokeMcpToolForTests("create_card", { boardId: crypto.randomUUID(), columnId: crypto.randomUUID(), title: "x" }, reader.id);
+    expect(JSON.parse(direct.content[0]!.text)).toMatchObject({ code: "SCOPE_REQUIRED" });
+    const directRead = await invokeMcpToolForTests("list_boards", {}, notesOnly.id);
+    expect(JSON.parse(directRead.content[0]!.text)).toMatchObject({ code: "SCOPE_REQUIRED" });
+  });
+
+  test("role matrix: strangers and non-members get NOT_FOUND like a missing id; members create, move, and comment", async () => {
+    const s = await setup("MCP roles");
+    const strangerKey = makeKey(s.stranger, ["tasks:write"]);
+    const memberKey = makeKey(s.member, ["tasks:write"]);
+    const missing = crypto.randomUUID();
+
+    // The stranger sees nothing, and every answer looks like a missing id.
+    // (all_users boards from other tests are readable by everyone, so check ids, not emptiness.)
+    const strangerBoards = ((await callTool(strangerKey, "list_boards")).value.boards as Array<{ id: string }>).map((board) => board.id);
+    expect(strangerBoards).not.toContain(s.boardId);
+    expect(strangerBoards).not.toContain(s.privateBoardId);
+    const strangerCalls: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+      ["list_cards", { boardId: s.boardId }, { boardId: missing }],
+      ["get_card", { cardId: s.cardId }, { cardId: missing }],
+      ["create_card", { boardId: s.boardId, columnId: s.todo, title: "Intruder" }, { boardId: missing, columnId: s.todo, title: "Intruder" }],
+      ["move_card", { cardId: s.cardId, columnId: s.doing }, { cardId: missing, columnId: s.doing }],
+      ["comment_on_card", { cardId: s.cardId, body: "hi" }, { cardId: missing, body: "hi" }]
+    ];
+    for (const [name, real, fake] of strangerCalls) {
+      const hidden = await callTool(strangerKey, name, real);
+      expect(hidden.value).toMatchObject({ code: "NOT_FOUND" });
+      expect(hidden.value).toEqual((await callTool(strangerKey, name, fake)).value);
+    }
+
+    // A member of one board cannot see the owner's private board.
+    const boards = (await callTool(memberKey, "list_boards")).value.boards as Array<{ id: string }>;
+    expect(boards.map((board) => board.id)).toContain(s.boardId);
+    expect(boards.map((board) => board.id)).not.toContain(s.privateBoardId);
+    expect((await callTool(memberKey, "list_cards", { boardId: s.privateBoardId })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(memberKey, "get_card", { cardId: s.privateCardId })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(memberKey, "create_card", { boardId: s.privateBoardId, columnId: s.privateColumnId, title: "x" })).value).toMatchObject({ code: "NOT_FOUND" });
+    // IDOR: the private board's column cannot be used through the shared board.
+    expect((await callTool(memberKey, "create_card", { boardId: s.boardId, columnId: s.privateColumnId, title: "x" })).value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(memberKey, "move_card", { cardId: s.cardId, columnId: s.privateColumnId })).value).toMatchObject({ code: "NOT_FOUND" });
+
+    // The member works with cards.
+    const created = await callTool(memberKey, "create_card", { boardId: s.boardId, columnId: s.todo, title: "Agent card", description: "From the agent", afterCardId: null });
+    expect(created.isError).toBe(false);
+    const agentCardId = created.value.card.id as string;
+    const moved = await callTool(memberKey, "move_card", { cardId: agentCardId, columnId: s.doing });
+    expect(moved.value.card).toMatchObject({ id: agentCardId, column_id: s.doing });
+    const commented = await callTool(memberKey, "comment_on_card", { cardId: s.cardId, body: "Looks good" });
+    expect(commented.isError).toBe(false);
+
+    const board = await api(s.owner, "GET", `/boards/${s.boardId}`);
+    const cards = board.body.cards as Array<{ id: string; column_id: string; created_by: string }>;
+    expect(cards.find((card) => card.id === agentCardId)).toMatchObject({ column_id: s.doing, created_by: s.member.userId });
+    const card = await api(s.owner, "GET", `/cards/${s.cardId}`);
+    expect(card.body.comments).toEqual([expect.objectContaining({ body: "Looks good", author_id: s.member.userId })]);
+
+    // Every write is audited through the usual task events, marked as MCP.
+    expect(auditRows(s.member.userId, "task.card_create")).toEqual([{ boardId: s.boardId, cardId: agentCardId, via: "mcp", keyId: memberKey.id }]);
+    expect(auditRows(s.member.userId, "task.card_move")).toEqual([{ boardId: s.boardId, cardId: agentCardId, columnId: s.doing, via: "mcp", keyId: memberKey.id }]);
+    expect(auditRows(s.member.userId, "task.comment_create")).toEqual([expect.objectContaining({ boardId: s.boardId, cardId: s.cardId, via: "mcp", keyId: memberKey.id })]);
+    // HTTP writes are not marked.
+    expect(auditRows(s.owner.userId, "task.card_create")[0]).not.toHaveProperty("via");
+
+    // Nothing was deleted or binned.
+    expect((db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NOT NULL").get(s.boardId) as { count: number }).count).toBe(0);
+
+    // Removing the member takes effect at once.
+    expect((await api(s.owner, "PUT", `/boards/${s.boardId}/sharing`, { visibility: "private", userIds: [] })).status).toBe(200);
+    expect((await callTool(memberKey, "get_card", { cardId: s.cardId })).value).toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  test("reads return plain-text descriptions, attachment names only, and column filters", async () => {
+    const s = await setup("MCP reads");
+    const form = new FormData();
+    form.append("file", new Blob(["notes"]), "plan.txt");
+    const uploaded = await request("/files?purpose=task_attachment", { method: "POST", body: form }, s.owner);
+    expect(uploaded.status).toBe(201);
+    const documentId = ((await uploaded.json()) as { document: { id: string } }).document.id;
+    expect((await api(s.owner, "POST", `/cards/${s.cardId}/attachments`, { documentId })).status).toBe(201);
+    await api(s.owner, "POST", `/boards/${s.boardId}/cards`, { columnId: s.doing, title: "Doing card" });
+
+    const key = makeKey(s.member, ["tasks:read"]);
+    const listed = await callTool(key, "list_cards", { boardId: s.boardId });
+    expect(listed.value.columns.map((column: { name: string }) => column.name)).toEqual(["To do", "Doing", "Done"]);
+    const ownerCard = listed.value.cards.find((card: { id: string }) => card.id === s.cardId);
+    expect(ownerCard).toMatchObject({ title: "Owner card", column_name: "To do", description_preview: "Read the spec", attachments: ["plan.txt"] });
+    const filtered = await callTool(key, "list_cards", { boardId: s.boardId, columnId: s.doing });
+    expect(filtered.value.cards.map((card: { title: string }) => card.title)).toEqual(["Doing card"]);
+    expect((await callTool(key, "list_cards", { boardId: s.boardId, columnId: s.privateColumnId })).value).toMatchObject({ code: "NOT_FOUND" });
+
+    const card = await callTool(key, "get_card", { cardId: s.cardId });
+    expect(card.value.card).toMatchObject({ title: "Owner card", description: "Read the spec", column_name: "To do", board_id: s.boardId });
+    expect(card.value.attachments).toEqual(["plan.txt"]);
+    const text = JSON.stringify(card.value);
+    for (const leaked of ["https://example.test", "**", documentId, "sha256"]) expect(text).not.toContain(leaked);
+  });
+
+  test("stale anchors map to STALE_POSITION with the current order, and route validation applies", async () => {
+    const s = await setup("MCP order");
+    const key = makeKey(s.member, ["tasks:write"]);
+    const other = (await api(s.owner, "POST", `/boards/${s.boardId}/cards`, { columnId: s.doing, title: "In doing" })).body.card as { id: string };
+    // The anchor is not in the target column.
+    const stale = await callTool(key, "move_card", { cardId: s.cardId, columnId: s.doing, afterCardId: s.cardId });
+    expect(stale.value).toMatchObject({ code: "STALE_POSITION", columnId: s.doing, order: [other.id] });
+    const staleCreate = await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "x", afterCardId: other.id });
+    expect(staleCreate.value).toMatchObject({ code: "STALE_POSITION", columnId: s.todo, order: [s.cardId] });
+    const top = await callTool(key, "move_card", { cardId: s.cardId, columnId: s.doing, afterCardId: null });
+    expect(top.isError).toBe(false);
+    expect((await api(s.owner, "GET", `/boards/${s.boardId}`)).body.cards.filter((card: { column_id: string }) => card.column_id === s.doing).map((card: { id: string }) => card.id)).toEqual([s.cardId, other.id]);
+
+    // The HTTP route's rules: control characters in a title, blank comments.
+    expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "bad‮title" })).value).toMatchObject({ code: "INVALID" });
+    expect((await callTool(key, "comment_on_card", { cardId: s.cardId, body: "   " })).value).toMatchObject({ code: "INVALID" });
+
+    expect(taskErrorToMcp(new TaskError(409, "changed", "CARD_CHANGED", { card: { id: "k" } }))).toMatchObject({ code: "CARD_CHANGED", details: { card: { id: "k" } } });
+    expect(taskErrorToMcp(new TaskError(403, "owner", "OWNER_ONLY")).code).toBe("OWNER_ONLY");
+    expect(taskErrorToMcp(new TaskError(409, "cap", "LIMIT_REACHED")).code).toBe("LIMIT_REACHED");
+    expect(taskErrorToMcp(new TaskError(400, "bad")).code).toBe("INVALID");
+    expect(taskErrorToMcp(new TaskError(404, "gone")).code).toBe("NOT_FOUND");
+  });
+
+  test("task writes count against the daily task_write bucket; reads do not", async () => {
+    const s = await setup("MCP daily");
+    const key = makeKey(s.member, ["tasks:write"]);
+    expect((await callTool(key, "comment_on_card", { cardId: s.cardId, body: "one" })).isError).toBe(false);
+    // Use up the rest of today's task writes for this key.
+    for (let index = 1; index < MCP_LIMITS.task_write.limit; index += 1) {
+      expect(consumeMcpLimits({ keyId: key.id }, ["task_write"])).toBe(0);
+    }
+    const limited = await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "Too many" });
+    expect(limited.value).toMatchObject({ code: "RATE_LIMITED" });
+    expect(limited.value.retryAfterSeconds).toBeGreaterThan(3600);
+    expect((await callTool(key, "move_card", { cardId: s.cardId, columnId: s.doing })).value).toMatchObject({ code: "RATE_LIMITED" });
+    expect((await callTool(key, "get_card", { cardId: s.cardId })).isError).toBe(false);
+    // A refused write changed nothing.
+    expect((await api(s.owner, "GET", `/boards/${s.boardId}`)).body.cards.map((card: { title: string }) => card.title)).toEqual(["Owner card"]);
+  });
+});

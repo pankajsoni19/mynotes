@@ -7,11 +7,13 @@ import { audit, db, type DocumentRow, type NoteRow } from "./db";
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
 import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
-import { hasAnyScope, parseStoredScopes, type McpScope } from "./mcpScopes";
+import { hasAnyScope, parseStoredScopes } from "./mcpScopes";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
 import { checksum, storage, withNoteLock } from "./storage";
+import { defineTool, errorResult, McpToolError, notFound, textResult, type McpKeyContext, type McpToolSpec, type ToolResult } from "./mcpToolKit";
+import { taskTools } from "./tasks/mcpTools";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -24,53 +26,8 @@ import { checksum, storage, withNoteLock } from "./storage";
  * binned look the same.
  */
 
-export type McpKeyContext = { keyId: string; userId: string; name: string; scopes: McpScope[] };
-
-export type McpErrorCode =
-  | "NOT_FOUND"
-  | "INVALID"
-  | "SCOPE_REQUIRED"
-  | "RATE_LIMITED"
-  | "DRAFT_CHANGED"
-  | "NOT_TEXT"
-  | "TOO_LARGE"
-  | "INTERNAL";
-
-export class McpToolError extends Error {
-  constructor(readonly code: McpErrorCode, message: string, readonly details?: Record<string, unknown>) {
-    super(message);
-    this.name = "McpToolError";
-  }
-}
-
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
-
-export function textResult(value: unknown): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
-}
-
-export function errorResult(code: McpErrorCode, error: string, details?: Record<string, unknown>): ToolResult {
-  return { ...textResult({ error, code, ...details }), isError: true };
-}
-
-export const notFound = (what = "Note") => new McpToolError("NOT_FOUND", `${what} not found`);
-
-export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
-  name: string;
-  title: string;
-  description: string;
-  /** The key needs any one of these (write scopes imply their read scope). */
-  scopes: readonly McpScope[];
-  /** Writes count against the per-minute write limit. */
-  write: boolean;
-  /** An extra daily bucket this tool counts against. */
-  dailyBucket?: Extract<McpLimitBucket, "create_note" | "task_write">;
-  inputSchema: Schema;
-  handler: (args: z.infer<Schema>, key: McpKeyContext) => Promise<unknown> | unknown;
-};
-
-/** Keeps each spec's handler typed against its own schema. */
-export const defineTool = <Schema extends z.ZodObject>(spec: McpToolSpec<Schema>) => spec as unknown as McpToolSpec;
+export { defineTool, errorResult, McpToolError, notFound, textResult } from "./mcpToolKit";
+export type { McpErrorCode, McpKeyContext, McpToolSpec } from "./mcpToolKit";
 
 const liveKey = db.query(`
   SELECT k.id, k.user_id, k.name, k.scopes FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
@@ -360,16 +317,14 @@ const fileTools: McpToolSpec[] = [
 ];
 
 /**
- * Every tool group. Task tools (docs/plan/WAVES_7-9.md §4.2: list_boards,
- * list_cards, get_card under tasks:read; create_card, move_card,
- * comment_on_card under tasks:write with dailyBucket "task_write") are added
- * here once Task Boards land, as `...taskTools` from server/tasks.
+ * Every tool group. A module adds its tools as one spread here, built with
+ * defineTool from server/mcpToolKit.ts (task tools: server/tasks/mcpTools.ts).
  */
 export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...noteReadTools,
   ...noteWriteTools,
-  ...fileTools
-  // EXTENSION POINT (tasks:read | tasks:write): ...taskTools
+  ...fileTools,
+  ...taskTools
 ];
 
 /** Registers the tools this key may use on a per-request server. */

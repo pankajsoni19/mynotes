@@ -378,11 +378,11 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
 
 /**
  * Moves a card within its board (cross-board moves are out of scope).
- * `afterCardId` null puts the card at the top; otherwise it must be another
+ * `afterCardId` null puts the card at the top and omitted at the bottom; otherwise it must be another
  * live card in the target column, or the response is 409 STALE_POSITION with
  * the column's current order. Moves do not change `revision`.
  */
-export async function moveCard(userId: string, cardId: string, input: { columnId: string; afterCardId: string | null }) {
+export async function moveCard(userId: string, cardId: string, input: { columnId: string; afterCardId?: string | null }) {
   const { board } = requireReadableCard(cardId, userId);
   return withBoardLock(board.id, () => {
     requireReadableCard(cardId, userId);
