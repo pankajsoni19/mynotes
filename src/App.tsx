@@ -1416,7 +1416,7 @@ export function App() {
 
   if (activeApp !== "notes" && !session.totp.setupRequired) return <>
     {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
-      : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
+      : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
@@ -1463,6 +1463,7 @@ export function App() {
             <strong>{session.user.displayName}</strong>
             <span><Settings />Settings</span>
           </button>
+          <button className="footer-bin" onClick={() => { void openApp("bin"); }}><Trash2 />Bin</button>
           <button className="footer-signout" onClick={signOut}><LogOut />Sign out</button>
         </footer>
       </aside>
