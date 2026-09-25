@@ -666,9 +666,12 @@ export function App() {
   const [startupRetry, setStartupRetry] = useState(0);
   const newlyCreatedNoteIdRef = useRef<string | null>(null);
 
+  // One timer for the one toast: an earlier message's timer must not clear a newer message early.
+  const toastTimerRef = useRef<number | null>(null);
   const flash = useCallback((message: string) => {
     setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => { toastTimerRef.current = null; setToast(""); }, 2600);
   }, []);
 
   const loadNavigation = useCallback(async (expectedUserId = sessionUserRef.current) => {

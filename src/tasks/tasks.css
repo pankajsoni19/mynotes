@@ -40,9 +40,42 @@
 .task-column-header h2 { flex: 1; min-width: 0; margin: 0; overflow: hidden; color: #e4e4e6; font-size: .86rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-column-header b { min-width: 22px; border-radius: 999px; padding: 1px 7px; background: rgb(255 255 255 / 7%); color: #a8a8ae; font-size: .7rem; text-align: center; }
 .task-card-list { flex: 1; min-height: 12px; margin: 0; padding: 2px 8px 8px; list-style: none; display: grid; align-content: start; gap: 6px; overflow-y: auto; }
-.task-card { position: relative; display: grid; gap: 6px; border: 1px solid #2a2a2f; border-radius: 10px; padding: 10px 12px; background: #1a1a1d; color: #e8e8ea; font-size: .86rem; line-height: 1.4; outline: 0; }
+.task-column.drop-active { border-color: #6b572c; background: #16150f; }
+.task-column-controls { display: flex; gap: 0; flex: none; }
+.task-column-controls .icon-button { width: 28px; height: 28px; }
+.task-column-controls .icon-button svg { width: 15px; }
+.task-column-controls .icon-button:disabled { opacity: .3; cursor: not-allowed; }
+.task-column-controls .desktop-only { opacity: 0; transition: opacity .12s ease; }
+.task-column:hover .task-column-controls .desktop-only, .task-column:focus-within .task-column-controls .desktop-only { opacity: 1; }
+.task-card-item { display: grid; gap: 6px; }
+.task-card { position: relative; display: grid; gap: 6px; border: 1px solid #2a2a2f; border-radius: 10px; padding: 10px 40px 10px 12px; background: #1a1a1d; color: #e8e8ea; font-size: .86rem; line-height: 1.4; outline: 0; cursor: grab; user-select: none; }
+.task-card:hover { border-color: #3c3c42; }
 .task-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.task-card.dragging { opacity: .4; }
 .task-card-title { overflow-wrap: anywhere; }
+.task-card-meta { display: flex; gap: 10px; color: #85858c; font-size: .72rem; }
+.task-card-meta span { display: inline-flex; align-items: center; gap: 3px; }
+.task-card-meta svg { width: 13px; height: 13px; }
+.task-card-more { position: absolute; top: 5px; right: 4px; width: 30px; height: 30px; opacity: .55; }
+.task-card:hover .task-card-more, .task-card:focus-within .task-card-more { opacity: 1; }
+.task-card-more svg { width: 16px; }
+.task-drop-indicator { height: 3px; border-radius: 2px; background: var(--yellow); list-style: none; }
+.task-column-empty { padding: 14px 6px; color: #6f6f76; font-size: .78rem; text-align: center; }
+.task-column-footer { flex: none; padding: 0 8px 8px; }
+.task-add-card { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 0 8px; background: transparent; color: #9a9aa1; font-size: .82rem; cursor: pointer; }
+.task-add-card:hover { background: #1c1c20; color: #ededee; }
+.task-add-card svg { width: 15px; }
+.task-quick-add { display: grid; gap: 8px; }
+.task-quick-add input { min-height: 40px; border: 1px solid #333338; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #ededee; font-size: .86rem; outline: 0; }
+.task-quick-add input:focus { border-color: #6b582f; }
+.task-quick-add .file-dialog-error { margin: 0; }
+.task-quick-add-actions { display: flex; gap: 6px; }
+.task-quick-add-actions button { min-height: 36px; margin: 0; padding: 0 12px; font-size: .8rem; font-weight: 650; }
+.task-add-column { flex: 0 0 220px; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px dashed #34343a; border-radius: 14px; background: transparent; color: #9a9aa1; font-size: .84rem; cursor: pointer; }
+.task-add-column:hover { border-color: #6b572c; color: #f5cf79; }
+.task-add-column svg { width: 16px; }
+.task-menu .move-option { grid-template-columns: 20px minmax(0, 1fr); }
+.move-option.danger, .move-option.danger svg { color: #f3a3ae; }
 
 @media (max-width: 760px) {
   .tasks-content { padding: 28px 16px calc(40px + env(safe-area-inset-bottom)); }
