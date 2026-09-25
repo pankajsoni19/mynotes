@@ -198,6 +198,11 @@ Manual QA (desktop and 390×844, two users):
 
 Waves land on separate branches, so the migration assertion is tolerant: `[1..9]` and `12` are applied, ids are unique and ascending (010, 011, and 013 may be absent on this branch).
 
+`tests/collectionsSchema.test.ts` (no server):
+
+- [x] Schema: ids are generated (`f_` + 8, `o_` + 6) and client-invented ids are refused; `__proto__`/`constructor` keys at any depth are rejected; 51 fields, duplicate names (case-insensitive), a non-text primary field, unknown keys or types, 61-character names, control characters, 101 options, duplicate option labels, and 7 decimals are refused; only text ↔ url and select → multi_select type changes pass; the five templates and the default fields build.
+- [x] Values: text normalisation and the 4000-character cap; number, date (real dates only), checkbox, select, multi_select, url (`http(s)` only), note (readable at write time), and file rules; strict writes (unknown fields, required fields, 16 KiB rows); lenient reads (removed fields and options, wrong types, select → multi_select).
+
 `tests/migrations.test.ts`:
 
 - [x] Migration 012 adds `collections`, `collection_members`, `collection_rows`, `collection_views`, `collection_row_attachments`, `collection_row_search`, and `collection_row_fts`; name, JSON, share-role, and Bin CHECKs hold; `values_json` is capped at 16,384 bytes; purging a collection cascades to rows, search rows, and (through the trigger) FTS rows.
