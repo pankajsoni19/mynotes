@@ -199,6 +199,36 @@ describe("collections API", () => {
     expect((await call(owner, "GET", `/rows/${row.id}`)).body.row.links[note!.id]).toEqual({ id: mine, restricted: true });
   });
 
+  test("undo re-checks required fields and note readability for the values it restores", async () => {
+    const owner = await createUser("Undo checker");
+    const collection = await newCollection(owner, { name: "Undo rules", fields: [{ name: "Name", type: "text" }, { name: "Qty", type: "number" }, { name: "Note", type: "note" }] });
+    const [name, qty, note] = collection.fields;
+
+    // Qty was empty before the edit; after Qty becomes required, undoing to the empty value is refused.
+    const row = await addRow(owner, collection.id, { [name!.id]: "Rice" });
+    expect((await call(owner, "PATCH", `/rows/${row.id}`, { values: { [qty!.id]: 3 }, revision: 1 })).status).toBe(200);
+    const fields = collection.fields.map((field) => ({ id: field.id, name: field.name, type: field.type, ...(field.id === qty!.id ? { required: true } : {}) }));
+    expect((await call(owner, "PUT", `/${collection.id}/schema`, { schemaVersion: 1, fields })).status).toBe(200);
+    const refused = await call(owner, "POST", `/rows/${row.id}/undo`, { revision: 2 });
+    expect([refused.status, refused.body.code]).toEqual([400, "INVALID_VALUES"]);
+    expect(refused.body.fieldErrors[qty!.id]).toBe("This field is required");
+    expect((await call(owner, "GET", `/rows/${row.id}`)).body.row).toMatchObject({ values: { [qty!.id]: 3 }, revision: 2, can_undo: true });
+
+    // A note linked before the edit that the caller can no longer read is not linked again by undo.
+    const linked = insertNote(owner.userId, "Soon binned");
+    const other = await addRow(owner, collection.id, { [name!.id]: "Beans", [qty!.id]: 1, [note!.id]: linked });
+    expect((await call(owner, "PATCH", `/rows/${other.id}`, { values: { [note!.id]: null }, revision: 1 })).status).toBe(200);
+    db.query("UPDATE notes SET deleted_at = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), new Date().toISOString(), linked);
+    const unreadable = await call(owner, "POST", `/rows/${other.id}/undo`, { revision: 2 });
+    expect([unreadable.status, unreadable.body.code]).toEqual([400, "INVALID_VALUES"]);
+    expect(unreadable.body.fieldErrors[note!.id]).toBe("You can't link this note");
+    // Once the note is readable again, the same undo goes through.
+    db.query("UPDATE notes SET deleted_at = NULL, purge_after = NULL WHERE id = ?").run(linked);
+    const undone = await call(owner, "POST", `/rows/${other.id}/undo`, { revision: 2 });
+    expect(undone.status).toBe(200);
+    expect(undone.body.row.values[note!.id]).toBe(linked);
+  });
+
   test("caps: 100 collections per owner and 10,000 live rows per collection", async () => {
     const owner = await createUser("Hoarder");
     const timestamp = new Date().toISOString();

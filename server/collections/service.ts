@@ -589,6 +589,22 @@ export async function patchRow(userId: string, rowId: string, input: { values: u
 }
 
 /**
+ * An undo writes values, so it is held to the write rules the schema has now:
+ * a field made required since must not come back empty, and a note link that
+ * differs from the current value must be one the caller can read (D58).
+ */
+function undoValueErrors(schema: CollectionSchema, restored: RowValues, current: RowValues, userId: string) {
+  const context = valueContext(userId);
+  const fieldErrors: Record<string, string> = {};
+  for (const field of schema.fields) {
+    const value = restored[field.id];
+    if (field.required && value === undefined) fieldErrors[field.id] = "This field is required";
+    else if (field.type === "note" && typeof value === "string" && value !== current[field.id] && !context.canLinkNote(value)) fieldErrors[field.id] = "You can't link this note";
+  }
+  return Object.keys(fieldErrors).length ? fieldErrors : null;
+}
+
+/**
  * Restores the previous values (one step, D61). `revision` must be the current
  * one. The restored values are projected onto the current schema, so fields
  * removed since are not brought back.
@@ -601,6 +617,8 @@ export async function undoRow(userId: string, rowId: string, input: { revision: 
     if (row.revision !== input.revision) throw rowChanged(rowId, schema, userId);
     if (row.prev_values_json === null) throw new CollectionError(409, "There is nothing to undo", "NOTHING_TO_UNDO");
     const restored = readValues(schema, JSON.parse(row.prev_values_json));
+    const undoErrors = undoValueErrors(schema, restored, readValues(schema, JSON.parse(row.values_json)), userId);
+    if (undoErrors) throw invalidValues(undoErrors);
     db.transaction(() => {
       const timestamp = now();
       const updated = db.query(`UPDATE collection_rows SET values_json = ?, prev_values_json = NULL, prev_revision = NULL, revision = revision + 1,
