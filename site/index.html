@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#09090b" />
-  <meta name="description" content="MyNotes documentation: features, Docker self-hosting, configuration, security, backups, and upgrades." />
+  <meta name="description" content="MyNotes documentation: notes, files, the Bin, Docker self-hosting, configuration, security, backups, and upgrades." />
   <link rel="canonical" href="https://pankajsoni19.github.io/mynotes/" />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="MyNotes Documentation" />
@@ -31,6 +31,7 @@
       <p class="search-status" aria-live="polite"></p>
       <nav>
         <div><strong>Introduction</strong><a href="#overview">Overview</a><a href="#features">Features</a></div>
+        <div><strong>Using MyNotes</strong><a href="#urls">Home & URLs</a><a href="#editor">Notes editor</a><a href="#files">Files</a><a href="#bin">Bin</a></div>
         <div><strong>Self-hosting</strong><a href="#quickstart">Quick start</a><a href="#configuration">Environment variables</a><a href="#network">Network & HTTPS</a><a href="#updates">Updating</a></div>
         <div><strong>Operations</strong><a href="#accounts">Accounts & sharing</a><a href="#two-factor">Two-factor authentication</a><a href="#storage">Storage & migrations</a><a href="#backups">Backup & restore</a><a href="#security">Security model</a><a href="#troubleshooting">Troubleshooting</a></div>
       </nav>
@@ -38,13 +39,54 @@
     </aside>
     <main class="content">
       <section id="overview" class="hero searchable" data-search="overview private self hosted local notes markdown">
-        <div><span class="kicker">Private notes. Local first.</span><h1>Own your notes.<br /><em>Keep the history.</em></h1><p>MyNotes is a secure, multi-user Markdown workspace with fluid editing, immutable versions, private sharing, and a small Docker footprint.</p><div class="hero-actions"><a class="primary" href="#quickstart">Start self-hosting</a><a class="secondary" href="https://github.com/pankajsoni19/mynotes">View source</a></div></div>
+        <div><span class="kicker">Private notes. Local first.</span><h1>Own your notes.<br /><em>Keep the history.</em></h1><p>MyNotes is a secure, multi-user workspace for Markdown notes and files, with fluid editing, immutable versions, private sharing, a 30-day Bin, and a small Docker footprint.</p><div class="hero-actions"><a class="primary" href="#quickstart">Start self-hosting</a><a class="secondary" href="https://github.com/pankajsoni19/mynotes">View source</a></div></div>
         <figure><img src="./dashboard-dark.png" alt="MyNotes dark dashboard with folders, notes, and editor" /></figure>
       </section>
 
-      <section id="features" class="doc-section searchable" data-search="features editor versions sharing mobile folders markdown">
+      <section id="features" class="doc-section searchable" data-search="features editor versions sharing mobile folders markdown files bin images tables pdf urls">
         <span class="eyebrow">Product</span><h2>Built for notes that matter</h2><p class="lead">A focused writing experience with the controls needed for passwords, configuration, and private knowledge.</p>
-        <div class="cards"><article><i>⌘</i><h3>Outline-like editor</h3><p>Slash commands, Markdown output, formatting, checklists, links, quotes, and code blocks.</p></article><article><i>↺</i><h3>Version history</h3><p>Draft changes, publish immutable versions, inspect diffs, and restore safely.</p></article><article><i>◫</i><h3>Private sharing</h3><p>Share notes or folders with selected accounts or every signed-in user.</p></article><article><i>▣</i><h3>Responsive</h3><p>A three-pane desktop workspace with focused mobile views.</p></article><article><i>◇</i><h3>Portable storage</h3><p>Readable Markdown content with SQLite for metadata and access rules.</p></article><article><i>⌁</i><h3>Local security</h3><p>Argon2id, encrypted TOTP, CSRF protection, and hardened containers.</p></article></div>
+        <div class="cards"><article><i>⌘</i><h3>Outline-like editor</h3><p>Slash commands, Markdown output, formatting, checklists, links, quotes, and code blocks.</p></article><article><i>↺</i><h3>Version history</h3><p>Draft changes, publish immutable versions, inspect diffs, and restore safely.</p></article><article><i>◫</i><h3>Private sharing</h3><p>Share notes or folders with selected accounts or every signed-in user.</p></article><article><i>▣</i><h3>Responsive</h3><p>A three-pane desktop workspace with focused mobile views.</p></article><article><i>▤</i><h3>Files</h3><p>Upload, preview, download, rename, move, and share documents in the same folders as your notes.</p></article><article><i>♲</i><h3>30-day Bin</h3><p>Deleted notes and files wait 30 days with their history and sharing, then are removed for good.</p></article><article><i>⊞</i><h3>Images, tables, PDF</h3><p>Paste or insert images, add Markdown tables, and download any note as a PDF.</p></article><article><i>⌗</i><h3>Real URLs</h3><p>Every app, folder, note, and file has a link; Back and Forward work on desktop and phone.</p></article><article><i>◇</i><h3>Portable storage</h3><p>Readable Markdown content with SQLite for metadata and access rules.</p></article><article><i>⌁</i><h3>Local security</h3><p>Argon2id, encrypted TOTP, CSRF protection, and hardened containers.</p></article></div>
+      </section>
+
+      <section id="urls" class="doc-section searchable" data-search="home urls routes links deep link back forward history bookmarks">
+        <span class="eyebrow">Using MyNotes</span><h2>Home and URLs</h2><p class="lead">After sign-in, Home links to Notes, Files, and the Bin. Every view has its own address.</p>
+        <div class="table-wrap"><table><thead><tr><th>URL</th><th>View</th></tr></thead><tbody>
+          <tr><td><code>/</code></td><td>Home</td></tr>
+          <tr><td><code>/notes</code></td><td>Notes, all folders; resumes your last note</td></tr>
+          <tr><td><code>/notes/folder/&lt;folder-id&gt;</code></td><td>Notes in one folder</td></tr>
+          <tr><td><code>/notes/shared</code></td><td>Notes shared with you</td></tr>
+          <tr><td><code>/notes/&lt;note-id&gt;</code></td><td>One note in the editor</td></tr>
+          <tr><td><code>/files</code>, <code>/files/folder/&lt;folder-id&gt;</code>, <code>/files/shared</code></td><td>Files, by folder or shared with you</td></tr>
+          <tr><td><code>/files/&lt;file-id&gt;</code></td><td>One file's preview and details</td></tr>
+          <tr><td><code>/bin</code></td><td>Bin</td></tr>
+        </tbody></table></div>
+        <p>Unknown paths open Home. A link to something missing, binned, or not shared with you falls back to the list with a message. A signed-out visit shows the login screen, then continues to the link. On phones, Back steps from the editor or preview to the list, the folders, and Home without leaving the site; with a dialog or sheet open, Back only closes it.</p>
+      </section>
+
+      <section id="editor" class="doc-section searchable" data-search="editor slash commands image paste drop table pdf print download">
+        <span class="eyebrow">Using MyNotes</span><h2>Notes editor</h2><p class="lead">Type <code>/</code> for headings, lists, checklists, quotes, code blocks, images, and tables.</p>
+        <div class="cards compact"><article><h3>Images</h3><p><code>/image</code>, paste, or drop uploads a PNG, JPEG, GIF, or WebP into the note's folder in Files and embeds it. Removing it from the note keeps the file.</p></article><article><h3>Tables</h3><p><code>/table</code> inserts a 3×3 table with a header row. A floating toolbar edits rows and columns; tables save as Markdown pipe tables.</p></article><article><h3>Download as PDF</h3><p>From the editor toolbar or the phone actions menu. The browser's print dialog opens with a print layout; choose Save as PDF.</p></article></div>
+        <aside class="callout warning"><strong>Images follow the folder's sharing.</strong> A note shared more widely than its folder shows those readers a broken image. Nothing leaks; share the folder or the image too.</aside>
+      </section>
+
+      <section id="files" class="doc-section searchable" data-search="files upload download preview rename move share delete undo drag drop quota mime pdf image text audio video exif metadata">
+        <span class="eyebrow">Using MyNotes</span><h2>Files</h2><p class="lead">Documents live in the same folders as notes. Any type is stored; only safe types are shown in the app.</p>
+        <div class="table-wrap"><table><thead><tr><th>Detected type</th><th>Preview</th></tr></thead><tbody>
+          <tr><td>PNG, JPEG, GIF, WebP</td><td>Shown inline</td></tr>
+          <tr><td>PDF</td><td>Opens in a new tab</td></tr>
+          <tr><td>UTF-8 text (<code>.txt</code>, <code>.md</code>, <code>.csv</code>, <code>.tsv</code>, <code>.log</code>, <code>.json</code>)</td><td>First 1 MiB as plain text</td></tr>
+          <tr><td>MP3, Ogg, WAV, M4A, MP4, WebM</td><td>Audio or video player</td></tr>
+          <tr><td>Everything else, including SVG, HTML, Office files, archives</td><td>Download only</td></tr>
+        </tbody></table></div>
+        <p>The server detects the type from the file's first bytes, never from its name or the browser. Upload with the button, by dropping files on the list, or from the phone upload sheet; uploads run two at a time with progress, cancel, and retry. Each row's ⋯ menu (an action sheet on phones) offers Download, Rename, Move, Share, and Delete. Drag a file onto a folder to move it. Delete moves it to the Bin with an Undo toast. Keyboard: ↑/↓ select, Enter previews, F2 renames, Delete removes.</p>
+        <p>Sharing works like notes: a file inherits its folder unless it has its own setting, and recipients can only preview and download.</p>
+        <aside class="callout"><strong>Metadata is not stripped.</strong> MyNotes does not remove EXIF or embedded metadata (such as GPS location or author) from images or PDFs. Remove it before sharing.</aside>
+      </section>
+
+      <section id="bin" class="doc-section searchable" data-search="bin trash restore delete forever empty retention 30 days purge upgrade">
+        <span class="eyebrow">Using MyNotes</span><h2>Bin</h2><p class="lead">Deleted notes and files stay in your Bin for exactly 30 days. Retention is fixed.</p>
+        <ul class="checks"><li>Everything is kept: drafts, versions, file bytes, and sharing. Nobody can read a binned item, including MCP clients.</li><li>Restore returns an item to its original folder, or to Default if that folder is gone; the toast names the folder and any sharing that returns.</li><li>Blank notes that were never published skip the Bin.</li><li>Delete forever and Empty Bin remove items permanently. An hourly sweeper, also run at boot, removes expired items.</li><li>Binned files still count towards the storage quota.</li></ul>
+        <aside class="callout warning"><strong>Upgrading from 0.3.0 or earlier:</strong> notes deleted before the upgrade (described as permanent at the time) reappear in the Bin for 30 days, then are deleted. Empty the Bin if you do not want to keep them.</aside>
       </section>
 
       <section id="quickstart" class="doc-section searchable" data-search="quick start install docker compose clone deploy self host">
@@ -59,10 +101,10 @@ TOTP_ENCRYPTION_KEY=&lt;openssl rand -base64 32&gt;</code></pre><aside class="ca
 docker compose ps</code></pre></div></article></div>
       </section>
 
-      <section id="configuration" class="doc-section searchable" data-search="environment variables config env settings">
+      <section id="configuration" class="doc-section searchable" data-search="environment variables config env settings upload limit quota disk">
         <span class="eyebrow">Configuration</span><h2>Environment variables</h2><p class="lead">Compose reads <code>.env</code> from the repository root. Never commit that file.</p>
         <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead><tbody>
-          <tr><td><code>MYNOTES_DATA_DIR</code></td><td>example desktop path</td><td>Durable host directory mounted at <code>/data</code>.</td></tr>
+          <tr><td><code>MYNOTES_DATA_DIR</code></td><td><code>/srv/mynotes</code></td><td>Durable host directory mounted at <code>/data</code>.</td></tr>
           <tr><td><code>APP_ORIGIN</code></td><td><code>http://localhost:2026</code></td><td>Backward-compatible primary browser origin.</td></tr>
           <tr><td><code>APP_ORIGINS</code></td><td><code>APP_ORIGIN</code></td><td>Comma-separated exact origins accepted for login, CSRF, mutations, and MCP host checks.</td></tr>
           <tr><td><code>COOKIE_SECURE</code></td><td><code>true</code></td><td>Keep enabled for HTTPS. Plain-HTTP LAN access requires <code>false</code>.</td></tr>
@@ -72,7 +114,10 @@ docker compose ps</code></pre></div></article></div>
           <tr><td><code>TOTP_ENCRYPTION_KEY</code></td><td>empty</td><td>Base64 32-byte AES key. Required for mandatory TOTP.</td></tr>
           <tr><td><code>SESSION_DAYS</code></td><td><code>14</code></td><td>Session lifetime in days, minimum one.</td></tr>
           <tr><td><code>MAX_MARKDOWN_BYTES</code></td><td><code>2000000</code></td><td>Maximum note payload size, minimum 1024 bytes.</td></tr>
-          <tr><td><code>PORT</code></td><td><code>2026</code></td><td>Internal application port; Compose publishes port 2026 on loopback.</td></tr>
+          <tr><td><code>MAX_UPLOAD_BYTES</code></td><td><code>104857600</code> (100 MiB)</td><td>Largest single file; integer from 1 MiB to 2 GiB. JSON bodies stay limited to 2.1 MB.</td></tr>
+          <tr><td><code>USER_STORAGE_QUOTA_BYTES</code></td><td><code>10737418240</code> (10 GiB)</td><td>File bytes per user, including the Bin; integer ≥ 0, <code>0</code> is unlimited.</td></tr>
+          <tr><td><code>MIN_FREE_DISK_BYTES</code></td><td><code>1073741824</code> (1 GiB)</td><td>Refuse uploads that would leave less free space on the data volume; integer ≥ 0.</td></tr>
+          <tr><td><code>PORT</code></td><td><code>2026</code></td><td>Internal application port; Compose publishes port 2026 on all host interfaces.</td></tr>
           <tr><td><code>DATA_DIR</code></td><td><code>/data</code></td><td>Container data root. Usually leave unchanged.</td></tr>
           <tr><td><code>APP_VERSION</code></td><td>release</td><td>Build metadata shown in Settings → About.</td></tr>
           <tr><td><code>GIT_SHA</code></td><td><code>development</code></td><td>Commit metadata shown in Settings → About.</td></tr>
@@ -83,17 +128,21 @@ docker compose ps</code></pre></div></article></div>
 
       <section id="two-factor" class="doc-section searchable" data-search="TOTP 2FA Google Authenticator recovery codes reset"><span class="eyebrow">Authentication</span><h2>Two-factor authentication</h2><p>The grouped setup key is entered once in an authenticator app. Sign-in uses the current six-digit code or one complete recovery code.</p><aside class="callout"><strong>Recovery codes are encrypted.</strong> Viewing or replacing them requires a password and fresh TOTP code. Each works once.</aside><h3>Administrator reset</h3><pre><code>docker compose exec app bun server/reset-totp.ts user@example.com</code></pre><p>This revokes the user’s sessions and requires fresh enrollment.</p></section>
 
-      <section id="storage" class="doc-section searchable" data-search="storage markdown sqlite migrations data layout"><span class="eyebrow">Data</span><h2>Storage and migrations</h2><div class="split"><article><h3>On-disk layout</h3><pre><code>/data/
+      <section id="storage" class="doc-section searchable" data-search="storage markdown sqlite migrations data layout documents objects staging single instance"><span class="eyebrow">Data</span><h2>Storage and migrations</h2><div class="split"><article><h3>On-disk layout</h3><pre><code>/data/
 ├── mynotes.sqlite
-└── notes/&lt;note-id&gt;/
-    ├── current.md
-    ├── draft.md
-    └── versions/000001.md</code></pre></article><article><h3>Automatic upgrades</h3><p>Numbered migrations run transactionally before traffic is accepted and are recorded in <code>schema_migrations</code>.</p><p>Released migrations are append-only.</p></article></div></section>
+├── notes/&lt;note-id&gt;/
+│   ├── current.md
+│   ├── draft.md
+│   └── versions/000001.md
+├── documents/
+│   ├── objects/&lt;document-id&gt;
+│   └── .staging/&lt;document-id&gt;.part
+└── backup/</code></pre><p>File names live only in SQLite; bytes are stored under server-generated ids. Uploads stream to <code>.staging</code> on the data volume.</p></article><article><h3>Automatic upgrades</h3><p>Numbered migrations run transactionally before traffic is accepted and are recorded in <code>schema_migrations</code>.</p><p>Released migrations are append-only.</p><aside class="callout warning"><strong>One instance per data directory.</strong> Upload slots, locks, and the sweeper live in the process.</aside></article></div></section>
 
-      <section id="backups" class="doc-section searchable" data-search="backup restore gzip weekly retention disaster recovery"><span class="eyebrow">Operations</span><h2>Backup and restore</h2><p>The backup script briefly stops the app for a consistent SQLite and Markdown snapshot, verifies gzip, and keeps five weekly archives.</p><pre><code>./scripts/backup.sh
+      <section id="backups" class="doc-section searchable" data-search="backup restore gzip weekly retention disaster recovery documents staging size"><span class="eyebrow">Operations</span><h2>Backup and restore</h2><p>The backup script briefly stops the app for a consistent snapshot of SQLite, notes, and files, verifies gzip, and keeps five weekly archives.</p><pre><code>./scripts/backup.sh
 ./scripts/backup.sh --force</code></pre><h3>Restore into an empty directory</h3><pre><code>mkdir -p /srv/mynotes-restored
 tar -xzf /srv/mynotes/backup/mynotes-*.tar.gz -C /srv/mynotes-restored
-MYNOTES_DATA_DIR=/srv/mynotes-restored docker compose up -d --build</code></pre><aside class="callout warning"><strong>Store <code>.env</code> separately.</strong> Backups intentionally exclude it and its TOTP key.</aside></section>
+MYNOTES_DATA_DIR=/srv/mynotes-restored docker compose up -d --build</code></pre><ul class="checks"><li>Archives include <code>documents/objects</code> but not <code>documents/.staging</code>.</li><li>Archive size and the time the app is stopped grow with stored files; gzip gains little on media, and five archives multiply the disk use.</li><li>Binned items are backed up like live ones. Anything deleted forever can survive in older archives for about five weeks.</li><li>Start only one MyNotes instance on a restored directory.</li></ul><aside class="callout warning"><strong>Store <code>.env</code> separately.</strong> Backups intentionally exclude it and its TOTP key.</aside></section>
 
       <section id="network" class="doc-section searchable" data-search="network HTTPS TLS reverse proxy Caddy Nginx origin tailscale LAN"><span class="eyebrow">Networking</span><h2>Network and HTTPS</h2><p>Compose publishes port <code>2026</code> for LAN access. Prefer Tailscale Serve or a TLS reverse proxy for HTTPS.</p><ul class="checks"><li>Use HTTPS for non-local access.</li><li>Set <code>APP_ORIGINS</code> to a comma-separated list of exact trusted origins.</li><li>Keep <code>COOKIE_SECURE=true</code> with HTTPS.</li><li>Plain HTTP requires <code>COOKIE_SECURE=false</code> and is less safe.</li><li>Never serve the data directory as static content.</li></ul></section>
 
