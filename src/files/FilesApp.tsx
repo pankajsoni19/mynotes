@@ -10,7 +10,7 @@ import type { DocumentSummary, Folder } from "../types";
 import { formatBytes, getFile, listFiles, uploadFile, UploadRequestError } from "./filesApi";
 import { FilePreview } from "./FilePreview";
 import { kindIcons, relativeTime } from "./format";
-import { emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
+import { canRetryUpload, emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
 
 export type FilesNavigate = (route: Route, options?: { replace?: boolean; filesPanel?: FilesPanel }) => void;
@@ -201,7 +201,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         })
         .catch((reason) => {
           if (reason instanceof DOMException && reason.name === "AbortError") return;
-          dispatch({ type: "fail", id: item.id, error: reason instanceof Error ? reason.message : "Upload failed", code: reason instanceof UploadRequestError ? reason.code : null });
+          dispatch({ type: "fail", id: item.id, error: reason instanceof Error ? reason.message : "Upload failed", code: reason instanceof UploadRequestError ? reason.code : null, status: reason instanceof UploadRequestError ? reason.status : undefined });
         })
         .finally(() => { if (controllersRef.current.get(item.id) === controller) controllersRef.current.delete(item.id); });
     }
@@ -287,7 +287,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
               <span className="upload-item-name" title={item.name}>{item.name}</span>
               <span className="upload-item-status">{item.status === "uploading" ? `${Math.round(item.progress * 100)}%` : statusLabels[item.status]}</span>
               {(item.status === "queued" || item.status === "uploading") && <button className="icon-button" onClick={() => cancelUpload(item.id)} aria-label={`Cancel upload of ${item.name}`} title="Cancel"><X /></button>}
-              {(item.status === "failed" || item.status === "canceled") && <button className="icon-button" onClick={() => dispatch({ type: "retry", id: item.id })} aria-label={`Retry upload of ${item.name}`} title="Retry"><RotateCcw /></button>}
+              {canRetryUpload(item) && <button className="icon-button" onClick={() => dispatch({ type: "retry", id: item.id })} aria-label={`Retry upload of ${item.name}`} title="Retry"><RotateCcw /></button>}
             </div>
             <div className="upload-progress" role="progressbar" aria-label={`${item.name} upload progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(item.progress * 100)}><span style={{ width: `${Math.round(item.progress * 100)}%` }} /></div>
             {item.error && <p className="upload-item-error">{item.error}</p>}

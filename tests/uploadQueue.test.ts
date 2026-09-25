@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadAction, type UploadQueueState } from "../src/files/uploadQueue";
+import { canRetryUpload, emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadAction, type UploadQueueState } from "../src/files/uploadQueue";
 
 const uploads = ["a", "b", "c", "d"].map((id) => ({ id, key: `key-${id}`, name: `${id}.txt`, size: 10, folderId: null }));
 
@@ -64,4 +64,17 @@ test("completed uploads never run again", () => {
   expect(uploadsToStart(done).map((item) => item.id)).toEqual(["b", "c"]);
   const cleared = uploadQueueReducer(done, { type: "clearFinished" });
   expect(cleared.items.map((item) => item.id)).toEqual(["b", "c", "d"]);
+});
+
+test("final failures cannot be retried", () => {
+  const cases: [string | null, number][] = [["IDEMPOTENCY_KEY_USED", 409], ["FILE_TOO_LARGE", 413], [null, 413], [null, 415]];
+  for (const [code, httpStatus] of cases) {
+    const failed = run({ type: "enqueue", uploads }, { type: "start", id: "a" }, { type: "fail", id: "a", error: "No", code, status: httpStatus });
+    expect(failed.items[0]).toMatchObject({ status: "failed", final: true });
+    expect(canRetryUpload(failed.items[0])).toBe(false);
+    expect(uploadQueueReducer(failed, { type: "retry", id: "a" })).toBe(failed);
+  }
+  const transient = run({ type: "enqueue", uploads }, { type: "start", id: "a" }, { type: "fail", id: "a", error: "Busy", status: 429 });
+  expect(canRetryUpload(transient.items[0])).toBe(true);
+  expect(uploadQueueReducer(transient, { type: "retry", id: "a" }).items[0]).toMatchObject({ status: "queued", final: false });
 });

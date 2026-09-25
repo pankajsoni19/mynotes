@@ -1,5 +1,6 @@
 // Pure upload queue: the component owns the File objects and XHRs, this module owns the states.
-// queued → uploading(progress) → done | failed(error) | canceled; failed and canceled can be retried.
+// queued → uploading(progress) → done | failed(error) | canceled; canceled and non-final failures
+// can be retried.
 
 export const UPLOAD_CONCURRENCY = 2;
 
@@ -16,6 +17,8 @@ export type UploadItem = {
   progress: number;
   error: string | null;
   code: string | null;
+  // A failure that the same key and file can never get past (see isFinalUploadFailure).
+  final: boolean;
   documentId: string | null;
   // Bumped on every start, so the runner can tell attempts apart.
   attempt: number;
@@ -30,10 +33,20 @@ export type UploadAction =
   | { type: "start"; id: string }
   | { type: "progress"; id: string; loaded: number; total: number }
   | { type: "succeed"; id: string; documentId: string }
-  | { type: "fail"; id: string; error: string; code?: string | null }
+  | { type: "fail"; id: string; error: string; code?: string | null; status?: number }
   | { type: "cancel"; id: string }
   | { type: "retry"; id: string }
   | { type: "clearFinished" };
+
+// The key was already used for a since-deleted file (409), the file is over the limit (413), or
+// the request type was rejected (415): retrying with the same key and file fails the same way.
+export function isFinalUploadFailure(code: string | null | undefined, status?: number) {
+  return code === "IDEMPOTENCY_KEY_USED" || code === "FILE_TOO_LARGE" || status === 413 || status === 415;
+}
+
+export function canRetryUpload(item: UploadItem) {
+  return item.status === "canceled" || (item.status === "failed" && !item.final);
+}
 
 export const emptyUploadQueue: UploadQueueState = { items: [] };
 
@@ -58,7 +71,7 @@ export function uploadQueueReducer(state: UploadQueueState, action: UploadAction
     case "enqueue": {
       const known = new Set(state.items.map((item) => item.id));
       const added = action.uploads.filter((upload) => !known.has(upload.id)).map((upload): UploadItem => ({
-        ...upload, status: "queued", progress: 0, error: null, code: null, documentId: null, attempt: 0
+        ...upload, status: "queued", progress: 0, error: null, code: null, final: false, documentId: null, attempt: 0
       }));
       return added.length ? { items: [...state.items, ...added] } : state;
     }
@@ -74,11 +87,11 @@ export function uploadQueueReducer(state: UploadQueueState, action: UploadAction
     case "succeed":
       return update(state, action.id, (item) => item.status === "uploading" ? { ...item, status: "done", progress: 1, documentId: action.documentId } : null);
     case "fail":
-      return update(state, action.id, (item) => item.status === "uploading" || item.status === "queued" ? { ...item, status: "failed", error: action.error, code: action.code ?? null } : null);
+      return update(state, action.id, (item) => item.status === "uploading" || item.status === "queued" ? { ...item, status: "failed", error: action.error, code: action.code ?? null, final: isFinalUploadFailure(action.code, action.status) } : null);
     case "cancel":
       return update(state, action.id, (item) => item.status === "uploading" || item.status === "queued" ? { ...item, status: "canceled", error: null, code: null } : null);
     case "retry":
-      return update(state, action.id, (item) => item.status === "failed" || item.status === "canceled" ? { ...item, status: "queued", progress: 0, error: null, code: null } : null);
+      return update(state, action.id, (item) => canRetryUpload(item) ? { ...item, status: "queued", progress: 0, error: null, code: null, final: false } : null);
     case "clearFinished": {
       const items = state.items.filter((item) => item.status !== "done" && item.status !== "canceled");
       return items.length === state.items.length ? state : { items };
