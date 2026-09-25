@@ -305,7 +305,34 @@ Same rules as folder sharing: the owner cannot be a recipient (400), `selected` 
 
 Binned cards do not block deleting their column; they keep `column_id = NULL` and restore to the first column.
 
-**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, each with `{ boardId, columnId? }`.
+### Cards
+
+```ts
+type CardSummary = {
+  id: string; board_id: string; column_id: string; position: number;
+  title: string;                     // 1–200 characters, trimmed, no control characters
+  has_description: 0 | 1;            // the board view never carries descriptions
+  revision: number;                  // starts at 1, +1 on every title/description edit
+  created_by: string | null; creator_name: string | null;
+  comment_count: number; attachment_count: number;
+  created_at: string; updated_at: string;
+};
+type CardDetail = CardSummary & { description: string };  // Markdown, at most 65,536 UTF-8 bytes
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /boards/:b/cards { columnId, title, description?, afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. | 400, 404 (board, or a column not on this board), 409 `STALE_POSITION` or `LIMIT_REACHED` |
+| `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: [], attachments: [] }` (both lists fill in with stages B and C) | 404 |
+| `PATCH /cards/:k { title?, description?, revision }` | reader | 200 `{ card }` with `revision + 1` | 400, 404, 409 `{ code: "CARD_CHANGED", card }` (the current card) when `revision` is not the stored one |
+| `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION` |
+| `DELETE /cards/:k` | reader | 200 `{ ok: true, purgeAfter }`: the card moves to the Bin and keeps its column | 404 |
+
+- **Stale positions.** `afterCardId` must be another live card in the target column. Otherwise (binned, in another column or board, the moved card itself, or unknown) the response is 409 `{ error, code: "STALE_POSITION", columnId, order: string[] }`, where `order` is the target column's live card ids in their current order.
+- **Moves** stay on the card's board and do not change `revision`, so an open editor can still save.
+- Binned cards and cards on binned boards return 404 on every card route. Restore arrives with stage D.
+
+**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.card_create`, `task.card_update`, `task.card_move { boardId, cardId, columnId }`, and `task.card_delete`, each with `{ boardId, columnId?, cardId? }`.
 
 ## Changes to existing note endpoints (Wave 4)
 

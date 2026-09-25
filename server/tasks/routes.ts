@@ -4,7 +4,12 @@ import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
 import {
   createBoard,
+  createCard,
   createColumn,
+  deleteCard,
+  getCard,
+  moveCard,
+  patchCard,
   deleteBoard,
   deleteColumn,
   getBoard,
@@ -28,6 +33,21 @@ export const boardSharingSchema = z.object({
 export const columnCreateSchema = z.object({ name: label(60), afterColumnId: uuid.nullable().optional() }).strict();
 export const columnPatchSchema = z.object({ name: label(60).optional(), afterColumnId: uuid.nullable().optional() }).strict()
   .refine((value) => value.name !== undefined || value.afterColumnId !== undefined, "Provide a name or an afterColumnId");
+
+export const DESCRIPTION_MAX_BYTES = 65_536;
+const description = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= DESCRIPTION_MAX_BYTES, `Descriptions can be at most ${DESCRIPTION_MAX_BYTES} bytes`);
+export const cardCreateSchema = z.object({
+  columnId: uuid,
+  title: label(200),
+  description: description.optional(),
+  afterCardId: uuid.nullable().optional()
+}).strict();
+export const cardPatchSchema = z.object({
+  title: label(200).optional(),
+  description: description.optional(),
+  revision: z.number().int().positive()
+}).strict().refine((value) => value.title !== undefined || value.description !== undefined, "Provide a title or a description");
+export const cardMoveSchema = z.object({ columnId: uuid, afterCardId: uuid.nullable() }).strict();
 
 const id = (c: Context<AppEnv>, name: string) => uuid.parse(c.req.param(name));
 
@@ -92,5 +112,33 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.delete("/api/tasks/columns/:columnId", (c) => {
     const columnId = id(c, "columnId");
     return respond(c, () => deleteColumn(c.get("user").id, columnId));
+  });
+
+  app.post("/api/tasks/boards/:boardId/cards", async (c) => {
+    const boardId = id(c, "boardId");
+    const body = await parseJson(c.req.raw, cardCreateSchema);
+    return respond(c, () => createCard(c.get("user").id, boardId, body), 201);
+  });
+
+  app.get("/api/tasks/cards/:cardId", (c) => {
+    const cardId = id(c, "cardId");
+    return respond(c, () => getCard(c.get("user").id, cardId));
+  });
+
+  app.patch("/api/tasks/cards/:cardId", async (c) => {
+    const cardId = id(c, "cardId");
+    const body = await parseJson(c.req.raw, cardPatchSchema);
+    return respond(c, () => patchCard(c.get("user").id, cardId, body));
+  });
+
+  app.post("/api/tasks/cards/:cardId/move", async (c) => {
+    const cardId = id(c, "cardId");
+    const body = await parseJson(c.req.raw, cardMoveSchema);
+    return respond(c, () => moveCard(c.get("user").id, cardId, body));
+  });
+
+  app.delete("/api/tasks/cards/:cardId", (c) => {
+    const cardId = id(c, "cardId");
+    return respond(c, () => deleteCard(c.get("user").id, cardId));
   });
 }

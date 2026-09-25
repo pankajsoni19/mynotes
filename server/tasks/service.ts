@@ -1,7 +1,7 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { withResourceLock } from "../storage";
-import { readableBoard, readableBoardPredicate, readableColumn, type BoardVisibility, type ColumnRow } from "./access";
+import { readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardVisibility, type ColumnRow } from "./access";
 import { planInsert, type Positioned } from "./boardOrder";
 
 /**
@@ -91,15 +91,17 @@ export type CardSummary = {
   updated_at: string;
 };
 
-export const cardSummarySelect = `
+const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
          k.revision, k.created_by, cu.display_name AS creator_name,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
-         k.created_at, k.updated_at
+         k.created_at, k.updated_at${extraColumns}
   FROM cards k LEFT JOIN users cu ON cu.id = k.created_by
 `;
+export const cardSummarySelect = cardSelect();
+const cardDetailSelect = cardSelect(", k.description");
 
 export function listCards(boardId: string) {
   return db.query(`${cardSummarySelect} WHERE k.board_id = ? AND k.deleted_at IS NULL ORDER BY k.position, k.id`).all(boardId) as CardSummary[];
@@ -282,5 +284,143 @@ export async function deleteColumn(userId: string, columnId: string) {
       audit(userId, null, "task.column_delete", { boardId: board.id, columnId });
     })();
     return { ok: true as const, columns: listColumns(board.id) };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Cards (readers). Every change runs under the board lock.
+
+export type CardDetail = CardSummary & { description: string };
+
+const cardNotFound = () => new TaskError(404, "Card not found");
+
+function cardDetail(cardId: string) {
+  return db.query(`${cardDetailSelect} WHERE k.id = ? AND k.deleted_at IS NULL`)
+    .get(cardId) as CardDetail | null;
+}
+
+function liveCardsIn(columnId: string) {
+  return db.query("SELECT id, position FROM cards WHERE column_id = ? AND deleted_at IS NULL ORDER BY position, id").all(columnId) as Positioned[];
+}
+
+/** 409 STALE_POSITION: the anchor is not a live card in the target column. Carries the column's current order. */
+function stalePosition(columnId: string) {
+  return new TaskError(409, "The board changed. Reload to see the current order.", "STALE_POSITION", {
+    columnId,
+    order: liveCardsIn(columnId).map((card) => card.id)
+  });
+}
+
+/** A column of this board (path and body ids are joined to their board, T39). */
+function requireBoardColumn(boardId: string, columnId: string) {
+  const column = db.query("SELECT id FROM board_columns WHERE id = ? AND board_id = ?").get(columnId, boardId) as { id: string } | null;
+  if (!column) throw columnNotFound();
+  return column;
+}
+
+function requireReadableCard(cardId: string, userId: string) {
+  const found = readableCard(cardId, userId);
+  if (!found) throw cardNotFound();
+  return found;
+}
+
+export type CardCreateInput = { columnId: string; title: string; description?: string; afterCardId?: string | null };
+
+/** Creates a card. `afterCardId`: omitted = bottom of the column, null = top, an id = after that card. */
+export function createCard(userId: string, boardId: string, input: CardCreateInput) {
+  return withBoardLock(boardId, () => {
+    requireReadableBoard(boardId, userId);
+    requireBoardColumn(boardId, input.columnId);
+    const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(boardId) as { count: number }).count;
+    if (live >= LIMITS.liveCardsPerBoard) throw limitReached(`A board can have up to ${LIMITS.liveCardsPerBoard} cards`);
+    const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
+    if (!plan) throw stalePosition(input.columnId);
+    const id = crypto.randomUUID();
+    db.transaction(() => {
+      applyRenumber("cards", plan.renumbered);
+      const timestamp = now();
+      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", userId, timestamp, timestamp);
+      db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
+      audit(userId, null, "task.card_create", { boardId, cardId: id });
+    })();
+    return { card: cardDetail(id)!, ...(plan.renumbered ? { renormalized: true } : {}) };
+  });
+}
+
+/** Comments and attachments arrive with stages B and C; both lists are empty until then. */
+export function getCard(userId: string, cardId: string) {
+  requireReadableCard(cardId, userId);
+  return { card: cardDetail(cardId)!, comments: [] as unknown[], attachments: [] as unknown[] };
+}
+
+export type CardPatchInput = { title?: string; description?: string; revision: number };
+
+/** Edits title and/or description with a compare-and-swap on `revision` (409 CARD_CHANGED carries the current card). */
+export async function patchCard(userId: string, cardId: string, input: CardPatchInput) {
+  const { board } = requireReadableCard(cardId, userId);
+  return withBoardLock(board.id, () => {
+    const { card } = requireReadableCard(cardId, userId);
+    if (card.revision !== input.revision) {
+      throw new TaskError(409, "Someone else changed this card", "CARD_CHANGED", { card: cardDetail(cardId)! });
+    }
+    db.transaction(() => {
+      const timestamp = now();
+      const updated = db.query(`UPDATE cards SET title = COALESCE(?, title), description = COALESCE(?, description), revision = revision + 1, updated_at = ?
+        WHERE id = ? AND revision = ? AND deleted_at IS NULL`).run(input.title ?? null, input.description ?? null, timestamp, cardId, input.revision);
+      if (updated.changes !== 1) throw new Error("Concurrent card update detected");
+      db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
+      audit(userId, null, "task.card_update", { boardId: board.id, cardId });
+    })();
+    return { card: cardDetail(cardId)! };
+  });
+}
+
+/**
+ * Moves a card within its board (cross-board moves are out of scope).
+ * `afterCardId` null puts the card at the top; otherwise it must be another
+ * live card in the target column, or the response is 409 STALE_POSITION with
+ * the column's current order. Moves do not change `revision`.
+ */
+export async function moveCard(userId: string, cardId: string, input: { columnId: string; afterCardId: string | null }) {
+  const { board } = requireReadableCard(cardId, userId);
+  return withBoardLock(board.id, () => {
+    requireReadableCard(cardId, userId);
+    requireBoardColumn(board.id, input.columnId);
+    if (input.afterCardId === cardId) throw stalePosition(input.columnId);
+    const siblings = liveCardsIn(input.columnId).filter((card) => card.id !== cardId);
+    const plan = planInsert(siblings, input.afterCardId);
+    if (!plan) throw stalePosition(input.columnId);
+    db.transaction(() => {
+      applyRenumber("cards", plan.renumbered);
+      const timestamp = now();
+      db.query("UPDATE cards SET column_id = ?, position = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").run(input.columnId, plan.position, timestamp, cardId);
+      db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
+      audit(userId, null, "task.card_move", { boardId: board.id, cardId, columnId: input.columnId });
+    })();
+    return {
+      card: cardDetail(cardId)!,
+      ...(plan.renumbered ? { renormalized: true, positions: liveCardsIn(input.columnId) } : {})
+    };
+  });
+}
+
+/**
+ * Moves a card to the Bin (any reader, D41). Stage A sets the Bin columns
+ * only; the card keeps its column so a later restore can put it back.
+ */
+export async function deleteCard(userId: string, cardId: string) {
+  const { board } = requireReadableCard(cardId, userId);
+  return withBoardLock(board.id, () => {
+    requireReadableCard(cardId, userId);
+    const deletedAt = new Date();
+    const purgeAfter = purgeAfterFrom(deletedAt);
+    db.transaction(() => {
+      db.query("UPDATE cards SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND deleted_at IS NULL")
+        .run(deletedAt.toISOString(), userId, purgeAfter, cardId);
+      db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(deletedAt.toISOString(), board.id);
+      audit(userId, null, "task.card_delete", { boardId: board.id, cardId });
+    })();
+    return { ok: true as const, purgeAfter };
   });
 }
