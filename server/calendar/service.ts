@@ -564,8 +564,19 @@ export function listOccurrences(userId: string, range: ExpansionRange, calendarI
   const items: Array<OccurrenceItem & { sortKey: string }> = [];
   let truncated = rows.length > MAX_ROWS_EXAMINED;
   const budget: ExpansionBudget = { steps: MAX_EXPANSION_STEPS };
+  const byStart = (left: { sortKey: string; eventId: string }, right: { sortKey: string; eventId: string }) =>
+    left.sortKey < right.sortKey ? -1 : left.sortKey > right.sortKey ? 1 : left.eventId < right.eventId ? -1 : left.eventId > right.eventId ? 1 : 0;
+  // L3: when the cap hits, keep the soonest occurrences across every series, not the first series'.
+  // The buffer is trimmed back to MAX_INSTANCES whenever it doubles, so it stays bounded.
+  const keepSoonest = () => {
+    items.sort(byStart);
+    if (items.length > MAX_INSTANCES) {
+      items.length = MAX_INSTANCES;
+      truncated = true;
+    }
+  };
   for (const row of rows.slice(0, MAX_ROWS_EXAMINED)) {
-    const { occurrences, truncated: cut } = expandSeries(seriesOf(row), range, MAX_INSTANCES - items.length, budget);
+    const { occurrences, truncated: cut } = expandSeries(seriesOf(row), range, MAX_INSTANCES, budget);
     for (const occurrence of occurrences) {
       const start = occurrence.allDay ? occurrence.startDate : new Date(occurrence.startMs).toISOString();
       const end = occurrence.allDay ? occurrence.endDate : new Date(occurrence.endMs).toISOString();
@@ -576,12 +587,11 @@ export function listOccurrences(userId: string, range: ExpansionRange, calendarI
         sortKey: occurrence.allDay ? `${occurrence.startDate}T00:00:00.000Z!0` : `${start}!1`
       });
     }
-    if (cut) {
-      truncated = true;
-      break;
-    }
+    if (cut) truncated = true;
+    if (budget.steps < 0) break;
+    if (items.length >= 2 * MAX_INSTANCES) keepSoonest();
   }
-  items.sort((left, right) => left.sortKey.localeCompare(right.sortKey) || left.eventId.localeCompare(right.eventId));
+  keepSoonest();
   return { occurrences: items.map(({ sortKey: _sortKey, ...item }) => item), truncated };
 }
 

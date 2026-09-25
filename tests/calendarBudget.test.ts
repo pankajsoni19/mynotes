@@ -70,6 +70,27 @@ describe("range API work budget (T66)", () => {
     expect(nextColumns(event.id).next_occurrence_utc).toBe("2030-06-03T10:00:00.000Z");
   });
 
+  test("at the 1000-instance cap the soonest occurrences are kept, whatever the series order (L3)", async () => {
+    resetEventCreateLimit();
+    const user = await createUser("Budget soonest");
+    const calendarId = await newCalendar(user);
+    for (let index = 0; index < 11; index += 1) {
+      const response = await send(user, "POST", `/calendars/${calendarId}/events`, timed({ title: `Daily ${index}`, startLocal: "2026-01-01T08:00", repeat: { freq: "daily", interval: 1 } }));
+      expect(response.status).toBe(201);
+    }
+    // Starts after every daily series, so it comes last in series-start order.
+    expect((await send(user, "POST", `/calendars/${calendarId}/events`, timed({ title: "Early bird", startLocal: "2026-01-02T07:00" }))).status).toBe(201);
+    const result = listOccurrences(user.userId, rangeFor("2026-01-01", "2026-04-11", "UTC"), [calendarId]);
+    expect(result.truncated).toBe(true);
+    expect(result.occurrences.length).toBe(1000);
+    expect(result.occurrences.some((item) => item.title === "Early bird")).toBe(true);
+    const starts = result.occurrences.map((item) => item.start);
+    expect(starts).toEqual([...starts].sort());
+    // The dropped ones are the latest: 1000 kept of 1101 ends on day 91 (2026-04-01).
+    expect(starts.at(-1)!.slice(0, 10)).toBe("2026-04-01");
+    resetEventCreateLimit();
+  });
+
   test("20k events without an occurrence in range cost well under 50 ms", async () => {
     resetEventCreateLimit();
     const user = await createUser("Budget timing");
