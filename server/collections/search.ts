@@ -67,26 +67,36 @@ export function reindexCollection(collectionId: string) {
 
 export type CollectionSearchCounts = { indexed: number; removed: number };
 
+/** Stale rows indexed per batch (and per transaction) at boot. */
+export const RECONCILE_BATCH = 500;
+
 /**
  * Boot reconcile: removes FTS rows without a mapping (and mappings without an
  * FTS row), then reindexes rows whose entry is missing or was built from
  * another revision or schema version. Logs counts only.
  */
+
 export function reconcileCollectionSearchIndex(): CollectionSearchCounts {
   const counts: CollectionSearchCounts = { indexed: 0, removed: 0 };
   db.transaction(() => {
     counts.removed += db.query("DELETE FROM collection_row_fts WHERE rowid NOT IN (SELECT id FROM collection_row_search)").run().changes;
     counts.removed += db.query("DELETE FROM collection_row_search WHERE id NOT IN (SELECT rowid FROM collection_row_fts)").run().changes;
   })();
-  const stale = db.query(`SELECT r.id, r.collection_id FROM collection_rows r JOIN collections c ON c.id = r.collection_id
+  // Stale rows are read in keyset batches of RECONCILE_BATCH, each indexed in its own
+  // transaction, so a large backlog never loads every id at once.
+  const staleBatch = db.query(`SELECT r.id, r.collection_id FROM collection_rows r JOIN collections c ON c.id = r.collection_id
     LEFT JOIN collection_row_search s ON s.row_id = r.id
     WHERE r.purge_started_at IS NULL AND c.purge_started_at IS NULL
       AND (s.id IS NULL OR s.source_revision <> r.revision OR s.schema_version <> c.schema_version)
-    ORDER BY r.collection_id`).all() as Array<{ id: string; collection_id: string }>;
-  const schemas = new Map<string, { schema: CollectionSchema; version: number }>();
-  for (let start = 0; start < stale.length; start += 500) {
+      AND (r.collection_id > $afterCollection OR (r.collection_id = $afterCollection AND r.id > $afterRow))
+    ORDER BY r.collection_id, r.id LIMIT $limit`);
+  let after = { collection: "", row: "" };
+  for (;;) {
+    const stale = staleBatch.all({ afterCollection: after.collection, afterRow: after.row, limit: RECONCILE_BATCH }) as Array<{ id: string; collection_id: string }>;
+    if (stale.length === 0) break;
+    const schemas = new Map<string, { schema: CollectionSchema; version: number }>();
     db.transaction(() => {
-      for (const { id, collection_id } of stale.slice(start, start + 500)) {
+      for (const { id, collection_id } of stale) {
         let entry = schemas.get(collection_id);
         if (!entry) {
           const collection = db.query("SELECT schema_json, schema_version FROM collections WHERE id = ?").get(collection_id) as { schema_json: string; schema_version: number };
@@ -97,8 +107,11 @@ export function reconcileCollectionSearchIndex(): CollectionSearchCounts {
         counts.indexed += 1;
       }
     })();
+    const last = stale[stale.length - 1]!;
+    after = { collection: last.collection_id, row: last.id };
+    if (stale.length < RECONCILE_BATCH) break;
   }
-  if (stale.length) db.query("INSERT INTO collection_row_fts (collection_row_fts) VALUES ('optimize')").run();
+  if (counts.indexed) db.query("INSERT INTO collection_row_fts (collection_row_fts) VALUES ('optimize')").run();
   if (counts.indexed || counts.removed) console.info(`Collection search index: ${counts.indexed} indexed, ${counts.removed} removed`);
   return counts;
 }

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
-import { addRow, call, insertNote, newCollection, shareCollection } from "./support/collections";
+import { addRow, call, insertNote, insertRows, newCollection, shareCollection } from "./support/collections";
 
 const { resetSearchRateLimit } = await import("../server/searchRoutes");
-const { reconcileCollectionSearchIndex, rowSearchText } = await import("../server/collections/search");
+const { RECONCILE_BATCH, reconcileCollectionSearchIndex, rowSearchText } = await import("../server/collections/search");
 const { buildSchema } = await import("../server/collections/schema");
 
 type Hit = { rowId: string; collectionId: string; collectionName: string; title: Array<{ text: string; hit: boolean }>; snippet: Array<{ text: string; hit: boolean }> };
@@ -112,6 +112,19 @@ describe("collection row search", () => {
     expect((await search(owner, "chisel")).hits).toHaveLength(1);
     expect((await search(owner, "saw")).hits).toEqual([]);
     expect((await search(owner, "orphan")).hits).toEqual([]);
+    expect(ftsParity()).toBe(true);
+    expect(reconcileCollectionSearchIndex().indexed).toBe(0);
+  });
+
+  test("boot reconcile indexes a backlog larger than one batch, across batch boundaries", async () => {
+    const owner = await createUser("Backlog owner");
+    const collection = await newCollection(owner, { name: "Backlog", fields: [{ name: "Name", type: "text" }] });
+    const total = RECONCILE_BATCH * 2 + 7;
+    insertRows(collection.id, total, { [collection.fields[0]!.id]: "Widget" });
+    const counts = reconcileCollectionSearchIndex();
+    expect(counts.indexed).toBeGreaterThanOrEqual(total);
+    const mapped = db.query("SELECT COUNT(*) AS count FROM collection_row_search s JOIN collection_rows r ON r.id = s.row_id WHERE r.collection_id = ?").get(collection.id) as { count: number };
+    expect(mapped.count).toBe(total);
     expect(ftsParity()).toBe(true);
     expect(reconcileCollectionSearchIndex().indexed).toBe(0);
   });
