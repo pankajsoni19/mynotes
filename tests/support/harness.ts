@@ -66,7 +66,7 @@ function nextEmail() {
 
 export async function request(path: string, options: RequestInit = {}, session?: Session) {
   const headers = new Headers(options.headers);
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (typeof options.body === "string" && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (!headers.has("Origin")) headers.set("Origin", origin);
   if (session) {
     headers.set("Cookie", session.cookie);

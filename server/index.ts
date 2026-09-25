@@ -9,6 +9,7 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
+import { registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
   draftSchema,
@@ -752,6 +753,8 @@ app.delete("/api/notes/:id", async (c) => {
     return c.json({ ok: true });
   });
 });
+
+registerDocumentRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);

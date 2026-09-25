@@ -76,7 +76,11 @@ export async function requireMutationSafety(c: Context<AppEnv>, next: Next) {
   if (["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
   const origin = c.req.header("Origin");
   if (!isOriginAllowed(origin)) return c.json({ error: "Invalid request origin" }, 403);
-  if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) {
+  const contentType = c.req.header("Content-Type")?.toLowerCase() ?? "";
+  // The single multipart exception: document uploads, on this exact method and path.
+  if (c.req.method === "POST" && c.req.path === "/api/files") {
+    if (!contentType.startsWith("multipart/form-data")) return c.json({ error: "Content-Type must be multipart/form-data" }, 415);
+  } else if (!contentType.startsWith("application/json")) {
     return c.json({ error: "Content-Type must be application/json" }, 415);
   }
   const supplied = c.req.header("X-CSRF-Token") ?? "";
