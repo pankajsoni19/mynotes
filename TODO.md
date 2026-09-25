@@ -71,10 +71,11 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 
 ### Wave 3c — Note editor: inline images, tables, PDF export (operator request 2026-09-25, ships with v0.3.0 or the next release)
 
-- [ ] `/image` slash command plus paste and drop: uploads through `POST /api/files` into the note's folder and embeds `![alt](/api/files/<id>/content?disposition=inline)`; image visibility follows the folder share, not the note override (documented limitation)
-- [ ] `/table` with Tiptap table extensions (pinned 3.31.3), row/column controls, GFM pipe-table Markdown round trip, dark-theme and mobile styles
-- [ ] "Download as PDF" in the editor toolbar and mobile actions menu via a print stylesheet and `window.print()` (no new server work)
-- [ ] Independent review, desktop + 390 px QA, then release
+- [x] `/image` slash command plus paste and drop (`a4100cc`): uploads through `POST /api/files` into the note's folder and embeds `![alt](/api/files/<id>/content?disposition=inline)`; only PNG/JPEG/GIF/WebP, verified again against the server's sniffed kind; a mismatch deletes the upload and toasts. Limitation: image visibility follows the folder share, not the note override; removed images stay in Files.
+- [x] `/table` with Tiptap table extensions pinned at 3.31.3 (`9c399e4`): 3×3 with header row, seven row/column/table actions in a floating toolbar, GFM pipe-table round trip (`tests/noteMarkdown.test.ts`), horizontal scroll on phones
+- [x] "Download as PDF" in the editor toolbar and mobile actions menu via `@media print` rules and `window.print()` (`66c65c8`); the tab title carries the note title during printing and is restored after
+- [x] Merged in `a98f427` (+ `b0ad1c3` duplicate-export fix). Director QA on the isolated instance: pasted PNG uploaded and embedded, saved in the draft Markdown; `/table` from the menu and from Enter, toolbar actions present, pipe table saved; PDF action calls print and restores the title.
+- [ ] Independent review verdict, then release with v0.3.0
 
 ### Wave 4 — Shared 30-day Bin (v0.3.0)
 
@@ -83,6 +84,13 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [ ] Idempotent, crash-safe restore/purge and hourly retention sweeper
 - [ ] Bin API and Bin app (desktop + mobile), Home Bin card live, updated delete copy
 - [ ] Wave tests, security review, pre-deploy backup, release v0.3.0
+
+### Wave 3b — Minimal Files app (ships in v0.3.0)
+
+- [x] Files API client with XHR upload progress, error mapping (413 limit, 507 quota/disk, 429, 409 key reuse), and a pure upload queue with concurrency 2, cancel, retry with the same key (`c8c2d8c`)
+- [x] Files workspace on `/files`, `/files/shared`, `/files/folder/:id`, `/files/:id`: folder rail, list with type/size/time/owner/share badges, upload queue panel with progress bars and live summary, preview pane per §7.2 (image inline, PDF in a new tab, text via 1 MiB Range with truncation notice, audio/video, everything else download-only), details, Download link; phone panels folders → files → preview with history hint `mynotes.files-navigation` (`f4320fb`, `ff694b8`)
+- [x] Director QA on the isolated instance (Bun 1.4.2 backend): five uploads via the app's file input (PNG, 1.2 MB text, PDF, random binary, HTML) all reached 100 % with correct sizes; previews matched each kind; HEAD on every inline URL returned the contract headers (HTML/binary forced to `application/octet-stream; attachment`, PDF with `frame-ancestors 'none'`, others with `sandbox`); deep link to `/files` survived login; 390 px panels and Back work
+- Deferred to Wave 5: rename, move, share, delete with Undo, New folder, OS drag-and-drop, sort/filter, keyboard shortcuts, mobile upload bottom sheet
 
 ### Wave 5 — Files UI (v0.4.0)
 
