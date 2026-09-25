@@ -34,7 +34,7 @@ import { EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
 import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderSummary } from "./EventReminders";
 import { EventView } from "./EventView";
-import { PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
+import { confirmForcedDiscard, PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
 import { MonthView } from "./MonthView";
 import "../bin/bin.css";
 import "../files/files.css";
@@ -200,6 +200,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   // Back or Forward while a dialog is open closes the top one; an edited sheet asks first (D69).
   useDialogBackGuard(dialogOpen, (forced) => {
     if (forced) {
+      if (confirmForcedDiscard(sheetDirty) === "keep") return "keep";
       setConfirm(null);
       closeSheet();
       setSharing(null);
