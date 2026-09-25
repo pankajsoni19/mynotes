@@ -5,13 +5,15 @@ import { tmpdir } from "node:os";
 import { dataDir, db, origin, register, request, tailscaleOrigin, type Session } from "./support/harness";
 
 const { totpCodeAt, totpCounter } = await import("../server/totp");
+const { registeredMigrationIds } = await import("../server/migrations");
 
 describe("authorization and version workflow", () => {
   test("enforces restrictive data and database permissions", () => {
     expect(statSync(dataDir).mode & 0o777).toBe(0o700);
     expect(statSync(join(dataDir, "mynotes.sqlite")).mode & 0o777).toBe(0o600);
     const migrations = db.query("SELECT id, name FROM schema_migrations ORDER BY id").all() as Array<{ id: number; name: string }>;
-    expect(migrations.map((migration) => migration.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(migrations.map((migration) => migration.id)).toEqual([...registeredMigrationIds]);
+    expect(registeredMigrationIds).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7, 8, 10]));
   });
 
   test("rejects registration and login outside the email allowlist", async () => {
