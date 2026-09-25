@@ -33,7 +33,7 @@ Implementation plan: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [API contract
   - Gates: `bun run typecheck`, `bun test` (25 pass), `git diff --check`, tracked-file secret/personal-data scan, `docker build --target verify`, `docker compose build` all pass at `921fe28`.
 - [x] Released v0.2.3: bump `6bfe982`, pushed to `origin/main`, deployed with Docker Compose; container healthy on port 2026 and `/api/about` reports `0.2.3` / `6bfe9827ae29e3c6707f9c0c413d95f591baea0d` (2026-09-25)
 
-### Wave 2b — URL routing for every app, view, and item (v0.2.4)
+### Wave 2b — URL routing for every app, view, and item (released v0.2.4, deployed at `4b8bf3e`)
 
 Operator request (2026-09-25): every module, page, note, file, and view gets its own URL instead of everything living at `/`. Shipped before the Bin and Files UIs so they are built on real routes. See DEVELOPMENT_PLAN §4b.
 
@@ -46,9 +46,11 @@ Operator request (2026-09-25): every module, page, note, file, and view gets its
 - [x] Tests: `tests/router.test.ts`, `tests/notesRoute.test.ts`, depth and startup-state helpers in `tests/appShellNavigation.test.ts` (39 tests)
 - [x] Two independent reviews (fresh sessions). Fixed: first-load failure freezing Back/Forward, keystrokes lost during history-driven switches, shared deep links, uppercase ids, and a failed note load leaving the editor locked. Accepted low risks: Back pressed mid-switch truncates the Forward stack; pre-upgrade tabs' history entries read as Home; the login page ignores Back/Forward; only ids (not `/NOTES`) are case-normalised; overlapping retries after a two-factor change settle harmlessly.
 - [x] Director QA on isolated data, desktop and 390 px: Home ⇄ Notes ⇄ folder ⇄ note with Back/Forward; reload on `/files/folder/:id` and `/bin`; unknown path → `/`; logged-out deep link → login → note; blank new note removed on Back with no dead target; edits published on click and history switches with the editor locked meanwhile.
-- [ ] Bump to 0.2.4, push, deploy, smoke test
+- [x] Released v0.2.4: bump `4b8bf3e`, pushed to `origin/main`, deployed with Docker Compose; container healthy on port 2026, `/api/about` reports `0.2.4` / `4b8bf3e98421e3f6d4cbecc062352dc1cfad69f0`, `/notes/<id>` and `/bin` serve the SPA, `/api/*` unchanged (2026-09-25)
 
 ### Wave 3 — Secure documents backend (released with Wave 4 as v0.3.0)
+
+Operator direction (2026-09-25): build backend and frontend together so each stage is visible. Wave 3 therefore also ships a **minimal Files slice** in the Files app (upload with progress, list, preview/download, routed through `/files` and `/files/folder/:id`). Rename, move, share, and delete UI wait for Wave 5 so nothing can be deleted before the Bin exists (D19).
 
 - [ ] Bounded JSON and MCP request bodies independent of `Content-Length`
 - [ ] Migration `006_documents` (documents, document_shares, bin columns, upload idempotency key)
