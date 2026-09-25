@@ -55,3 +55,9 @@ export const binConfirmMessage = (kind: "card" | "board", name: string) => kind 
 
 /** A toast action, such as Undo after moving something to the Bin. */
 export type TaskNotify = (message: string, action?: { label: string; run: () => void }) => void;
+
+/**
+ * After CARD_CHANGED on a title save: retrying at the new revision is safe only when the server's
+ * title is still the one the edit started from, so another person's rename is never overwritten.
+ */
+export const canRetryTitle = (baseTitle: string, serverTitle: string) => baseTitle === serverTitle;

@@ -6,7 +6,7 @@ import { ApiError } from "../api";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { attachmentsFor, binConfirmMessage, canUnlink, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
+import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -118,8 +118,9 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
     onChanged(next);
   }
 
-  // The title saves on blur. A concurrent edit elsewhere only moved the revision on: retry once on
-  // top of it (the last title wins), which never touches the description.
+  // The title saves on blur. On CARD_CHANGED, retry at the new revision only when the title on the
+  // server is still the one this edit started from (someone changed the description); if someone
+  // renamed the card, show their title and say so instead of overwriting it.
   async function saveTitle() {
     const current = cardRef.current;
     if (!current) return;
@@ -137,6 +138,12 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
       applyCard((await updateCard(current.id, { title: check.name, revision: current.revision })).card);
     } catch (reason) {
       const latest = taskErrorCode(reason) === "CARD_CHANGED" ? payloadCard(reason) : null;
+      if (latest && !canRetryTitle(current.title, latest.title)) {
+        applyCard(latest);
+        setTitle(latest.title);
+        setTitleError(`Someone else renamed this card to “${latest.title}”. Your title “${check.name}” was not saved.`);
+        return;
+      }
       if (latest) {
         try {
           applyCard((await updateCard(current.id, { title: check.name, revision: latest.revision })).card);

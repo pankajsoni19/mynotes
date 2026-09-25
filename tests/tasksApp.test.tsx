@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardList } from "../src/tasks/BoardList";
-import { attachmentsFor, canUnlink, cardCountLabel, commentBodyError, isInlineImage, sharingLabel, unlinkConfirmMessage, validateBoardName, validateCardTitle, validateColumnName } from "../src/tasks/taskActions";
+import { attachmentsFor, canRetryTitle, canUnlink, cardCountLabel, commentBodyError, isInlineImage, sharingLabel, unlinkConfirmMessage, validateBoardName, validateCardTitle, validateColumnName } from "../src/tasks/taskActions";
 
 test("the board list starts with its loading state and a New board action", () => {
   const markup = renderToStaticMarkup(<BoardList onOpen={() => undefined} notify={() => undefined} />);
@@ -46,4 +46,9 @@ test("attachment helpers group by comment, gate removal, and pick inline images"
   expect(commentBodyError("  ")).not.toBeNull();
   expect(commentBodyError("é".repeat(8193))).not.toBeNull();
   expect(commentBodyError("ok")).toBeNull();
+});
+
+test("a title save retries after CARD_CHANGED only when nobody else renamed the card", () => {
+  expect(canRetryTitle("Plan", "Plan")).toBe(true);
+  expect(canRetryTitle("Plan", "Plan v2")).toBe(false);
 });
