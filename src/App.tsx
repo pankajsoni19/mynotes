@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   ChevronLeft,
+  House,
   ChevronRight,
   Clock3,
   Eye,
@@ -711,6 +712,11 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", bin: "Bin" }[activeApp];
+    const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
+    document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · MyNotes` : "Sign in · MyNotes";
+  }, [activeApp, note, selectedNoteId, session]);
+  useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
   }, [activeApp, selectedFolder, selectedNoteId, selectionOwner, session]);
@@ -1211,10 +1217,11 @@ export function App() {
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
         <header className="sidebar-header">
-          <button className="sidebar-brand sidebar-home-button" onClick={() => { void openHome(); }} aria-label="Open MyNotes home"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></button>
+          <button className="sidebar-brand sidebar-home-button" onClick={() => { void openHome(); }} aria-label="Open MyNotes home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>Notes</strong></span></button>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
+          <button className="nav-home" onClick={() => { void openHome(); }} title="Back to Home"><House /><span>Home</span></button>
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
           <div className="nav-label"><span>Folders</span><button onClick={createFolder} aria-label="New folder"><FolderPlus /></button></div>

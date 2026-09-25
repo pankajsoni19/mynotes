@@ -1,6 +1,9 @@
 .app-home, .app-placeholder { min-height: 100dvh; background: radial-gradient(circle at 82% 0%, #292313 0, #111114 35rem, #09090a 76%); }
 .app-home-header, .app-placeholder-header { height: 76px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(20px, 5vw, 64px); border-bottom: 1px solid rgb(255 255 255 / 7%); }
 .app-home-brand { display: inline-flex; align-items: center; gap: 11px; color: #f4f4f5; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
+.brand-text small { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; color: #8d8d94; font-weight: 600; }
+.brand-text strong { font-size: .95rem; }
 .app-account { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .app-home-user { min-width: 0; margin-right: 8px; overflow: hidden; color: #9a9aa1; font-size: .83rem; text-overflow: ellipsis; white-space: nowrap; }
 .app-account-button { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 8px 10px; background: transparent; color: #b2b2b8; font-size: .83rem; cursor: pointer; }
