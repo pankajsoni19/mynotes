@@ -125,6 +125,8 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 The product is a private workspace (Notes, Files, Bin, Tasks next), so "MyNotes" as the product name caused confusion with the Notes app. New name: **Nook**. Scope: display name and repository only. The GitHub repo is already `pankajsoni19/nook` (Pages at `https://pankajsoni19.github.io/nook/`); the local remote is updated. Internal identifiers stay unchanged for compatibility: cookie `mynotes_session`, `mynotes.sqlite`, compose service/container `mynotes`, `/srv/mynotes` default, `mynotes:*` localStorage and `mynotes.*` history keys, the backup archive prefix.
 
 - [ ] Rename in UI (wordmark, Home greeting, tab titles, login page, settings/about), `index.html`, `package.json` name, MCP server name/instructions, README, site (copy, links, GitHub URL), docs/ARCHITECTURE and plan docs (links only; historical text may keep "MyNotes"), `.github/workflows/pages.yml` if it names the repo, social preview alt text; regenerate `public/social-preview.png` wordmark if feasible without new binaries in a review-unfriendly way (otherwise flag)
+- [ ] README rewritten as a concise overview (what Nook is, quick start, links) that points to the site and `docs/` for details (operator request 2026-09-25)
+- [ ] Site (`site/index.html`, published at https://pankajsoni19.github.io/nook/) becomes the full documentation: rebranded, covering Home and URLs, Notes editor features, Files list/grid views and actions, Bin, full-text search, MCP, configuration, storage, backups
 - [ ] Review, QA, release (v0.5.0 with search, or earlier as v0.4.2)
 
 ### Wave 6 — Documentation and final audit (complete, v0.4.1)
