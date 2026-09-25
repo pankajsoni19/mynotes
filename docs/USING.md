@@ -81,10 +81,24 @@ Deleting a note or a file moves it to the shared **Bin** (Home → Bin, or `/bin
 
 ## MCP server
 
-Nook includes an authenticated [Model Context Protocol](https://modelcontextprotocol.io/) server over Streamable HTTP, so trusted AI clients can search and read your notes.
+Nook includes an authenticated [Model Context Protocol](https://modelcontextprotocol.io/) server over Streamable HTTP, so trusted AI clients can search and read your notes and files, and write drafts for you to review.
 
-1. Open **Settings → MCP server** and create an API key. The key is shown in full only once; Nook stores its SHA-256 hash and a short identifying prefix, never the plaintext.
+1. Open **Settings → MCP server**, name the key, and choose its **Permissions**. The key is shown in full only once; Nook stores its SHA-256 hash and a short identifying prefix, never the plaintext.
 2. Copy the ready-to-paste client configuration. The endpoint is `<your origin>/mcp` (`http://localhost:2026/mcp` for the default deployment) and the key is sent as an `Authorization: Bearer` header.
-3. Revoke keys you no longer need from the same screen.
+3. Revoke keys you no longer need from the same screen. The key list shows each key's permissions.
 
-Today the server is **read-only**: it provides `list_notes` and `read_note`, restricted to the latest published versions the key owner can already read. Drafts, files, and write operations are excluded. Per-key scopes, coverage of files and tasks, and draft-only writes are planned (see [plan/WAVES_7-9.md](plan/WAVES_7-9.md)). Treat API keys like passwords and use a separate key per client.
+Permissions are fixed when the key is created; to change them, create a new key and revoke the old one. A client only ever sees notes and files you can already open, and nothing in the Bin.
+
+| Permission | Scope | What the client can do |
+| --- | --- | --- |
+| Read notes | `notes:read` | List, read, and search published notes (`list_notes`, `read_note`, `search_notes`) and list folders. Drafts are never shown, not even yours. |
+| Write drafts | `notes:write-draft` | Create notes and change the drafts of **your own** notes (`create_note`, `get_note_draft`, `update_note_draft`). It never publishes, never creates a version, and cannot delete, move, or share anything. Includes Read notes. |
+| Read files | `files:read` | List files and folders, see file details, and read text files (such as `.txt`, `.md`, `.csv`, `.json`) up to 1 MiB. Images, PDFs, and other binary files cannot be read. |
+
+Keys created before this release keep exactly what they could do before: Read notes. The task permissions (`tasks:read`, `tasks:write`) are reserved for the Task Boards tools.
+
+**Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Opening such a note and leaving without typing keeps it a draft: only drafts you edited in the current session are published automatically when you leave a note. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
+
+**Limits.** Each key can make 120 tool calls and 30 writes a minute and create 200 notes a day; beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
+
+Treat API keys like passwords, use a separate key per client, and give each only the permissions it needs. The text of your notes and files is passed to the client as data. A client that follows instructions hidden in that text is the client's risk, which is why writing is opt-in and publishing always stays with you.

@@ -1,4 +1,4 @@
-# API contracts: Files, content, Bin, and Search
+# API contracts: Files, content, Bin, Search, and MCP
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every endpoint lives under `/api` and inherits the existing middleware:
 
@@ -253,6 +253,65 @@ type NoteSearchHit = {
 
 Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT`: a note's owner searches their draft when one exists and the published version otherwise; everyone else searches the published version of notes they can read. Binned notes never match; restoring one makes it searchable again, and purging removes its index rows. The index holds the published version and the owner's draft, built from checksum-verified files in the same transaction as each change.
 
+## MCP keys and tools (Wave 8)
+
+### Keys
+
+| Endpoint | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/mcp/keys` | | 200 `{ keys: McpKey[] }` (active keys, newest first) | |
+| `POST /api/mcp/keys` | `{ name, password, totpCode? \| recoveryCode?, scopes? }` | 201 `{ key: McpKey & { token, userId, prefix, createdAt } }`; the token is shown once | 400 (bad name or scopes), 401 (password or second factor), 409 (10 active keys) |
+| `DELETE /api/mcp/keys/:id` | `{}` | 200 `{ ok: true }` | 404 |
+
+```ts
+type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write";
+type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
+```
+
+- `scopes`: 1–5 unique values (one per defined scope), default `["notes:read"]`. A write scope adds its read scope (`notes:write-draft` → `notes:read`, `tasks:write` → `tasks:read`). Scopes are returned in the order above and cannot be changed later; create a new key instead.
+- Keys created before migration 010 have `["notes:read"]`.
+- The audit row `mcp.key_created` records `{ keyId, name, scopes }`.
+
+### Tools
+
+`/mcp` (outside `/api`) speaks Streamable HTTP with `Authorization: Bearer <token>`; transport, key format, Host/Origin checks, and body limits are unchanged. `tools/list` returns only the tools the key's scopes allow, and each handler checks the key again. Tools run as the key's owner.
+
+| Tool | Scope | Arguments | Result |
+| --- | --- | --- | --- |
+| `list_notes` | notes:read | `{ query? }` title filter | `{ notes }`: published notes the owner can read |
+| `read_note` | notes:read | `{ noteId }` | `{ id, title, version, markdown }` of the published version |
+| `search_notes` | notes:read | `{ query (1–200), folderId?, limit? (1–20, default 10) }` | `{ results: { id, title, snippet, version, folder_id, owner_name, is_owner, updated_at }[], truncated }`. Published text only (never drafts, not even the owner's); the title comes from the published version; snippets are plain text; query rules and live access as in `GET /api/search` |
+| `list_folders` | notes:read or files:read | `{}` | `{ folders }` as `GET /api/folders` |
+| `create_note` | notes:write-draft | `{ markdown (not blank), folderId? }` | `{ noteId, revision: 1, title, folderId, url }`: a never-published note whose draft is `markdown`, in an owned folder (default: Default) |
+| `get_note_draft` | notes:write-draft | `{ noteId }` (owned) | `{ noteId, revision, hasDraft, markdown, publishedVersion, url }`. Without a draft, `revision` is null and `markdown` is the published text |
+| `update_note_draft` | notes:write-draft | `{ noteId, markdown, baseRevision: number \| null, mode: "replace" \| "append" }` | `{ noteId, revision, title, hasDelta, url }`. Append adds `markdown` as a new paragraph. Never publishes or creates a version |
+| `list_documents` | files:read | `{ folderId? }` | `{ documents: DocumentSummary[] }` as `GET /api/files` |
+| `get_document_metadata` | files:read | `{ documentId }` | `{ document: DocumentSummary }` under the Files list predicate |
+| `read_document_text` | files:read | `{ documentId }` | `{ id, name, mimeType, sizeBytes, text }` for `preview_kind = 'text'` up to 1 MiB, strict UTF-8 |
+
+Task tools (`list_boards`, `list_cards`, `get_card` under tasks:read; `create_card`, `move_card`, `comment_on_card` under tasks:write) land after Task Boards ([WAVES_7-9.md](WAVES_7-9.md) §4.2).
+
+Errors are tool results with `isError: true` whose text is `{ error, code, ...details }`:
+
+| Code | When |
+| --- | --- |
+| `NOT_FOUND` | Missing, not readable, not owned (draft tools), binned, or not a Files document; all look the same |
+| `INVALID` | Arguments fail validation (the transport may also reject them before the tool runs) |
+| `SCOPE_REQUIRED` | The key lacks the tool's scope, or was revoked meanwhile |
+| `RATE_LIMITED` | Per key: 120 calls and 30 writes per minute, 200 `create_note` per day (500 task writes per day reserved). Includes `retryAfterSeconds` |
+| `DRAFT_CHANGED` | `baseRevision` is not the current draft revision. Includes `currentRevision` |
+| `NOT_TEXT` | Not a text file, or not valid UTF-8 |
+| `TOO_LARGE` | Text file over 1 MiB, or Markdown over `MAX_MARKDOWN_BYTES` |
+| `INTERNAL` | Integrity or server failure |
+
+Writes are audited as `mcp.note_create` and `mcp.note_draft_update` (`{ via: "mcp", keyId, mode?, revision? }`); reads are not audited.
+
+### Note fields for MCP drafts
+
+- `GET /api/notes` rows gain `draft_mcp_key_name: string | null` (owner only, while a draft exists).
+- `GET /api/notes/:id` gains `draftMcpKeyName: string | null` (owner only); `draft_mcp_key_id` is never returned.
+- Publishing, discarding the draft, and restoring a version to the draft clear `notes.draft_mcp_key_id`. A human autosave keeps it, because the draft still holds the key's text.
+
 ## Changes to existing note endpoints (Wave 4)
 
 - `DELETE /api/notes/:id`:
@@ -263,4 +322,4 @@ Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT
   - Blank → purged immediately.
   - Content → moved to the Bin with the draft file and `draft_revision`/`draft_checksum` **kept** (today this route deletes them). The response still returns `{ ok: true }`, plus `binned: true`, so the client can pick the right toast.
 - "Blank" means `current_version = 0` and the draft is absent or empty after `trim()` (DEVELOPMENT_PLAN §9.1).
-- Unchanged: every read endpoint continues to exclude `deleted_at IS NOT NULL`. So do MCP `list_notes` and `read_note`.
+- Unchanged: every read endpoint continues to exclude `deleted_at IS NOT NULL`. So do all MCP tools.
