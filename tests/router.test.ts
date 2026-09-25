@@ -56,3 +56,28 @@ test("an open note formats as its own URL regardless of the selected folder", ()
   expect(sameRoute({ app: "notes", folder: "shared", noteId: null }, { app: "notes", folder: "all", noteId: null })).toBe(false);
   expect(sameRoute({ app: "home" }, { app: "bin" })).toBe(false);
 });
+
+test("uppercase ids normalise", () => {
+  expect(parseRoute(`/notes/${noteId.toUpperCase()}`)).toEqual({ app: "notes", folder: "all", noteId });
+  expect(parseRoute(`/notes/folder/${folderId.toUpperCase()}`)).toEqual({ app: "notes", folder: folderId, noteId: null });
+  expect(parseRoute(`/files/${noteId.toUpperCase()}`)).toEqual({ app: "files", folder: "all", documentId: noteId });
+});
+
+test("format never escapes origin", () => {
+  const hostile = ["//evil", "javascript:x", "../x", "/\\evil.example", "%2F%2Fevil", `${noteId}/../../x`, "https://evil.example"];
+  const shape = /^\/(notes|files|bin)?(\/[a-z0-9/-]*)?$/;
+  for (const value of hostile) {
+    const routes: Route[] = [
+      { app: "notes", folder: value, noteId: value },
+      { app: "notes", folder: value, noteId: null },
+      { app: "files", folder: value, documentId: value },
+      { app: "files", folder: value, documentId: null }
+    ];
+    for (const route of routes) {
+      const url = formatRoute(route);
+      expect(url.startsWith("/")).toBe(true);
+      expect(url.startsWith("//")).toBe(false);
+      expect(url).toMatch(shape);
+    }
+  }
+});

@@ -12,7 +12,9 @@ export function isRouteId(value: string) {
   return idPattern.test(value);
 }
 
-function parseCollection(rest: string[]): { folder: string; itemId: string | null } {
+function parseCollection(segments: string[]): { folder: string; itemId: string | null } {
+  // Server ids are lowercase; normalise so a pasted uppercase link still matches.
+  const rest = segments.map((segment) => isRouteId(segment) ? segment.toLowerCase() : segment);
   const [first, second] = rest;
   if (first === undefined) return { folder: "all", itemId: null };
   if (first === "shared" && rest.length === 1) return { folder: "shared", itemId: null };
@@ -37,9 +39,9 @@ export function parseRoute(pathname: string): Route {
 }
 
 function formatCollection(base: string, folder: string, itemId: string | null) {
-  if (itemId && isRouteId(itemId)) return `${base}/${itemId}`;
+  if (itemId && isRouteId(itemId)) return `${base}/${itemId.toLowerCase()}`;
   if (folder === "shared") return `${base}/shared`;
-  if (folder !== "all" && isRouteId(folder)) return `${base}/folder/${folder}`;
+  if (folder !== "all" && isRouteId(folder)) return `${base}/folder/${folder.toLowerCase()}`;
   return base;
 }
 
