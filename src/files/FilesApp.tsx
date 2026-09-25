@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
@@ -20,6 +20,7 @@ import {
   fileCountLabel,
   fileSortOptions,
   fileToastReducer,
+  filesEmptyState,
   filterDocuments,
   isDocumentDrag,
   isOsFileDrag,
@@ -40,7 +41,7 @@ import { FileSharePanel } from "./FileSharePanel";
 import { MoveSheet } from "./MoveSheet";
 import { NameDialog, RenameDialog } from "./RenameDialog";
 import { kindIcon, relativeTime } from "./format";
-import { canRetryUpload, emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
+import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
 
 export type FilesNavigate = (route: Route, options?: { replace?: boolean; filesPanel?: FilesPanel }) => void;
@@ -88,6 +89,8 @@ const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", 
 
 export function FilesApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut }: FilesAppProps) {
   const [data, setData] = useState<LoadedData | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [folder, setFolder] = useState<string>("all");
   const [documentId, setDocumentId] = useState<string | null>(null);
   // A document the URL named that the list does not include (for example beyond the list limit).
@@ -178,18 +181,19 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   useEffect(() => {
     let active = true;
+    setLoadError(null);
     Promise.all([api<{ folders: Folder[] }>("/folders"), listFiles()]).then(([{ folders }, { documents }]) => {
       if (!active) return;
       const loaded = { folders, documents };
       setData(loaded);
       void applyRoute(currentFilesRoute(), readFilesHistorySnapshot(window.history.state, userId), loaded);
     }).catch((reason) => {
-      if (active) flash(reason instanceof Error ? reason.message : "Could not load your files");
+      if (active) setLoadError(reason instanceof Error && reason.message ? reason.message : "Could not load your files");
     });
     return () => { active = false; };
-    // The first load only; later URL changes arrive through popstate.
+    // The first load (and Try again); later URL changes arrive through popstate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [userId, loadAttempt]);
 
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
@@ -236,6 +240,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const folderTitle = folder === "all" ? "All files" : folder === "shared" ? "Shared with me" : currentFolder?.name ?? "Folder";
   const pendingUploads = queue.items.filter((item) => item.status === "queued" || item.status === "uploading").length;
   const summary = uploadQueueSummary(queue);
+  const emptyCopy = filesEmptyState(folder === "all" ? { kind: "all" } : folder === "shared" ? { kind: "shared" } : { kind: "folder", name: currentFolder?.name ?? "this folder", owned: currentFolder?.is_owner === 1, ownerName: currentFolder?.owner_name ?? "Its owner" });
 
   const findDocument = (id: string) => documents.find((item) => item.id === id) ?? (extraDocument?.id === id ? extraDocument : null);
   const dialogDocument = dialog && dialog.kind !== "newFolder" ? findDocument(dialog.documentId) : null;
@@ -249,10 +254,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   function focusRow(target: string | HTMLElement | null) {
     if (!target) return;
-    window.requestAnimationFrame(() => {
+    // After React commits (a restored row only exists then). A timer, unlike requestAnimationFrame, also runs in background tabs.
+    window.setTimeout(() => {
       const element = typeof target === "string" ? window.document.querySelector<HTMLElement>(`[data-document-id="${CSS.escape(target)}"]`) : target;
       if (element?.isConnected) element.focus();
-    });
+    }, 0);
   }
 
   function openDialog(kind: Exclude<FilesDialog["kind"], "newFolder" | "actions">, document: DocumentSummary) {
@@ -620,7 +626,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         </div>
         <label className="search-box file-search"><Search aria-hidden="true" /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && query) { event.preventDefault(); setQuery(""); } }} placeholder="Filter files" aria-label="Filter files by name" /></label>
       </header>
-      <div className="note-list file-list" role="list" aria-label={folderTitle} onKeyDown={onListKeyDown}>
+      <p id="file-list-keys" className="sr-only">Use the up and down arrow keys to move between files. On your own files, F2 renames and Delete moves the file to the Bin.</p>
+      <div className="note-list file-list" role="list" aria-label={folderTitle} aria-describedby="file-list-keys" aria-busy={!data && !loadError ? true : undefined} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
           const Icon = kindIcon(item.preview_kind);
           return <div role="listitem" className="file-row-item" key={item.id}>
@@ -641,10 +648,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           </div>;
         })}
         {data && inFolder.length > 0 && !visible.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>No file names here match “{query.trim()}”.</p><button onClick={() => setQuery("")}>Clear filter</button></div>}
-        {data && !inFolder.length && <div className="empty-state"><div><Files /></div><h2>No files here</h2><p>{folder === "shared" ? "Files other people share with you will appear here." : canUpload ? `Upload a file to add it to ${uploadDestination}.` : "Nothing has been shared in this folder yet."}</p>{canUpload && <button onClick={() => fileInputRef.current?.click()}>Upload files</button>}</div>}
-        {!data && <p className="file-preview-note">Loading files…</p>}
+        {data && !inFolder.length && <div className="empty-state"><div><Files /></div><h2>{emptyCopy.title}</h2><p>{emptyCopy.body}</p>{canUpload && <button onClick={() => fileInputRef.current?.click()}>Upload files</button>}</div>}
+        {!data && loadError && <div className="empty-state file-load-error" role="alert"><div><TriangleAlert /></div><h2>Could not load your files</h2><p>{loadError}</p><button onClick={() => setLoadAttempt((attempt) => attempt + 1)}><RotateCcw />Try again</button></div>}
+        {!data && !loadError && <p className="file-preview-note" role="status">Loading files…</p>}
       </div>
-      <p className="sr-only" aria-live="polite">{summary}</p>
+      <p className="sr-only" aria-live="polite">{uploadAnnouncement(queue)}</p>
       {queue.items.length > 0 && <section className={`upload-queue${pendingUploads ? " active" : ""}`} aria-label="Uploads">
         <header className="upload-queue-header">
           <button className="upload-queue-toggle" onClick={() => setQueueOpen((open) => !open)} aria-expanded={queueOpen} aria-controls="upload-queue-items">{queueOpen ? <ChevronDown /> : <ChevronUp />}<span>{summary}</span></button>

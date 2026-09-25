@@ -115,3 +115,14 @@ export function uploadQueueSummary(state: UploadQueueState) {
   if (count("canceled")) parts.push(`${count("canceled")} canceled`);
   return parts.join(", ");
 }
+
+/** What the polite live region reads: a short note while uploads run, then "3 uploaded, 1 failed". */
+export function uploadAnnouncement(state: UploadQueueState) {
+  const count = (status: UploadStatus) => state.items.filter((item) => item.status === status).length;
+  const pending = count("uploading") + count("queued");
+  if (pending) return pending === 1 ? "Uploading 1 file" : `Uploading ${pending} files`;
+  const parts = [`${count("done")} uploaded`];
+  if (count("failed")) parts.push(`${count("failed")} failed`);
+  if (count("canceled")) parts.push(`${count("canceled")} canceled`);
+  return state.items.length ? parts.join(", ") : "";
+}

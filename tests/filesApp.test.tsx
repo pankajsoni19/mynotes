@@ -9,6 +9,9 @@ test("the Files workspace renders its rail, list, and phone panels before data l
   for (const label of ['aria-label="New folder"', 'aria-label="Filter files by name"', 'aria-label="Sort files: Newest modified"']) expect(markup).toContain(label);
   expect(markup).toContain('data-mobile-panel="folders"');
   expect(markup).toContain('aria-live="polite"');
+  expect(markup).toContain('aria-describedby="file-list-keys"');
+  expect(markup).toContain('aria-busy="true"');
+  expect(markup).toContain('role="status">Loading files…');
   expect(markup).toContain('type="file" multiple=""');
   // Nothing to upload into until the folders are known.
   expect(markup).not.toContain(">Upload</button>");

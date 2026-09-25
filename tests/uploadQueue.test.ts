@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { canRetryUpload, emptyUploadQueue, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadAction, type UploadQueueState } from "../src/files/uploadQueue";
+import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadAction, type UploadQueueState } from "../src/files/uploadQueue";
 
 const uploads = ["a", "b", "c", "d"].map((id) => ({ id, key: `key-${id}`, name: `${id}.txt`, size: 10, folderId: null }));
 
@@ -77,4 +77,19 @@ test("final failures cannot be retried", () => {
   const transient = run({ type: "enqueue", uploads }, { type: "start", id: "a" }, { type: "fail", id: "a", error: "Busy", status: 429 });
   expect(canRetryUpload(transient.items[0])).toBe(true);
   expect(uploadQueueReducer(transient, { type: "retry", id: "a" }).items[0]).toMatchObject({ status: "queued", final: false });
+});
+
+test("the live announcement reads the running count, then uploaded and failed totals", () => {
+  expect(uploadAnnouncement(emptyUploadQueue)).toBe("");
+  const upload = (id: string) => ({ id, key: `k-${id}`, name: `${id}.txt`, size: 1, folderId: null });
+  let state = uploadQueueReducer(emptyUploadQueue, { type: "enqueue", uploads: [upload("a"), upload("b"), upload("c"), upload("d")] });
+  expect(uploadAnnouncement(state)).toBe("Uploading 4 files");
+  for (const id of ["a", "b"]) state = uploadQueueReducer(state, { type: "start", id });
+  state = uploadQueueReducer(state, { type: "succeed", id: "a", documentId: "doc-a" });
+  state = uploadQueueReducer(state, { type: "fail", id: "b", error: "Storage is full", status: 507 });
+  state = uploadQueueReducer(state, { type: "start", id: "c" });
+  state = uploadQueueReducer(state, { type: "succeed", id: "c", documentId: "doc-c" });
+  expect(uploadAnnouncement(state)).toBe("Uploading 1 file");
+  state = uploadQueueReducer(state, { type: "cancel", id: "d" });
+  expect(uploadAnnouncement(state)).toBe("2 uploaded, 1 failed, 1 canceled");
 });

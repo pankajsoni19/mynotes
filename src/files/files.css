@@ -167,3 +167,9 @@
 .file-drop-overlay.refused { border-color: #6a3039; background: rgb(24 14 16 / 90%); color: #fda4af; }
 .folder-link.drop-candidate { box-shadow: inset 0 0 0 1px #4a3d20; }
 .file-row.dragging { opacity: .5; }
+.file-load-error div { color: var(--red); }
+.file-load-error button { display: inline-flex; align-items: center; gap: 7px; }
+.empty-state.file-load-error button svg { width: 15px; }
+@media (max-width: 760px) {
+  .files-workspace .empty-state button { min-height: 44px; }
+}

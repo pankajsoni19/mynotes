@@ -212,3 +212,19 @@ export function canDropOnFolder(folder: Pick<Folder, "id" | "is_owner">, documen
 export function uploadDropMessage(destination: string | null) {
   return destination === null ? "You can only upload to your own folders" : `Drop to upload to ${destination}`;
 }
+
+export type FilesView = { kind: "all" } | { kind: "shared" } | { kind: "folder"; name: string; owned: boolean; ownerName: string };
+
+/** Empty-state copy for each Files view. */
+export function filesEmptyState(view: FilesView): { title: string; body: string } {
+  switch (view.kind) {
+    case "all":
+      return { title: "No files yet", body: "Upload documents, images, and PDFs to keep them next to your notes. They go to Default." };
+    case "shared":
+      return { title: "Nothing shared with you", body: "Files other people share with you will appear here." };
+    case "folder":
+      return view.owned
+        ? { title: "This folder is empty", body: `Upload a file, or drop files here, to add it to ${view.name}.` }
+        : { title: "No files in this folder", body: `Nothing in ${view.ownerName}’s folder is shared with you yet.` };
+  }
+}

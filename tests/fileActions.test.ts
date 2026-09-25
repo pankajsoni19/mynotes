@@ -20,6 +20,7 @@ import {
   writeFileSort,
   deleteConfirmMessage,
   emptyToastState,
+  filesEmptyState,
   fileToastReducer,
   moveTargets,
   movedMessage,
@@ -178,4 +179,11 @@ test("rows drop only on other folders the caller owns", () => {
   expect(canDropOnFolder(mine, null)).toBe(true);
   expect(uploadDropMessage("Projects")).toBe("Drop to upload to Projects");
   expect(uploadDropMessage(null)).toBe("You can only upload to your own folders");
+});
+
+test("each Files view has its own empty state", () => {
+  expect(filesEmptyState({ kind: "all" }).title).toBe("No files yet");
+  expect(filesEmptyState({ kind: "shared" }).body).toBe("Files other people share with you will appear here.");
+  expect(filesEmptyState({ kind: "folder", name: "Projects", owned: true, ownerName: "Ada" })).toEqual({ title: "This folder is empty", body: "Upload a file, or drop files here, to add it to Projects." });
+  expect(filesEmptyState({ kind: "folder", name: "Team", owned: false, ownerName: "Grace" }).body).toBe("Nothing in Grace’s folder is shared with you yet.");
 });
