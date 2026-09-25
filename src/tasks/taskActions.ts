@@ -76,3 +76,31 @@ export const canRetryTitle = (baseTitle: string, serverTitle: string) => baseTit
 
 /** Whether leaving the card would lose description edits. */
 export const descriptionDirty = (editing: boolean, draft: string, saved: string) => editing && draft !== saved;
+
+/** Today's date in the viewer's time zone as YYYY-MM-DD. */
+export function localDateString(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+const dayNumber = (isoDate: string) => {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return Math.round(Date.UTC(year!, month! - 1, day!) / 86_400_000);
+};
+
+export type DueStatus = { tone: "overdue" | "today" | "soon" | "later"; label: string; description: string };
+
+/**
+ * The due chip on a card. Done cards show no chip. `today` is the viewer's
+ * local date (YYYY-MM-DD), so "overdue" matches what Today shows.
+ */
+export function dueStatus(dueOn: string | null, today: string, done = false): DueStatus | null {
+  if (!dueOn || done) return null;
+  const days = dayNumber(dueOn) - dayNumber(today);
+  const [year, month, day] = dueOn.split("-").map(Number);
+  const short = new Date(year!, month! - 1, day!).toLocaleDateString(undefined, { month: "short", day: "numeric", ...(dueOn.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}) });
+  if (days < 0) return { tone: "overdue", label: short, description: `Overdue, was due ${short}` };
+  if (days === 0) return { tone: "today", label: "Today", description: "Due today" };
+  if (days === 1) return { tone: "soon", label: "Tomorrow", description: "Due tomorrow" };
+  return { tone: days <= 7 ? "soon" : "later", label: short, description: `Due ${short}` };
+}

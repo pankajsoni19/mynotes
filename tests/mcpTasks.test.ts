@@ -195,6 +195,12 @@ describe("MCP task tools", () => {
     expect(top.isError).toBe(false);
     expect((await api(s.owner, "GET", `/boards/${s.boardId}`)).body.cards.filter((card: { column_id: string }) => card.column_id === s.doing).map((card: { id: string }) => card.id)).toEqual([s.cardId, other.id]);
 
+    // create_card takes an optional due date, validated like the route.
+    const dated = await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "Dated", dueOn: "2026-10-05" });
+    expect(dated.value.card).toMatchObject({ title: "Dated", due_on: "2026-10-05" });
+    expect((await callTool(key, "get_card", { cardId: dated.value.card.id })).value.card).toMatchObject({ due_on: "2026-10-05", assignee_name: null });
+    expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "Bad date", dueOn: "2026-02-30" })).value).toMatchObject({ code: "INVALID" });
+
     // The HTTP route's rules: control characters in a title, blank comments.
     expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "bad‮title" })).value).toMatchObject({ code: "INVALID" });
     expect((await callTool(key, "comment_on_card", { cardId: s.cardId, body: "   " })).value).toMatchObject({ code: "INVALID" });

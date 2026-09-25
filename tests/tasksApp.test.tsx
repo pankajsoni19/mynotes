@@ -69,3 +69,23 @@ test("card copy uses one “In” prefix, plural counts, and picker details for 
   expect(pickerDetail(users[2]!, users)).toBe("kim@example.test");
   expect(pickerDetail({ id: "d", displayName: "Lee" }, users)).toBeNull();
 });
+
+test("cards show a due chip and assignee, and no chip in a done column", async () => {
+  const { BoardColumnView } = await import("../src/tasks/BoardColumnView");
+  const { localDateString } = await import("../src/tasks/taskActions");
+  const noop = () => undefined;
+  const card = {
+    id: "k1", board_id: "b1", column_id: "c1", position: 1024, title: "Pay rent", has_description: 0 as const, revision: 1, created_by: "u1", creator_name: "Ann",
+    due_on: "2020-01-01", assignee_id: "u2", assignee_name: "Bo", comment_count: 0, attachment_count: 0, created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z"
+  };
+  const render = (isDone: 0 | 1, dueOn: string) => renderToStaticMarkup(<BoardColumnView
+    column={{ id: "c1", board_id: "b1", name: "To do", position: 1024, is_done: isDone, created_at: "", updated_at: "" }}
+    cards={[{ ...card, due_on: dueOn }]} owner={false} isFirst isLast draggingId={null} dropIndex={null}
+    onDragStart={noop} onDragEnd={noop} onDragOverIndex={noop} onDropAt={noop} onKeyMove={noop} onCardMenu={noop} onOpenCard={noop} onColumnMenu={noop} onMoveColumn={noop} onAddCard={async () => undefined} />);
+  const open = render(0, "2020-01-01");
+  expect(open).toContain("task-due-chip overdue");
+  expect(open).toContain("Overdue, was due");
+  expect(open).toContain("Assigned to Bo");
+  expect(render(0, localDateString())).toContain("Due today");
+  expect(render(1, "2020-01-01")).not.toContain("task-due-chip");
+});

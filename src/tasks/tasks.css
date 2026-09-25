@@ -195,3 +195,24 @@
   .task-composer-actions button { min-height: 44px; }
 }
 .tasks-app ~ .toast, .tasks-app .toast { z-index: 60; }
+
+/* Due dates and assignees (migration 011) */
+.task-due-chip { justify-self: start; display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 8px; background: #1d1d21; color: #a9a9b0; font-size: .72rem; font-weight: 600; }
+.task-due-chip svg { width: 12px; height: 12px; }
+.task-due-chip.soon { color: #d9bf7e; background: #25211a; }
+.task-due-chip.today { color: #f0d591; background: #332a17; }
+.task-due-chip.overdue { color: #ffb4a8; background: #3a1d1a; }
+.task-card-assignee { max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-card-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.task-card-field { display: grid; gap: 6px; align-content: start; }
+.task-card-field > label { display: inline-flex; align-items: center; gap: 7px; color: #c9c9ce; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.task-card-field > label svg { width: 15px; }
+.task-card-field-control { display: flex; gap: 8px; align-items: center; }
+.task-card-field input, .task-card-field select { flex: 1; min-width: 0; min-height: 38px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; color-scheme: dark; }
+.task-card-field input:focus, .task-card-field select:focus { border-color: #6b582f; outline: 2px solid #6b582f; outline-offset: 1px; }
+.task-due-text { color: #7c7c83; font-size: .74rem; }
+.task-due-text.overdue { color: #ffb4a8; }
+.task-due-text.today, .task-due-text.soon { color: #d9bf7e; }
+@media (max-width: 760px) {
+  .task-card-field input, .task-card-field select { min-height: 44px; font-size: 1rem; }
+}

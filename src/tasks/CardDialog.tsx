@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowRightLeft, Copy, Download, File as FileIcon, MessageSquare, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, CalendarDays, Copy, Download, File as FileIcon, MessageSquare, Paperclip, Pencil, RotateCcw, Trash2, UserRound, X } from "lucide-react";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { contentUrl, formatBytes } from "../files/filesApi";
 import { ApiError } from "../api";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
+import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, dueStatus, isInlineImage, localDateString, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import {
   createCommentWithFiles,
   deleteComment,
+  getBoardReaders,
   linkAttachment,
   unlinkAttachment,
   uploadAttachment,
@@ -22,6 +23,7 @@ import {
   updateCard,
   updateComment,
   type BoardColumn,
+  type CardChange,
   type CardComment,
   type CardDetail
 } from "./tasksApi";
@@ -77,6 +79,9 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   const [unlinking, setUnlinking] = useState<CardAttachment | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [discardPrompt, setDiscardPrompt] = useState(false);
+  const [readers, setReaders] = useState<Array<{ id: string; displayName: string }> | null>(null);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [dueDraft, setDueDraft] = useState<string | null>(null);
   const cardFileRef = useRef<HTMLInputElement>(null);
   const commentFileRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<CardDetail | null>(null);
@@ -98,6 +103,15 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
     }
   }, [cardId, onMissing]);
   useEffect(() => { void load(); }, [load]);
+
+  // The assignee picker lists everyone who can open the board (the server refuses anyone else).
+  const boardIdForReaders = card?.board_id;
+  useEffect(() => {
+    if (!boardIdForReaders) return;
+    let cancelled = false;
+    getBoardReaders(boardIdForReaders).then((result) => { if (!cancelled) setReaders(result.users); }).catch(() => { if (!cancelled) setReaders([]); });
+    return () => { cancelled = true; };
+  }, [boardIdForReaders]);
 
   const closeSubDialog = useCallback(() => { setDeletingComment(null); setUnlinking(null); setConfirmDelete(false); setDiscardPrompt(false); }, []);
   const subDialogOpen = deletingComment !== null || unlinking !== null || confirmDelete || discardPrompt;
@@ -166,6 +180,30 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
       }
       setTitle(current.title);
       notify(taskErrorMessage(reason, "Could not rename the card"));
+    }
+  }
+
+  // Due date and assignee save on change. These are single fields, so on CARD_CHANGED (someone
+  // edited the title or description) the change is retried once at the new revision.
+  async function saveDetails(change: Pick<CardChange, "dueOn" | "assigneeId">, success: string) {
+    const current = cardRef.current;
+    if (!current) return;
+    setSavingDetails(true);
+    try {
+      try {
+        applyCard((await updateCard(current.id, { ...change, revision: current.revision })).card);
+      } catch (reason) {
+        const latest = taskErrorCode(reason) === "CARD_CHANGED" ? payloadCard(reason) : null;
+        if (!latest) throw reason;
+        applyCard((await updateCard(current.id, { ...change, revision: latest.revision })).card);
+      }
+      notify(success);
+    } catch (reason) {
+      notify(taskErrorCode(reason) === "ASSIGNEE_NOT_MEMBER"
+        ? "That person can no longer open this board"
+        : taskErrorMessage(reason, "Could not save the change"));
+    } finally {
+      setSavingDetails(false);
     }
   }
 
@@ -427,6 +465,53 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
         {!loadError && !card && <p className="bin-loading" role="status">Loading the card…</p>}
         {card && <>
           <p className="task-card-byline">{card.creator_name ? `Added by ${card.creator_name}` : "Added"} · <time dateTime={card.created_at}>{relativeTime(card.created_at)}</time>{card.updated_at !== card.created_at && <> · Updated <time dateTime={card.updated_at}>{relativeTime(card.updated_at)}</time></>}</p>
+
+          <div className="task-card-details">
+            <div className="task-card-field">
+              <label htmlFor={`${titleId}-due-input`}><CalendarDays aria-hidden="true" />Due</label>
+              <span className="task-card-field-control">
+                <input
+                  id={`${titleId}-due-input`}
+                  type="date"
+                  value={dueDraft ?? card.due_on ?? ""}
+                  min="1900-01-01"
+                  max="2999-12-31"
+                  disabled={savingDetails}
+                  onChange={(event) => {
+                    // Browsers report "" while a typed date is incomplete, so only a full date saves;
+                    // Clear removes the date.
+                    const value = event.target.value;
+                    setDueDraft(value);
+                    if (value && value !== card.due_on) void saveDetails({ dueOn: value }, "Due date saved");
+                  }}
+                  onBlur={() => setDueDraft(null)}
+                  aria-describedby={`${titleId}-due`}
+                />
+                {card.due_on && <button type="button" className="secondary-button task-small-button" disabled={savingDetails} onClick={() => { setDueDraft(null); void saveDetails({ dueOn: null }, "Due date removed"); }}>Clear</button>}
+              </span>
+              {(() => {
+                const due = dueStatus(card.due_on, localDateString(), column?.is_done === 1);
+                return <small id={`${titleId}-due`} className={due ? `task-due-text ${due.tone}` : "task-due-text"}>{due ? due.description : card.due_on ? "In a done column" : "No due date"}</small>;
+              })()}
+            </div>
+            <div className="task-card-field">
+              <label htmlFor={`${titleId}-assignee`}><UserRound aria-hidden="true" />Assignee</label>
+              <select
+                id={`${titleId}-assignee`}
+                value={card.assignee_id ?? ""}
+                disabled={savingDetails || readers === null}
+                onChange={(event) => {
+                  const value = event.target.value || null;
+                  const name = readers?.find((reader) => reader.id === value)?.displayName;
+                  void saveDetails({ assigneeId: value }, value ? `Assigned to ${name ?? "them"}` : "Unassigned");
+                }}
+              >
+                <option value="">Nobody</option>
+                {card.assignee_id && !readers?.some((reader) => reader.id === card.assignee_id) && <option value={card.assignee_id}>{card.assignee_name ?? "Former member"}</option>}
+                {(readers ?? []).map((reader) => <option key={reader.id} value={reader.id}>{reader.id === userId ? `${reader.displayName} (me)` : reader.displayName}</option>)}
+              </select>
+            </div>
+          </div>
 
           <section className="task-card-section" aria-labelledby={`${titleId}-description`}>
             <header><h3 id={`${titleId}-description`}>Description</h3>{!editing && <button className="secondary-button task-small-button" onClick={startEditing}><Pencil />Edit</button>}</header>

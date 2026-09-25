@@ -16,7 +16,8 @@ export type BoardSummary = {
   updated_at: string;
 };
 
-export type BoardColumn = { id: string; board_id: string; name: string; position: number; created_at: string; updated_at: string };
+/** `is_done` (migration 011): cards in done columns are left out of Today and the due chip. */
+export type BoardColumn = { id: string; board_id: string; name: string; position: number; is_done: 0 | 1; created_at: string; updated_at: string };
 
 export type CardSummary = {
   id: string;
@@ -28,6 +29,10 @@ export type CardSummary = {
   revision: number;
   created_by: string | null;
   creator_name: string | null;
+  /** YYYY-MM-DD or null. */
+  due_on: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
   comment_count: number;
   attachment_count: number;
   created_at: string;
@@ -42,13 +47,15 @@ export const listBoards = () => api<{ boards: BoardSummary[] }>("/tasks/boards")
 export const createBoard = (name: string) => api<{ board: BoardSummary; columns: BoardColumn[] }>("/tasks/boards", json("POST", { name }));
 export const getBoard = (boardId: string) => api<BoardDetail>(`/tasks/boards/${boardId}`);
 export const renameBoard = (boardId: string, name: string) => api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { name }));
+/** Everyone who can open the board, for the assignee picker. */
+export const getBoardReaders = (boardId: string) => api<{ users: Array<{ id: string; displayName: string }> }>(`/tasks/boards/${boardId}/readers`);
 export const getBoardSharing = (boardId: string) => api<{ visibility: BoardVisibility; users: Array<{ id: string; display_name: string }> }>(`/tasks/boards/${boardId}/sharing`);
 export const saveBoardSharing = (boardId: string, visibility: BoardVisibility, userIds: string[]) =>
   api<{ ok: true }>(`/tasks/boards/${boardId}/sharing`, json("PUT", { visibility, userIds: visibility === "selected" ? userIds : [] }));
 
 export const createColumn = (boardId: string, name: string, afterColumnId?: string | null) =>
   api<{ column: BoardColumn; columns: BoardColumn[] }>(`/tasks/boards/${boardId}/columns`, json("POST", afterColumnId === undefined ? { name } : { name, afterColumnId }));
-export const updateColumn = (columnId: string, change: { name?: string; afterColumnId?: string | null }) =>
+export const updateColumn = (columnId: string, change: { name?: string; afterColumnId?: string | null; isDone?: boolean }) =>
   api<{ column: BoardColumn; columns: BoardColumn[] }>(`/tasks/columns/${columnId}`, json("PATCH", change));
 export const deleteColumn = (columnId: string) => api<{ ok: true; columns: BoardColumn[] }>(`/tasks/columns/${columnId}`, json("DELETE", {}));
 
@@ -76,7 +83,8 @@ export type CardComment = {
 export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean; attachments: CardAttachment[] };
 
 export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}`);
-export const updateCard = (cardId: string, change: { title?: string; description?: string; revision: number }) =>
+export type CardChange = { title?: string; description?: string; dueOn?: string | null; assigneeId?: string | null };
+export const updateCard = (cardId: string, change: CardChange & { revision: number }) =>
   api<{ card: CardDetail }>(`/tasks/cards/${cardId}`, json("PATCH", change));
 export const listComments = (cardId: string, before: string) =>
   api<{ comments: CardComment[]; hasMore: boolean }>(`/tasks/cards/${cardId}/comments?before=${encodeURIComponent(before)}`);

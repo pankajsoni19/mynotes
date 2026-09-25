@@ -46,7 +46,7 @@ export type BoardSummary = {
   updated_at: string;
 };
 
-export type ColumnSummary = Pick<ColumnRow, "id" | "board_id" | "name" | "position" | "created_at" | "updated_at">;
+export type ColumnSummary = Pick<ColumnRow, "id" | "board_id" | "name" | "position" | "is_done" | "created_at" | "updated_at">;
 
 const boardSummarySelect = `
   SELECT b.id, b.name, b.owner_id, u.display_name AS owner_name,
@@ -67,7 +67,7 @@ export function listBoards(userId: string) {
 }
 
 export function listColumns(boardId: string) {
-  return db.query("SELECT id, board_id, name, position, created_at, updated_at FROM board_columns WHERE board_id = ? ORDER BY position, id")
+  return db.query("SELECT id, board_id, name, position, is_done, created_at, updated_at FROM board_columns WHERE board_id = ? ORDER BY position, id")
     .all(boardId) as ColumnSummary[];
 }
 
@@ -85,6 +85,10 @@ export type CardSummary = {
   revision: number;
   created_by: string | null;
   creator_name: string | null;
+  /** Calendar date YYYY-MM-DD (migration 011). */
+  due_on: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
   comment_count: number;
   attachment_count: number;
   created_at: string;
@@ -95,10 +99,11 @@ const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
          k.revision, k.created_by, cu.display_name AS creator_name,
+         k.due_on, k.assignee_id, au.display_name AS assignee_name,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
          k.created_at, k.updated_at${extraColumns}
-  FROM cards k LEFT JOIN users cu ON cu.id = k.created_by
+  FROM cards k LEFT JOIN users cu ON cu.id = k.created_by LEFT JOIN users au ON au.id = k.assignee_id
 `;
 export const cardSummarySelect = cardSelect();
 const cardDetailSelect = cardSelect(", k.description");
@@ -133,8 +138,9 @@ export function createBoard(userId: string, name: string) {
     const id = crypto.randomUUID();
     const timestamp = now();
     db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(id, userId, name, timestamp, timestamp);
-    const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
-    DEFAULT_COLUMNS.forEach((columnName, index) => insertColumn.run(crypto.randomUUID(), id, columnName, (index + 1) * 1024, timestamp, timestamp));
+    const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    // The default "Done" column is a done column (D53), as the 011 backfill does for existing boards.
+    DEFAULT_COLUMNS.forEach((columnName, index) => insertColumn.run(crypto.randomUUID(), id, columnName, (index + 1) * 1024, columnName === "Done" ? 1 : 0, timestamp, timestamp));
     audit(userId, null, "task.board_create", { boardId: id });
     return { board: boardSummary(id, userId)!, columns: listColumns(id) };
   })();
@@ -237,7 +243,7 @@ function requireOwnedColumn(columnId: string, userId: string) {
   return found;
 }
 
-export async function patchColumn(userId: string, columnId: string, input: { name?: string; afterColumnId?: string | null }) {
+export async function patchColumn(userId: string, columnId: string, input: { name?: string; afterColumnId?: string | null; isDone?: boolean }) {
   const { board } = requireOwnedColumn(columnId, userId);
   return withBoardLock(board.id, () => {
     requireOwnedColumn(columnId, userId);
@@ -253,6 +259,10 @@ export async function patchColumn(userId: string, columnId: string, input: { nam
       if (input.name !== undefined) {
         db.query("UPDATE board_columns SET name = ?, updated_at = ? WHERE id = ?").run(input.name, timestamp, columnId);
         audit(userId, null, "task.column_rename", { boardId: board.id, columnId });
+      }
+      if (input.isDone !== undefined) {
+        db.query("UPDATE board_columns SET is_done = ?, updated_at = ? WHERE id = ?").run(input.isDone ? 1 : 0, timestamp, columnId);
+        audit(userId, null, "task.column_done", { boardId: board.id, columnId, isDone: input.isDone });
       }
       if (plan) {
         applyRenumber("board_columns", plan.renumbered);
@@ -324,7 +334,7 @@ export function requireReadableCard(cardId: string, userId: string) {
   return found;
 }
 
-export type CardCreateInput = { columnId: string; title: string; description?: string; afterCardId?: string | null };
+export type CardCreateInput = { columnId: string; title: string; description?: string; dueOn?: string | null; afterCardId?: string | null };
 
 /** Creates a card. `afterCardId`: omitted = bottom of the column, null = top, an id = after that card. */
 export function createCard(userId: string, boardId: string, input: CardCreateInput) {
@@ -339,8 +349,8 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     db.transaction(() => {
       applyRenumber("cards", plan.renumbered);
       const timestamp = now();
-      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", userId, timestamp, timestamp);
+      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, due_on, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", input.dueOn ?? null, userId, timestamp, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
       audit(userId, null, "task.card_create", { boardId, cardId: id });
     })();
@@ -354,9 +364,36 @@ export function getCard(userId: string, cardId: string) {
   return { card: cardDetail(cardId)!, board: found.board };
 }
 
-export type CardPatchInput = { title?: string; description?: string; revision: number };
+export type CardPatchInput = { title?: string; description?: string; dueOn?: string | null; assigneeId?: string | null; revision: number };
 
-/** Edits title and/or description with a compare-and-swap on `revision` (409 CARD_CHANGED carries the current card). */
+/**
+ * Users who can read the board, for the assignee picker: the owner plus the
+ * members (`selected`), or every enabled user (`all_users`). Capped like
+ * `GET /api/users`.
+ */
+export function listBoardReaders(userId: string, boardId: string) {
+  const board = requireReadableBoard(boardId, userId);
+  const rows = board.visibility === "all_users"
+    ? db.query("SELECT id, display_name FROM users WHERE disabled_at IS NULL ORDER BY display_name, id LIMIT 200").all()
+    : db.query(`SELECT u.id, u.display_name FROM users u WHERE u.disabled_at IS NULL AND (u.id = $ownerId
+        OR ($visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = $boardId AND m.user_id = u.id)))
+        ORDER BY u.display_name, u.id LIMIT 200`).all({ ownerId: board.owner_id, visibility: board.visibility, boardId });
+  return { users: (rows as Array<{ id: string; display_name: string }>).map((row) => ({ id: row.id, displayName: row.display_name })) };
+}
+
+/** 400 ASSIGNEE_NOT_MEMBER unless the user is enabled and can read the board (D53). */
+function requireAssignableUser(boardId: string, assigneeId: string) {
+  const enabled = db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(assigneeId);
+  if (!enabled || !readableBoard(boardId, assigneeId)) {
+    throw new TaskError(400, "The assignee must be able to open this board", "ASSIGNEE_NOT_MEMBER");
+  }
+}
+
+/**
+ * Edits title, description, due date, and/or assignee with a compare-and-swap
+ * on `revision` (409 CARD_CHANGED carries the current card). `dueOn` and
+ * `assigneeId` accept null to clear.
+ */
 export async function patchCard(userId: string, cardId: string, input: CardPatchInput) {
   const { board } = requireReadableCard(cardId, userId);
   return withBoardLock(board.id, () => {
@@ -364,13 +401,31 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
     if (card.revision !== input.revision) {
       throw new TaskError(409, "Someone else changed this card", "CARD_CHANGED", { card: cardDetail(cardId)! });
     }
+    if (input.assigneeId) requireAssignableUser(board.id, input.assigneeId);
     db.transaction(() => {
       const timestamp = now();
-      const updated = db.query(`UPDATE cards SET title = COALESCE(?, title), description = COALESCE(?, description), revision = revision + 1, updated_at = ?
-        WHERE id = ? AND revision = ? AND deleted_at IS NULL`).run(input.title ?? null, input.description ?? null, timestamp, cardId, input.revision);
+      const updated = db.query(`UPDATE cards SET title = COALESCE($title, title), description = COALESCE($description, description),
+          due_on = CASE WHEN $setDue THEN $dueOn ELSE due_on END,
+          assignee_id = CASE WHEN $setAssignee THEN $assigneeId ELSE assignee_id END,
+          revision = revision + 1, updated_at = $timestamp
+        WHERE id = $cardId AND revision = $revision AND deleted_at IS NULL`).run({
+        title: input.title ?? null,
+        description: input.description ?? null,
+        setDue: input.dueOn !== undefined ? 1 : 0,
+        dueOn: input.dueOn ?? null,
+        setAssignee: input.assigneeId !== undefined ? 1 : 0,
+        assigneeId: input.assigneeId ?? null,
+        timestamp,
+        cardId,
+        revision: input.revision
+      });
       if (updated.changes !== 1) throw new Error("Concurrent card update detected");
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
-      audit(userId, null, "task.card_update", { boardId: board.id, cardId });
+      audit(userId, null, "task.card_update", {
+        boardId: board.id, cardId,
+        ...(input.dueOn !== undefined ? { dueOn: input.dueOn } : {}),
+        ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {})
+      });
     })();
     return { card: cardDetail(cardId)! };
   });

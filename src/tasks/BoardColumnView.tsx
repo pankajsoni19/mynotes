@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ChevronLeft, ChevronRight, Ellipsis, MessageSquare, Paperclip, Plus, AlignLeft } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Ellipsis, MessageSquare, Paperclip, Plus, AlignLeft, UserRound } from "lucide-react";
 import { CARD_DRAG_TYPE, isCardDrag, isMoveKey, type MoveKey } from "./boardOrder";
-import { attachmentCountLabel, cardCountLabel, commentCountLabel, validateCardTitle } from "./taskActions";
+import { attachmentCountLabel, cardCountLabel, commentCountLabel, dueStatus, localDateString, validateCardTitle } from "./taskActions";
 import type { BoardColumn, CardSummary } from "./tasksApi";
 
 type BoardColumnViewProps = {
@@ -44,6 +44,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
   const listRef = useRef<HTMLUListElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const others = cards.filter((card) => card.id !== draggingId);
+  const today = localDateString();
 
   function dragOver(event: ReactDragEvent<HTMLElement>) {
     if (!isCardDrag(event.dataTransfer.types) || !listRef.current) return;
@@ -132,7 +133,12 @@ export function BoardColumnView(props: BoardColumnViewProps) {
           onClick={(event) => { if (!(event.target as Element).closest("button")) props.onOpenCard(card); }}
         >
           <span className="task-card-title">{card.title}</span>
-          {(card.has_description === 1 || card.comment_count > 0 || card.attachment_count > 0) && <span className="task-card-meta">
+          {(() => {
+            const due = dueStatus(card.due_on, today, column.is_done === 1);
+            return due && <span className={`task-due-chip ${due.tone}`} title={due.description}><CalendarDays aria-hidden="true" /><span aria-hidden="true">{due.label}</span><span className="sr-only">{due.description}</span></span>;
+          })()}
+          {(card.has_description === 1 || card.comment_count > 0 || card.attachment_count > 0 || card.assignee_name) && <span className="task-card-meta">
+            {card.assignee_name && <span title={`Assigned to ${card.assignee_name}`}><UserRound aria-hidden="true" /><span className="task-card-assignee" aria-hidden="true">{card.assignee_name}</span><span className="sr-only">{`Assigned to ${card.assignee_name}`}</span></span>}
             {card.has_description === 1 && <span title="Has a description"><AlignLeft aria-label="Has a description" /></span>}
             {card.comment_count > 0 && <span title="Comments"><MessageSquare aria-hidden="true" /><span aria-hidden="true">{card.comment_count}</span><span className="sr-only">{commentCountLabel(card.comment_count)}</span></span>}
             {card.attachment_count > 0 && <span title="Attachments"><Paperclip aria-hidden="true" /><span aria-hidden="true">{card.attachment_count}</span><span className="sr-only">{attachmentCountLabel(card.attachment_count)}</span></span>}

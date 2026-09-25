@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronLeft, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
@@ -253,6 +253,18 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     closeDialog();
   }
 
+  async function setColumnDone(columnId: string, isDone: boolean) {
+    closeDialog();
+    try {
+      const { columns: saved } = await updateColumn(columnId, { isDone });
+      setDetail((current) => current ? { ...current, columns: saved } : current);
+      const changed = saved.find((column) => column.id === columnId);
+      notify(isDone ? `Cards in ${changed?.name ?? "this column"} count as done` : `Cards in ${changed?.name ?? "this column"} count as open`);
+    } catch (reason) {
+      notify(taskErrorMessage(reason, "Could not change the column"));
+    }
+  }
+
   async function moveColumn(columnId: string, direction: -1 | 1) {
     const anchor = columnMoveAnchor(columns, columnId, direction);
     if (anchor === undefined) return;
@@ -414,6 +426,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     {dialog?.kind === "columnMenu" && dialogColumn && <ModalDialog title={dialogColumn.name} eyebrow="Column" onClose={closeDialog}>
       <div className="move-list task-menu">
         <button className="move-option" autoFocus onClick={() => setDialog({ kind: "renameColumn", columnId: dialogColumn.id })}><Pencil aria-hidden="true" /><span>Rename</span></button>
+        <button className="move-option" aria-pressed={dialogColumn.is_done === 1} onClick={() => { void setColumnDone(dialogColumn.id, dialogColumn.is_done !== 1); }}><CircleCheck aria-hidden="true" /><span>{dialogColumn.is_done === 1 ? "Done column (on)" : "Mark as a done column"}<small>Cards here are left out of Today and show no due date</small></span></button>
         <button className="move-option" disabled={columns[0]?.id === dialogColumn.id} onClick={() => { closeDialog(); void moveColumn(dialogColumn.id, -1); }}><ArrowLeft aria-hidden="true" /><span>Move left</span></button>
         <button className="move-option" disabled={columns[columns.length - 1]?.id === dialogColumn.id} onClick={() => { closeDialog(); void moveColumn(dialogColumn.id, 1); }}><ArrowRight aria-hidden="true" /><span>Move right</span></button>
         <button className="move-option danger" disabled={columns.length <= 1} onClick={() => setDialog({ kind: "deleteColumn", columnId: dialogColumn.id })}><Trash2 aria-hidden="true" /><span>Delete column{columns.length <= 1 && <small>A board needs at least one column</small>}</span></button>

@@ -73,6 +73,8 @@ function listedCard(card: CardWithDescription, columnName: string | undefined) {
     description_preview: card.description === undefined ? undefined : preview(card.description),
     revision: card.revision,
     creator_name: card.creator_name,
+    due_on: card.due_on,
+    assignee_name: card.assignee_name,
     comment_count: card.comment_count,
     attachments: attachmentNames(card.id),
     updated_at: card.updated_at
@@ -133,6 +135,8 @@ export const taskTools: McpToolSpec[] = [
           description: plainText(card.description),
           revision: card.revision,
           creator_name: card.creator_name,
+          due_on: card.due_on,
+          assignee_name: card.assignee_name,
           created_at: card.created_at,
           updated_at: card.updated_at
         },
@@ -154,13 +158,14 @@ export const taskTools: McpToolSpec[] = [
       columnId: uuid,
       title: z.string().min(1).max(200),
       description: z.string().optional().describe("Markdown, up to 64 KiB"),
+      dueOn: z.string().optional().describe("Due date as YYYY-MM-DD"),
       afterCardId: uuid.nullable().optional()
     }),
     handler: async ({ boardId, ...fields }, key) => {
       const input = routeInput(cardCreateSchema, fields);
       return service(key, async () => {
         const { card } = await createCard(key.userId, boardId, input);
-        return { card: { id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, revision: card.revision } };
+        return { card: { id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, due_on: card.due_on, revision: card.revision } };
       });
     }
   }),

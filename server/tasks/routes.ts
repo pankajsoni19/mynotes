@@ -16,6 +16,7 @@ import {
   deleteColumn,
   getBoard,
   getSharing,
+  listBoardReaders,
   listBoards,
   patchColumn,
   putSharing,
@@ -33,8 +34,19 @@ export const boardSharingSchema = z.object({
   userIds: z.array(uuid).max(100).default([])
 }).strict();
 export const columnCreateSchema = z.object({ name: label(60), afterColumnId: uuid.nullable().optional() }).strict();
-export const columnPatchSchema = z.object({ name: label(60).optional(), afterColumnId: uuid.nullable().optional() }).strict()
-  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined, "Provide a name or an afterColumnId");
+export const columnPatchSchema = z.object({ name: label(60).optional(), afterColumnId: uuid.nullable().optional(), isDone: z.boolean().optional() }).strict()
+  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined || value.isDone !== undefined, "Provide a name, an afterColumnId, or isDone");
+
+/** A real calendar date `YYYY-MM-DD` between 1900 and 2999 (T71). */
+export function isCalendarDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (year < 1900 || year > 2999) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+export const dueOnSchema = z.string().refine(isCalendarDate, "Use a real date as YYYY-MM-DD");
 
 export const DESCRIPTION_MAX_BYTES = 65_536;
 const description = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= DESCRIPTION_MAX_BYTES, `Descriptions can be at most ${DESCRIPTION_MAX_BYTES} bytes`);
@@ -42,13 +54,17 @@ export const cardCreateSchema = z.object({
   columnId: uuid,
   title: label(200),
   description: description.optional(),
+  dueOn: dueOnSchema.nullable().optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
 export const cardPatchSchema = z.object({
   title: label(200).optional(),
   description: description.optional(),
+  dueOn: dueOnSchema.nullable().optional(),
+  assigneeId: uuid.nullable().optional(),
   revision: z.number().int().positive()
-}).strict().refine((value) => value.title !== undefined || value.description !== undefined, "Provide a title or a description");
+}).strict().refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.assigneeId !== undefined,
+  "Provide a title, description, dueOn, or assigneeId");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
 export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();
@@ -102,6 +118,11 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     const boardId = id(c, "boardId");
     const body = await parseJson(c.req.raw, boardSharingSchema);
     return respond(c, () => putSharing(c.get("user").id, boardId, body.visibility, body.userIds));
+  });
+
+  app.get("/api/tasks/boards/:boardId/readers", (c) => {
+    const boardId = id(c, "boardId");
+    return respond(c, () => listBoardReaders(c.get("user").id, boardId));
   });
 
   app.post("/api/tasks/boards/:boardId/columns", async (c) => {
