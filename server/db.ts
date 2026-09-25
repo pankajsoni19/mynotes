@@ -48,6 +48,26 @@ export type NoteRow = {
   deleted_at: string | null;
 };
 
+export type DocumentRow = {
+  id: string;
+  owner_id: string;
+  folder_id: string | null;
+  name: string;
+  mime_type: string;
+  preview_kind: "image" | "pdf" | "text" | "audio" | "video" | "none";
+  size_bytes: number;
+  sha256: string;
+  visibility: "private" | "selected" | "all_users";
+  sharing_override: number;
+  upload_key: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  purge_after: string | null;
+  purge_started_at: string | null;
+};
+
 export const now = () => new Date().toISOString();
 
 export function ensureDefaultFolder(userId: string) {
