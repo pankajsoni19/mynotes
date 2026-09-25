@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   expandSeries,
   isOccurrenceDate,
+  nextOccurrence,
   isValidDate,
   isValidTimeZone,
   MAX_INSTANCES,
@@ -220,6 +221,19 @@ describe("rules, exdates, timing, and bounds", () => {
     expect(seriesBounds(timed("2026-05-01T08:00", { freq: "daily", interval: 1 })).seriesEndUtc).toBeNull();
     expect(seriesBounds(allDay("2026-05-01", "2026-05-03", null))).toEqual({ startUtc: "2026-05-01T00:00:00.000Z", seriesEndUtc: "2026-05-03T00:00:00.000Z" });
     expect(seriesBounds(allDay("2026-01-31", "2026-02-01", { freq: "monthly", interval: 1, count: 2 })).seriesEndUtc).toBe("2026-04-01T00:00:00.000Z");
+  });
+
+  test("nextOccurrence finds the next start at or after an instant, skipping exdates, and null after the end", () => {
+    const daily = timed("2026-05-01T09:00", { freq: "daily", interval: 1, count: 5 }, { tz: "Europe/Berlin", exdates: ["2026-05-03"] });
+    expect(nextOccurrence(daily, Date.parse("2026-05-01T07:00:00Z"), "UTC")).toEqual({ date: "2026-05-01", startMs: Date.parse("2026-05-01T07:00:00Z") });
+    expect(nextOccurrence(daily, Date.parse("2026-05-01T07:00:01Z"), "UTC")?.date).toBe("2026-05-02");
+    expect(nextOccurrence(daily, Date.parse("2026-05-02T08:00:00Z"), "UTC")?.date).toBe("2026-05-04");
+    expect(nextOccurrence(daily, Date.parse("2026-05-06T00:00:00Z"), "UTC")).toBeNull();
+    expect(nextOccurrence(timed("2026-05-01T09:00", null), Date.parse("2026-05-02T00:00:00Z"), "UTC")).toBeNull();
+    // All-day occurrences start at midnight in the asker's zone.
+    expect(nextOccurrence(allDay("2026-05-10", "2026-05-11", null), Date.parse("2026-05-01T00:00:00Z"), "Asia/Kolkata")?.startMs).toBe(Date.parse("2026-05-09T18:30:00Z"));
+    // Endless series far in the past stay cheap.
+    expect(nextOccurrence(timed("1990-01-01T07:00", { freq: "weekly", interval: 1 }), Date.parse("2026-05-01T00:00:00Z"), "UTC")?.date).toBe("2026-05-04");
   });
 
   test("isOccurrenceDate matches only real occurrence starts", () => {

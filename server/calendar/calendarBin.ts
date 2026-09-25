@@ -1,6 +1,7 @@
 import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
 import { calendarWriterPredicate, editableCalendarPredicate } from "./access";
+import { rescheduleCalendarReminders, rescheduleEventReminders } from "./reminders";
 import { MAX_CALENDARS_PER_OWNER } from "./service";
 
 /**
@@ -82,6 +83,8 @@ export function restoreCalendarItem(type: CalendarBinType, id: string, userId: s
         WHERE id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`).run(now(), id);
       if (restored.changes !== 1) return { status: "purging" };
       audit(userId, null, `${type}.restore`, type === "calendar" ? { calendarId: id } : { eventId: id, calendarId: row.calendar_id });
+      if (type === "calendar") rescheduleCalendarReminders(id);
+      else rescheduleEventReminders(id);
       return { status: "restored", calendarId: row.calendar_id, calendarName: row.calendar_name };
     })();
   });

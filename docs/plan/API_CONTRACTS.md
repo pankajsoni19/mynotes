@@ -256,7 +256,7 @@ Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT
 
 ## Calendar (Wave 12)
 
-Calendars, events, and links ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D63). JSON only. Stage A covers the endpoints below; reminders, notifications, push, and feeds arrive in stages B–D.
+Calendars, events, links, reminders, and notifications ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D64). JSON only. Push and feeds arrive in stages C–D.
 
 **Roles (D54).** The owner does everything. Everyone the calendar is shared with (`visibility` `selected` with a member row, or `all_users`) gets the calendar's single audience role `share_role`: `viewer` reads, `editor` also creates, edits, undoes, skips dates on, links, and bins events. Only the owner renames, recolours, shares, or bins the calendar.
 
@@ -328,6 +328,32 @@ type Occurrence = {
 **Links.** The linker must be able to read the target, and an unreadable target returns the same 404 as a missing one. Links are resolved per viewer on every read: the title when the viewer can read the target, otherwise `{ title: null, restricted: true }` (T59). Links never grant access. `note` targets use the live note ACL. `card` and `collection_row` targets are validated as UUIDs only and resolve as restricted until the Tasks and Collections modules register a resolver (`server/calendar/links.ts`).
 
 **Audit.** `calendar.create`, `calendar.update`, `calendar.delete`, `calendar.sharing_changed { calendarId, visibility, shareRole, recipientCount }`, `event.create { eventId, calendarId }`, `event.update`, `event.undo`, `event.exdate`, `event.delete { eventId }`, `event.link` / `event.unlink { eventId, targetType, targetId }`. Ids only: titles, descriptions, and locations are never audited.
+
+### Reminders and notifications (Wave 12 stage B)
+
+Reminders are private to whoever set them (D64): every endpoint is scoped to the caller, and anyone who can read an event (viewers included) may set their own reminders on it.
+
+```ts
+type Reminder = { id: string; eventId: string | null; offsetMinutes: number | null; title: string | null; tz: string; nextFireAt: string | null; lastFiredAt: string | null; createdAt: string };
+type NotificationItem = { id: string; title: string; href: string; late: boolean; read: boolean; createdAt: string; occurrenceStart: string | null };
+```
+
+| Endpoint | Success | Errors |
+| --- | --- | --- |
+| `GET /api/reminders?eventId` | 200 `{ reminders: Reminder[] }`: the caller's event reminders and upcoming standalone ones | 400 (malformed `eventId`) |
+| `POST /api/reminders {eventId, offsetMinutes, tz}` | 201 `{ reminder }` | 400; 404 (event not readable); 409 `REMINDER_EXISTS` (same offset) or `LIMIT_REACHED` (10 per event per user) |
+| `POST /api/reminders {title, fireAt, tz}` | 201 `{ reminder }` | 400 (`fireAt` is a real local `yyyy-mm-ddTHH:MM` in `tz`, in the future); 409 `LIMIT_REACHED` (500 upcoming standalone per user) |
+| `DELETE /api/reminders/:id` | 200 `{ ok }` | 404 (missing or someone else's) |
+| `GET /api/notifications?unread=1&limit` | 200 `{ items: NotificationItem[], unreadCount }`, newest first, `limit` 1–50 (default 20) | 400 |
+| `POST /api/notifications/read {ids: uuid[1..100]} \| {all: true}` | 200 `{ ok, updated }`; ids that are not the caller's are ignored | 400 |
+
+- `offsetMinutes` is how long before each occurrence starts the reminder fires (−1440 to 40320; negative is after the start). Timed events use their own zone; all-day events start at midnight in the reminder's `tz`, so 09:00 on the day is −540. A single event in the past has no upcoming time (400).
+- **Dispatcher.** Every 30 s (an `unref` timer, one tick at a time, at most 200 reminders per tick) each due reminder is claimed, re-checked, written as a durable `notifications` row, and advanced to its next occurrence in one transaction. A reminder missed while the server was down fires once, `late: true`, when under 24 h late, and is skipped when later; either way it advances past now, so misses never pile up. At most 60 notifications per user per hour are written; the rest are dropped.
+- **Access (T67).** At fire time the dispatcher re-checks that the user is still in the calendar's audience and deletes the reminder otherwise (audited `reminder.removed_access_lost`). A binned event or calendar pauses its reminders (`nextFireAt: null`); restoring it, editing the event's timing, undo, or skipping a date reschedules them.
+- **Titles and links.** Titles are resolved when listed: the event's current title while the caller can read it, otherwise "An event you can no longer open"; a standalone reminder's own title. `href` is `/calendar/event/<id>` built from a validated event id, or `/notifications` (T68).
+- **Retention.** The hourly sweeper deletes notifications after 30 days, and fired standalone reminders 30 days after they fired.
+- **Audit.** `reminder.create { reminderId, eventId? }`, `reminder.delete { reminderId }`: ids only.
+- **Today (Wave 10).** `listUpcoming(userId, tz, days)` in `server/calendar/service.ts` is the provider for the `upcoming` section: unfinished occurrences through the next `days` local days, at most 10 with `more`.
 
 <a id="calendar-items-in-the-bin"></a>
 ### Calendar items in the Bin (D68)

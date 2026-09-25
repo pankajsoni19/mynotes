@@ -361,6 +361,29 @@ export function seriesBounds(series: SeriesInput): { startUtc: string; seriesEnd
   return { startUtc: iso(startMs), seriesEndUtc: null };
 }
 
+/**
+ * The first occurrence of the series that starts at or after `afterMs`, skipping exdates, or null
+ * when the series has ended. Timed occurrences start at their wall time in the event's zone;
+ * all-day occurrences start at local midnight in `allDayTz` (the zone of whoever is asking, since
+ * all-day events float). Used to schedule reminders.
+ */
+export function nextOccurrence(series: SeriesInput, afterMs: number, allDayTz: string): { date: string; startMs: number } | null {
+  const exdates = new Set(series.exdates ?? []);
+  const startDay = dateToDay(startDateOf(series));
+  const time = series.allDay ? "T00:00" : series.startLocal.slice(10);
+  const zone = series.allDay ? allDayTz : series.tz;
+  // Two days of slack cover any zone offset between the instant and the local date.
+  const fromDay = Math.floor(afterMs / DAY_MS) - 2;
+  for (const day of seriesDays(startDay, series.rule, fromDay)) {
+    if (day < fromDay) continue;
+    const date = dayToDate(day);
+    if (exdates.has(date)) continue;
+    const startMs = zonedToUtc(`${date}${time}`, zone);
+    if (startMs >= afterMs) return { date, startMs };
+  }
+  return null;
+}
+
 /** Whether `date` is the local start date of an occurrence of the series (exdates ignored). */
 export function isOccurrenceDate(series: SeriesInput, date: string) {
   if (!isValidDate(date)) return false;

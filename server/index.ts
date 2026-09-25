@@ -9,6 +9,7 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
+import { startDispatcher } from "./calendar/reminders";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
@@ -871,6 +872,7 @@ try {
   console.error("Search index reconcile failed", errorClass(error));
 }
 startSweeper();
+startDispatcher();
 
 export default {
   port: config.port,

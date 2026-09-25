@@ -1,4 +1,5 @@
 import { sweepBin, type BinSweepCounts } from "./bin";
+import { sweepNotifications } from "./calendar/reminders";
 import { db } from "./db";
 import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 
@@ -44,6 +45,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (bin.purged || bin.pending) console.info(`Bin sweep: ${bin.purged} purged, ${bin.pending} pending retry`);
       } catch (error) {
         console.error("Bin sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Calendar notifications (and fired standalone reminders) are kept for 30 days.
+        const removed = sweepNotifications(options.nowMs);
+        if (removed.notifications || removed.reminders) console.info(`Notification sweep: ${removed.notifications} notifications and ${removed.reminders} fired reminders removed`);
+      } catch (error) {
+        console.error("Notification sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       return counts && bin ? { ...counts, bin } : null;
     } finally {

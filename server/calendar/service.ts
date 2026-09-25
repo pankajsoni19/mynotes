@@ -13,14 +13,19 @@ import {
   type ShareRole
 } from "./access";
 import { canLinkTarget, MAX_LINKS_PER_EVENT, resolveLink, type LinkTargetType, type ResolvedLink } from "./links";
+import { rescheduleEventReminders } from "./reminders";
 import {
+  addDays,
   expandSeries,
   isOccurrenceDate,
+  isValidTimeZone,
   MAX_INSTANCES,
   normalizeExdates,
   normalizeRule,
+  rangeFor,
   RecurrenceError,
   seriesBounds,
+  utcToZoned,
   validateTiming,
   type EventTiming,
   type ExpansionRange,
@@ -381,6 +386,7 @@ export function patchEvent(userId: string, eventId: string, patch: EventPatch) {
   if (patch.description !== undefined) values.description = patch.description;
   if (patch.location !== undefined) values.location = patch.location;
   const updated = db.transaction(() => applyChange(event, userId, patch.revision, values, "event.update"))();
+  rescheduleEventReminders(eventId);
   return eventResponse(updated, calendar, userId);
 }
 
@@ -399,6 +405,7 @@ export function undoEvent(userId: string, eventId: string, revision: number) {
     .run({ ...previous, userId, timestamp, id: eventId, revision });
   if (result.changes !== 1) throw changed(eventById(eventId));
   audit(userId, null, "event.undo", { eventId });
+  rescheduleEventReminders(eventId);
   return eventResponse(eventById(eventId), calendar, userId);
 }
 
@@ -413,6 +420,7 @@ export function addExdate(userId: string, eventId: string, date: string, revisio
   if (exdates.includes(date)) return eventResponse(event, calendar, userId);
   const normalized = checked(() => normalizeExdates([...exdates, date]));
   const updated = db.transaction(() => applyChange(event, userId, event.revision, { exdates_json: JSON.stringify(normalized) }, "event.exdate"))();
+  rescheduleEventReminders(eventId);
   return eventResponse(updated, calendar, userId);
 }
 
@@ -509,5 +517,22 @@ export function listOccurrences(userId: string, range: ExpansionRange, calendarI
   }
   items.sort((left, right) => left.sortKey.localeCompare(right.sortKey) || left.eventId.localeCompare(right.eventId));
   return { occurrences: items.map(({ sortKey: _sortKey, ...item }) => item), truncated };
+}
+
+export const UPCOMING_LIMIT = 10;
+
+/**
+ * The provider for Today's `upcoming` section (D51, D52; wired in Wave 10): occurrences on
+ * readable calendars from now through the next `days` local days in `tz`, not yet ended, at most
+ * 10 with `more` when there are others. Uses the same predicate and expansion as the range API.
+ */
+export function listUpcoming(userId: string, tz: string, days = 7, nowMs = Date.now()) {
+  if (!isValidTimeZone(tz)) throw invalid("Unknown time zone");
+  const span = Math.min(100, Math.max(1, Math.floor(days)));
+  const today = checked(() => utcToZoned(nowMs, tz).slice(0, 10));
+  const range = checked(() => rangeFor(today, addDays(today, span), tz));
+  const live = listOccurrences(userId, range, null).occurrences
+    .filter((item) => item.allDay ? item.end > today : Date.parse(item.end) > nowMs);
+  return { items: live.slice(0, UPCOMING_LIMIT), more: live.length > UPCOMING_LIMIT };
 }
 
