@@ -588,6 +588,7 @@ export function App() {
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
   const [toast, setToast] = useState("");
   const [selectionOwner, setSelectionOwner] = useState<string | null>(null);
+  const [leavingNotes, setLeavingNotes] = useState(false);
   const sessionUserRef = useRef<string | null>(null);
   const noteLoadGenerationRef = useRef(0);
   const revisionRef = useRef<number | null>(null);
@@ -981,6 +982,8 @@ export function App() {
   async function leaveNotes() {
     if (switchingRef.current) return false;
     switchingRef.current = true;
+    // Lock the editor so keystrokes cannot land between the save and the post-publish reload.
+    setLeavingNotes(true);
     try {
       // The note stays selected for when Notes reopens, so a published note is reloaded to clear its draft state.
       if (await finalizeCurrentNote(true) === "removed-empty") {
@@ -996,6 +999,7 @@ export function App() {
       return false;
     } finally {
       switchingRef.current = false;
+      setLeavingNotes(false);
     }
   }
 
@@ -1215,7 +1219,7 @@ export function App() {
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner} onChange={setMarkdown} />
+            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !leavingNotes} onChange={setMarkdown} />
           </article>
         </>}
       </section>
