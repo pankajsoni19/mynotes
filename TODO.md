@@ -156,6 +156,7 @@ The product is a private workspace (Notes, Files, Bin, Tasks next), so "MyNotes"
 | 12 Calendar | branch `wave12-calendar` | Stage A in progress: migration 013, recurrence helpers, calendar/event APIs, agenda/month/event routes, links, Bin parity. Reminders/push/feeds/MCP later. |
 | 11 Collections | branch `wave11-collections` | Stages A–D in progress: migration 012, schema/templates, query API, table + mobile UI, sharing, views, attachments, Bin, search, CSV. MCP tools after Wave 8. |
 | 10 Today | not started | After Wave 9 (needs cards for migration 011). |
+| Bin placement | branch `bin-placement` | Operator feedback: the Bin is a utility, not a module. Moving it from the Home grid to the utility row (with a count badge when non-empty) and into each app's sidebar footer; `/bin` route unchanged. |
 
 Merge order: 9 → 8 → 11 → 12 (then 10). Each gets one independent review; QA is delegated; container verification once per release.
 

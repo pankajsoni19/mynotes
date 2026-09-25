@@ -27,7 +27,7 @@ Today is small and fixes the section contract that W11 and W12 plug into. Collec
 
 | # | Decision | Why |
 | --- | --- | --- |
-| D50 | Home **becomes** Today at `/`. The card grid shrinks to a launcher row (Notes, Files, Tasks, Collections, Calendar, Bin) above the sections. | One landing, fewer taps; `/` is already the mobile landing |
+| D50 | Home **becomes** Today at `/`. The card grid shrinks to a launcher row (Notes, Files, Tasks, Collections, Calendar) above the sections. **The Bin is not a launcher item** (operator, 2026-09-25): it lives in the utility row next to Settings and Sign out and in each app's sidebar footer; Today shows only the `binSoon` line. | One landing, fewer taps; `/` is already the mobile landing |
 | D51 | `GET /api/today` composes **providers**. Each provider calls its module's exported predicate or list function (`readableNotePredicate`, the readable-document predicate, `readableBoard`, `listBin`, `readableCollection`, `readableCalendar`). | No new visibility path (T50) |
 | D52 | Sections are bounded to ≤10 items (fetch 11 → `more`) with an `href`. The client sends `tz`. A failing provider errors only its own section, and modules that are not installed are absent. No caching. | Bounded cost, graceful degradation |
 | D53 | Migration `011` adds `cards.due_on` (a date), `cards.assignee_id` (must be a board reader), and `board_columns.is_done` (backfilled for "Done"). Hidden sections are stored in `localStorage`. | "Due", "mine", and "open" need them |
