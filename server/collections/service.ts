@@ -15,7 +15,7 @@ import {
   type RowRecord,
   type ShareRole
 } from "./access";
-import { compileQuery, decodeCursor, encodeCursor, QUERY_LIMITS, QueryError, specKey, type QuerySpec } from "./query";
+import { compileQuery, decodeCursor, encodeCursor, QUERY_LIMITS, QueryError, specKey, type FilterSpec, type QuerySpec, type SortSpec } from "./query";
 import {
   buildSchema,
   parseStoredSchema,
@@ -648,9 +648,15 @@ function effectiveSpec(collectionId: string, input: QueryInput) {
 
 function compile(schema: CollectionSchema, spec: QuerySpec, viewSpec: QuerySpec | null) {
   try {
-    // Clauses from a saved view may name fields removed since; those are dropped.
-    const fromView = viewSpec !== null && spec.sort === viewSpec.sort && spec.filters === viewSpec.filters;
-    return compileQuery(schema, spec, fromView ? "lenient" : "strict");
+    // Clauses from a saved view may name fields removed (or changed) since; those are dropped. The
+    // client sends the view's clauses back as copies alongside its own (for example a new sort), so
+    // a clause counts as the view's when it equals one of them; anything else is checked strictly.
+    if (viewSpec === null) return compileQuery(schema, spec, "strict");
+    const sortKey = (sort: SortSpec) => JSON.stringify([sort.fieldId, sort.direction ?? "asc"]);
+    const filterKey = (filter: FilterSpec) => JSON.stringify([filter.fieldId, filter.op, filter.value ?? null]);
+    const viewSorts = new Set((viewSpec.sort ?? []).map(sortKey));
+    const viewFilters = new Set((viewSpec.filters ?? []).map(filterKey));
+    return compileQuery(schema, spec, (clause) => "sort" in clause ? viewSorts.has(sortKey(clause.sort)) : viewFilters.has(filterKey(clause.filter)));
   } catch (error) {
     if (error instanceof QueryError) throw new CollectionError(400, error.message, "INVALID_QUERY");
     throw error;

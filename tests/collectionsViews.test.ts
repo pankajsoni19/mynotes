@@ -35,6 +35,30 @@ describe("saved views", () => {
     expect((await call(owner, "POST", `/${collection.id}/query`, { viewId: view.id })).status).toBe(404);
   });
 
+  test("a view whose filter field was removed can still be re-sorted, with its clauses copied back", async () => {
+    const owner = await createUser("Stale view owner");
+    const collection = await newCollection(owner, { name: "Stale", fields: [{ name: "Title", type: "text" }, { name: "Pages", type: "number" }, { name: "Read", type: "checkbox" }] });
+    const [title, pages, read] = collection.fields;
+    for (const [name, count] of [["B", 100], ["A", 300]] as const) await addRow(owner, collection.id, { [title!.id]: name, [pages!.id]: count, [read!.id]: true });
+    const staleFilter = { fieldId: pages!.id, op: "gte", value: 50 };
+    const staleSort = { fieldId: pages!.id, direction: "desc" };
+    const view = (await call(owner, "POST", `/${collection.id}/views`, { name: "Long", config: { sort: [staleSort], filters: [staleFilter] } })).body.view;
+    const fields = collection.fields.filter((field) => field.id !== pages!.id).map((field) => ({ id: field.id, name: field.name, type: field.type }));
+    expect((await call(owner, "PUT", `/${collection.id}/schema`, { schemaVersion: 1, fields })).status).toBe(200);
+
+    const sort = [{ fieldId: title!.id, direction: "asc" }];
+    const resorted = await call(owner, "POST", `/${collection.id}/query`, { viewId: view.id, sort });
+    expect(resorted.status).toBe(200);
+    expect(resorted.body.rows.map((row: Row) => row.title)).toEqual(["A", "B"]);
+    // The UI sends copies of the view's clauses alongside its own; the stale ones are dropped.
+    const copied = await call(owner, "POST", `/${collection.id}/query`, { viewId: view.id, sort: [{ ...staleSort }, ...sort], filters: [{ ...staleFilter }, { fieldId: read!.id, op: "is", value: true }] });
+    expect(copied.status).toBe(200);
+    expect(copied.body.rows.map((row: Row) => row.title)).toEqual(["A", "B"]);
+    // A stale clause the view never had is still refused.
+    const foreign = await call(owner, "POST", `/${collection.id}/query`, { viewId: view.id, filters: [{ fieldId: pages!.id, op: "lt", value: 5 }] });
+    expect([foreign.status, foreign.body.code]).toEqual([400, "INVALID_QUERY"]);
+  });
+
   test("view configs are validated against the schema, capped at 20, and owner-only", async () => {
     const owner = await createUser("View validator");
     const editor = await createUser("View editor");

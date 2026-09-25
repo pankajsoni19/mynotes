@@ -135,9 +135,13 @@ function compileSort(field: FieldDefinition, sort: SortSpec): { sql: string; par
 /**
  * Compiles a spec against the schema. Strict mode (request input) throws
  * QueryError on unknown fields or operators; lenient mode (a saved view whose
- * fields may since have been removed) drops clauses that no longer apply.
+ * fields may since have been removed) drops clauses that no longer apply. A
+ * function decides per clause: true means that clause is lenient.
  */
-export function compileQuery(schema: CollectionSchema, spec: QuerySpec, mode: "strict" | "lenient" = "strict"): CompiledQuery {
+export type ClauseMode = "strict" | "lenient" | ((clause: { sort: SortSpec } | { filter: FilterSpec }) => boolean);
+
+export function compileQuery(schema: CollectionSchema, spec: QuerySpec, mode: ClauseMode = "strict"): CompiledQuery {
+  const lenient = (clause: { sort: SortSpec } | { filter: FilterSpec }) => mode === "lenient" || (typeof mode === "function" && mode(clause));
   const byId = new Map(schema.fields.map((field) => [field.id, field]));
   const where: string[] = [];
   const whereParams: Binding[] = [];
@@ -149,7 +153,7 @@ export function compileQuery(schema: CollectionSchema, spec: QuerySpec, mode: "s
       where.push(compiled.sql);
       whereParams.push(...compiled.params);
     } catch (error) {
-      if (mode === "strict" || !(error instanceof QueryError)) throw error;
+      if (!lenient({ filter }) || !(error instanceof QueryError)) throw error;
     }
   }
   const q = spec.q?.normalize("NFC").trim();
@@ -173,7 +177,7 @@ export function compileQuery(schema: CollectionSchema, spec: QuerySpec, mode: "s
         orderParams.push(...compiled.params);
       }
     } catch (error) {
-      if (mode === "strict" || !(error instanceof QueryError)) throw error;
+      if (!lenient({ sort }) || !(error instanceof QueryError)) throw error;
     }
   }
   order.push("r.position", "r.id");
