@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LayoutGrid, List as ListIcon, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
-import { documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
+import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
@@ -38,9 +38,10 @@ import {
   writeFileSort,
   type FileSort
 } from "./fileActions";
-import { deleteFile, formatBytes, getFile, listFiles, moveFile, renameFile, uploadFile, UploadRequestError } from "./filesApi";
+import { contentUrl, deleteFile, formatBytes, getFile, listFiles, moveFile, renameFile, uploadFile, UploadRequestError } from "./filesApi";
 import { FileActionSheet, type FileSheetAction } from "./FileActionSheet";
 import { FilePreview } from "./FilePreview";
+import { gridColumnCount, moveFileSelection, readFileView, writeFileView, type FileView } from "./fileView";
 import { FileSharePanel } from "./FileSharePanel";
 import { MoveSheet } from "./MoveSheet";
 import { NameDialog, RenameDialog } from "./RenameDialog";
@@ -115,6 +116,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const returnFocusRef = useRef<string | HTMLElement | null>(null);
   const [sort, setSort] = useState<FileSort>(() => readFileSort(browserStorage(), userId));
   const [sortOpen, setSortOpen] = useState(false);
+  const [view, setView] = useState<FileView>(() => readFileView(browserStorage(), userId));
   const [query, setQuery] = useState("");
   // Row drag (move onto a folder) and OS file drag (upload) state.
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -299,6 +301,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     writeFileSort(browserStorage(), userId, next);
   }
 
+  function chooseView(next: FileView) {
+    setView(next);
+    writeFileView(browserStorage(), userId, next);
+  }
+
   function openNewFolder(trigger: HTMLElement) {
     returnFocusRef.current = trigger;
     setDialog({ kind: "newFolder" });
@@ -396,15 +403,17 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     }
   }
 
-  // ↑/↓ move the selection, Enter opens the preview (the row's own click), F2 renames, Delete/Backspace deletes.
+  // ↑/↓ (and ←/→ in the grid) move the selection, Enter opens the preview (the item's own click),
+  // F2 renames, Delete/Backspace deletes.
   function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.altKey || event.ctrlKey || event.metaKey || dialogOpenRef.current) return;
     const rowId = shortcutDocumentId(event.target instanceof Element ? event.target : null, documentId);
     const index = rowId ? visible.findIndex((item) => item.id === rowId) : -1;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (!visible.length) return;
+    const columns = view === "grid" ? gridColumnCount(window.getComputedStyle(event.currentTarget).gridTemplateColumns) : 1;
+    const nextIndex = moveFileSelection(index, event.key, visible.length, columns, view);
+    if (nextIndex !== null) {
       event.preventDefault();
-      const next = visible[index < 0 ? 0 : Math.min(visible.length - 1, Math.max(0, index + (event.key === "ArrowDown" ? 1 : -1)))];
+      const next = visible[nextIndex];
       if (next.id !== documentId) {
         setDocumentId(next.id);
         navigate(filesRoute(folder, next.id), { replace: true, filesPanel: panel });
@@ -514,6 +523,17 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     navigate(filesRoute(folder, document.id), { filesPanel: "preview" });
   }
 
+  // Desktop Close (×) and Esc in the preview pane: deselect and go back to the folder's URL in place.
+  function closePreview() {
+    const closedId = documentId;
+    const { route, panel: nextPanel } = closedPreviewTarget(folder);
+    setDocumentId(null);
+    setExtraDocument(null);
+    setPanel(nextPanel);
+    navigate(route, { replace: true, filesPanel: nextPanel });
+    focusRow(closedId);
+  }
+
   function showPanel(next: FilesPanel, replace = false) {
     setPanel(next);
     navigate(filesRoute(folder, documentId), { filesPanel: next, replace });
@@ -585,10 +605,10 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   const uploadDestination = folder === "all" ? defaultFolder?.name ?? "Default" : currentFolder?.name ?? "";
 
-  return <main className={`workspace files-workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
+  return <main className={`workspace files-workspace${collapsed ? " nav-collapsed" : ""}${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
     <aside className="folder-pane" id="file-folders">
       <header className="sidebar-header">
-        <button className="sidebar-brand sidebar-home-button" onClick={() => leaveFiles(onHome)} aria-label="Open MyNotes home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>Files</strong></span></button>
+        <button className="sidebar-brand sidebar-home-button" onClick={() => leaveFiles(onHome)} aria-label="Open MyNotes home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Files</strong></span></button>
         <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="file-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
       </header>
       <nav className="folder-nav" aria-label="File folders">
@@ -630,6 +650,10 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <div className="note-heading"><span className="eyebrow">{folder === "shared" || currentFolder?.is_owner === 0 ? "Shared" : "Library"}</span><h1 title={folderTitle}>{folderTitle}</h1></div>
         <div className="file-header-row">
           <span className="file-count" aria-live="polite">{fileCountLabel(visible.length, inFolder.length)}</span>
+          <div className="file-view-toggle" role="group" aria-label="View">
+            <button className="icon-button" onClick={() => chooseView("list")} aria-pressed={view === "list"} aria-label="List view" title="List view"><ListIcon /></button>
+            <button className="icon-button" onClick={() => chooseView("grid")} aria-pressed={view === "grid"} aria-label="Grid view" title="Grid view"><LayoutGrid /></button>
+          </div>
           <div className="sort-control file-sort-control">
             <button className="icon-button" onClick={() => setSortOpen((open) => !open)} aria-label={`Sort files: ${fileSortOptions.find((option) => option.value === sort)?.label}`} aria-haspopup="menu" aria-expanded={sortOpen} title="Sort"><ArrowUpDown /></button>
             {sortOpen && <div className="sort-menu" role="menu" aria-label="Sort files">
@@ -641,23 +665,29 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         </div>
         <label className="search-box file-search"><Search aria-hidden="true" /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && query) { event.preventDefault(); setQuery(""); } }} placeholder="Filter files" aria-label="Filter files by name" /></label>
       </header>
-      <p id="file-list-keys" className="sr-only">Use the up and down arrow keys to move between files. On your own files, F2 renames and Delete moves the file to the Bin.</p>
-      <div id="file-list" tabIndex={-1} className="note-list file-list" role="list" aria-label={folderTitle} aria-describedby="file-list-keys" aria-busy={!data && !loadError ? true : undefined} onKeyDown={onListKeyDown}>
+      <p id="file-list-keys" className="sr-only">{view === "grid" ? "Use the arrow keys to move between files." : "Use the up and down arrow keys to move between files."} On your own files, F2 renames and Delete moves the file to the Bin.</p>
+      <div id="file-list" tabIndex={-1} className={`note-list file-list${view === "grid" ? " file-grid" : ""}`} data-view={view} role="list" aria-label={folderTitle} aria-describedby="file-list-keys" aria-busy={!data && !loadError ? true : undefined} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
           const Icon = kindIcon(item.preview_kind);
-          return <div role="listitem" className="file-row-item" key={item.id} {...{ [ROW_ITEM_ATTRIBUTE]: item.id }}>
+          const grid = view === "grid";
+          const sharedIcon = item.visibility !== "private" && <Users className="file-row-shared" aria-label="Shared" />;
+          return <div role="listitem" className={`file-row-item${grid ? " file-tile-item" : ""}`} key={item.id} {...{ [ROW_ITEM_ATTRIBUTE]: item.id }}>
             <button
-              className={`file-row${documentId === item.id ? " selected" : ""}${draggingId === item.id ? " dragging" : ""}`}
+              className={`file-row${grid ? " file-tile" : ""}${documentId === item.id ? " selected" : ""}${draggingId === item.id ? " dragging" : ""}`}
               draggable={canManage(item)}
               onDragStart={(event) => startRowDrag(event, item)}
               onDragEnd={endRowDrag}
               data-document-id={item.id} aria-current={documentId === item.id ? "true" : undefined} aria-keyshortcuts={canManage(item) ? "F2 Delete" : undefined} onClick={() => openDocument(item)}>
-              <span className="file-row-icon"><Icon aria-hidden="true" /></span>
+              {grid
+                ? <span className="file-tile-thumb">{item.preview_kind === "image" ? <img src={contentUrl(item.id, "inline")} loading="lazy" alt="" draggable={false} /> : <Icon aria-hidden="true" />}</span>
+                : <span className="file-row-icon"><Icon aria-hidden="true" /></span>}
               <span className="file-row-copy">
                 <span className="file-row-name" title={item.name}>{item.name}</span>
-                <span className="file-row-meta"><span>{formatBytes(item.size_bytes)}</span><time dateTime={item.updated_at}>{relativeTime(item.updated_at)}</time>{item.is_owner === 0 && <span className="owner-badge">{item.owner_name}</span>}</span>
+                {grid
+                  ? <span className="file-row-meta"><span>{formatBytes(item.size_bytes)}</span>{item.is_owner === 0 && <span className="owner-badge">{item.owner_name}</span>}{sharedIcon}</span>
+                  : <span className="file-row-meta"><span>{formatBytes(item.size_bytes)}</span><time dateTime={item.updated_at}>{relativeTime(item.updated_at)}</time>{item.is_owner === 0 && <span className="owner-badge">{item.owner_name}</span>}</span>}
               </span>
-              {item.visibility !== "private" && <Users className="file-row-shared" aria-label="Shared" />}
+              {!grid && sharedIcon}
             </button>
             <button className="icon-button file-row-more" onClick={(event) => openActions(item, event.currentTarget)} aria-haspopup="dialog" aria-label={`Actions for ${item.name}`}><Ellipsis /></button>
           </div>;
@@ -688,13 +718,18 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       </section>}
     </section>
 
-    <section className="editor-pane file-preview-pane">
+    <section className="editor-pane file-preview-pane" aria-label="File preview" onKeyDown={(event) => {
+      if (event.key !== "Escape" || event.defaultPrevented || dialogOpenRef.current || !selected || isMobileViewport()) return;
+      event.preventDefault();
+      closePreview();
+    }}>
       {selected
         ? <FilePreview
           key={selected.id}
           document={selected}
           folderName={folderLabel(selected)}
           onBack={() => back("files")}
+          onClose={closePreview}
           onMore={(trigger) => openActions(selected, trigger)}
           actions={canManage(selected) ? {
             rename: () => openDialog("rename", selected),

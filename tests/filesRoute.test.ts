@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot } from "../src/filesNavigation";
-import { documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute } from "../src/filesRoute";
+import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute } from "../src/filesRoute";
 import { formatRoute, parseRoute } from "../src/router";
 
 const folderA = "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e";
@@ -53,4 +53,19 @@ test("the history hint is bound to its user and validated strictly", () => {
   expect(readFilesHistorySnapshot({ "mynotes.files-navigation": { version: 1, userId: "user-1", snapshot: { panel: "editor", folder: "all", documentId: null } } }, "user-1")).toBeNull();
   expect(sameFilesSnapshot(snapshot, { ...snapshot })).toBe(true);
   expect(sameFilesSnapshot(snapshot, { ...snapshot, panel: "folders" })).toBe(false);
+});
+
+test("closing the preview maps a file URL back to the folder it was opened from", () => {
+  // Opened from folder A: the file URL resolves back to folder A, and closing returns there.
+  const open = parseRoute(formatRoute(filesRoute(folderA, own.id)));
+  expect(open).toEqual({ app: "files", folder: "all", documentId: own.id });
+  const resolved = resolveFilesRoute(open as ReturnType<typeof filesRoute>, { folders, document: own }, { snapshot: { panel: "preview", folder: folderA, documentId: own.id }, lastFolder: "all" });
+  expect(resolved).toEqual({ folder: folderA, documentId: own.id, missing: null });
+  const closed = closedPreviewTarget(resolved.folder);
+  expect(closed).toEqual({ route: filesRoute(folderA, null), panel: "files" });
+  expect(formatRoute(closed.route)).toBe(`/files/folder/${folderA}`);
+  expect(parseRoute(formatRoute(closed.route))).toEqual(closed.route);
+  expect(resolveFilesPanel({ folder: folderA, documentId: null }, { panel: closed.panel, folder: folderA, documentId: null })).toBe("files");
+  expect(formatRoute(closedPreviewTarget("shared").route)).toBe("/files/shared");
+  expect(formatRoute(closedPreviewTarget("all").route)).toBe("/files");
 });

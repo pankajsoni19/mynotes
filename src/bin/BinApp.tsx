@@ -183,7 +183,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
   return <main className="app-page bin-app">
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>Bin</strong></span></span>
+      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Bin</strong></span></span>
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
 

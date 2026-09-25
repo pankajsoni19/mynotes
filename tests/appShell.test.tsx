@@ -11,7 +11,11 @@ function accountButtons(markup: string) {
 }
 
 test("Home offers Settings and Sign out in its header", () => {
-  const buttons = accountButtons(renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />));
+  const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
+  // The header names the section only; the product name lives on the login page and the document title.
+  expect(markup).toContain('<span class="brand-text"><strong>Home</strong></span>');
+  expect(markup).not.toContain("<small>MyNotes</small>");
+  const buttons = accountButtons(markup);
   expect(buttons).toHaveLength(2);
   expect(buttons[0]).toContain('aria-controls="account-settings-dialog"');
   expect(buttons[0]).toContain('aria-label="Open settings for Ada Lovelace"');
@@ -22,7 +26,8 @@ test("the Bin app offers Home and the same account actions", () => {
   const markup = renderToStaticMarkup(<BinApp {...account} flash={() => undefined} onHome={() => undefined} />);
   expect(accountButtons(markup)).toHaveLength(2);
   expect(markup).toContain(">Sign out</span>");
-  expect(markup).toContain("<small>MyNotes</small><strong>Bin</strong>");
+  expect(markup).toContain("<span class=\"brand-text\"><strong>Bin</strong></span>");
+  expect(markup).not.toContain("<small>MyNotes</small>");
   expect(markup).toContain(">Home</button>");
   // Nothing is loaded yet, so the list shows its loading state and Empty Bin is disabled.
   expect(markup).toContain("Loading the Bin…");

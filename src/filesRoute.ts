@@ -48,3 +48,9 @@ export function resolveFilesPanel(selection: FilesSelection, snapshot: FilesNavi
   if (selection.documentId) return "preview";
   return selection.folder === "all" ? "folders" : "files";
 }
+
+// Closing the desktop preview pane deselects the file: the URL goes back to the folder it was
+// opened from (replacing the file's entry) and the phone panel hint to the list.
+export function closedPreviewTarget(folder: string): { route: FilesRoute; panel: FilesPanel } {
+  return { route: filesRoute(folder, null), panel: "files" };
+}
