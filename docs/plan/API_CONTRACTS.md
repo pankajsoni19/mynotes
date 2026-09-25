@@ -423,6 +423,21 @@ type RowSummary = {
 | `POST /rows/:r/undo { revision }` | editor | 200 `{ row }`: the previous values, projected onto the current schema; undo is one step | 403, 404, 409 `ROW_CHANGED` or `NOTHING_TO_UNDO` |
 | `DELETE /rows/:r` | editor | 200 `{ ok: true, purgeAfter }`: to the Bin | 403, 404 |
 
+### Saved views
+
+```ts
+type ViewConfig = { sort?: SortSpec[] /* ≤ 3 */; filters?: FilterSpec[] /* ≤ 10 */; hiddenFieldIds?: string[] /* never the primary field */ };
+type CollectionView = { id: string; collection_id: string; name: string /* 1–60 */; kind: "table"; config: ViewConfig; position: number; created_at: string; updated_at: string };
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /:c/views { name, kind?: "table", config }` | owner | 201 `{ view }` (appended) | 400 `INVALID_QUERY` (config does not compile against the schema, unknown hidden field) or over 8 KiB, 403, 404, 409 `LIMIT_REACHED` (20) |
+| `PATCH /views/:v { name?, config? }` | owner | 200 `{ view }` | 400, 403, 404 |
+| `DELETE /views/:v` | owner | 200 `{ ok: true }` | 403, 404 |
+
+Views are listed by `GET /:c` for every reader and used through `POST /:c/query { viewId }`; a view id from another collection is 404. `q` is never stored. `kind: "board"` is reserved. Audit: `collection.view_create`, `collection.view_update`, `collection.view_delete` with `{ collectionId, viewId }`.
+
 ### Collection sharing
 
 | Endpoint | Who | Success | Errors |

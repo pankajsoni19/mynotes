@@ -4,7 +4,7 @@ import { ModalDialog } from "../files/Dialog";
 import type { FieldDefinition, FilterSpec, SortSpec } from "./collectionsApi";
 import { defaultFilterValue, filterReady, OPERATOR_LABELS, OPERATORS, SORTABLE_TYPES, valuelessOperator } from "./values";
 
-export type SortFilter = { sort: SortSpec[]; filters: FilterSpec[] };
+export type SortFilter = { sort: SortSpec[]; filters: FilterSpec[]; hiddenFieldIds: string[] };
 
 type SortFilterSheetProps = {
   fields: FieldDefinition[];
@@ -23,10 +23,11 @@ const MAX_FILTERS = 10;
 export function SortFilterSheet({ fields, value, onApply, onClose, onSaveAsView }: SortFilterSheetProps) {
   const [sort, setSort] = useState<SortSpec[]>(value.sort);
   const [filters, setFilters] = useState<FilterSpec[]>(value.filters);
+  const [hidden, setHidden] = useState<string[]>(value.hiddenFieldIds);
   const byId = new Map(fields.map((field) => [field.id, field]));
   const sortable = fields.filter((field) => SORTABLE_TYPES.includes(field.type));
   const ready = filters.every((filter) => filterReady(byId.get(filter.fieldId), filter));
-  const result = (): SortFilter => ({ sort, filters });
+  const result = (): SortFilter => ({ sort, filters, hiddenFieldIds: hidden });
 
   const setFilter = (index: number, change: Partial<FilterSpec>) => setFilters((items) => items.map((item, at) => {
     if (at !== index) return item;
@@ -75,10 +76,20 @@ export function SortFilterSheet({ fields, value, onApply, onClose, onSaveAsView 
         const field = fields[0]!;
         setFilters((items) => [...items, { fieldId: field.id, op: OPERATORS[field.type][0]!, value: defaultFilterValue(field, OPERATORS[field.type][0]!) }]);
       }}><Plus />Add filter</button>}
+
+      {fields.length > 1 && <>
+        <h3>Fields shown <small>The first field is always shown</small></h3>
+        <div className="sort-filter-fields" role="group" aria-label="Fields shown">
+          {fields.slice(1).map((field) => <label key={field.id}>
+            <input type="checkbox" checked={!hidden.includes(field.id)} onChange={() => setHidden((items) => items.includes(field.id) ? items.filter((id) => id !== field.id) : [...items, field.id])} />
+            {field.name}
+          </label>)}
+        </div>
+      </>}
     </div>
     {!ready && <p className="file-dialog-error sort-filter-error">Finish or remove the incomplete filter.</p>}
     <footer className="file-dialog-actions">
-      <button className="secondary-button" onClick={() => { setSort([]); setFilters([]); }}>Clear</button>
+      <button className="secondary-button" onClick={() => { setSort([]); setFilters([]); setHidden([]); }}>Clear</button>
       {onSaveAsView && <button className="secondary-button" onClick={() => onSaveAsView(result())} disabled={!ready}>Save as view</button>}
       <button className="primary-button" onClick={() => onApply(result())} disabled={!ready}>Apply</button>
     </footer>

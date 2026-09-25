@@ -84,6 +84,11 @@ export const patchRow = (rowId: string, values: Record<string, unknown>, revisio
 export const undoRow = (rowId: string, revision: number) => api<{ row: CollectionRow }>(`/collections/rows/${rowId}/undo`, json("POST", { revision }));
 export const deleteRow = (rowId: string) => api<{ ok: true; purgeAfter: string }>(`/collections/rows/${rowId}`, json("DELETE", {}));
 
+export const createView = (collectionId: string, name: string, config: ViewConfig) =>
+  api<{ view: CollectionView }>(`/collections/${collectionId}/views`, json("POST", { name, config }));
+export const updateView = (viewId: string, change: { name?: string; config?: ViewConfig }) => api<{ view: CollectionView }>(`/collections/views/${viewId}`, json("PATCH", change));
+export const deleteView = (viewId: string) => api<{ ok: true }>(`/collections/views/${viewId}`, json("DELETE", {}));
+
 export type ShareRole = "viewer" | "editor";
 export type CollectionSharing = { visibility: Visibility; role: ShareRole; users: Array<{ id: string; display_name: string }> };
 export const getSharing = (collectionId: string) => api<CollectionSharing>(`/collections/${collectionId}/sharing`);

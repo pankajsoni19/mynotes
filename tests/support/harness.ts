@@ -27,7 +27,7 @@ export const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
 export const port = 22026;
 export const origin = `http://localhost:${port}`;
 export const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
-export const allowedTestEmails = Array.from({ length: 200 }, (_, index) => `allowed-${index + 1}@example.test`);
+export const allowedTestEmails = Array.from({ length: 400 }, (_, index) => `allowed-${index + 1}@example.test`);
 
 process.env.DATA_DIR = dataDir;
 process.env.APP_ORIGIN = origin;

@@ -191,6 +191,11 @@
 .sort-filter-options label.chosen { opacity: 1; outline: 1px solid currentColor; }
 .sort-filter-options input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .sort-filter-error { padding: 4px 20px 0; }
+.sort-filter-fields { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.sort-filter-fields label { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; color: #d6d6d9; font-size: .84rem; cursor: pointer; }
+.sort-filter-fields input { width: 16px; min-height: 0; accent-color: var(--yellow); }
+.collection-view-chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.collection-toolbar .icon-button { flex: none; }
 
 @media (max-width: 760px) {
   .collections-row-open .collection-toolbar, .collections-row-open .collection-main > .collection-body { display: none; }

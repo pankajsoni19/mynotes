@@ -3,13 +3,15 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
 import { QUERY_LIMITS, querySpecShape } from "./query";
-import { labelSchema, safeJson, type FieldInput } from "./schema";
+import { FIELD_ID, labelSchema, safeJson, type FieldInput } from "./schema";
 import {
   CollectionError,
   createCollection,
   createRow,
+  createView,
   deleteCollection,
   deleteRow,
+  deleteView,
   getCollection,
   getRow,
   getSharing,
@@ -17,6 +19,7 @@ import {
   listTemplates,
   patchCollection,
   patchRow,
+  patchView,
   putSchema,
   putSharing,
   queryRows,
@@ -48,7 +51,15 @@ export const sharingSchema = safeJson(z.object({
   userIds: z.array(uuid).max(100).default([]),
   role: z.enum(["viewer", "editor"]).default("viewer")
 }).strict());
-export const rowCreateSchema =safeJson(z.object({ values: valuesObject, afterRowId: uuid.nullable().optional() }).strict());
+const viewConfig = z.object({
+  sort: querySpecShape.sort,
+  filters: querySpecShape.filters,
+  hiddenFieldIds: z.array(z.string().regex(FIELD_ID)).max(50).optional()
+}).strict();
+export const viewCreateSchema = safeJson(z.object({ name: labelSchema(60), kind: z.literal("table").optional(), config: viewConfig.default({}) }).strict());
+export const viewPatchSchema = safeJson(z.object({ name: labelSchema(60).optional(), config: viewConfig.optional() }).strict()
+  .refine((value) => value.name !== undefined || value.config !== undefined, "Provide a name or a config"));
+export const rowCreateSchema = safeJson(z.object({ values: valuesObject, afterRowId: uuid.nullable().optional() }).strict());
 export const rowPatchSchema = safeJson(z.object({ values: valuesObject, revision }).strict());
 export const rowUndoSchema = safeJson(z.object({ revision }).strict());
 
@@ -121,6 +132,23 @@ export function registerCollectionRoutes(app: Hono<AppEnv>) {
     const collectionId = pathId(c, "collectionId");
     const body = await parseJson(c.req.raw, querySchema);
     return respond(c, () => queryRows(user(c), collectionId, body));
+  });
+
+  app.post("/api/collections/:collectionId/views", async (c) => {
+    const collectionId = pathId(c, "collectionId");
+    const body = await parseJson(c.req.raw, viewCreateSchema);
+    return respond(c, () => createView(user(c), collectionId, { name: body.name, config: body.config }), 201);
+  });
+
+  app.patch("/api/collections/views/:viewId", async (c) => {
+    const viewId = pathId(c, "viewId");
+    const body = await parseJson(c.req.raw, viewPatchSchema);
+    return respond(c, () => patchView(user(c), viewId, body));
+  });
+
+  app.delete("/api/collections/views/:viewId", (c) => {
+    const viewId = pathId(c, "viewId");
+    return respond(c, () => deleteView(user(c), viewId));
   });
 
   app.post("/api/collections/:collectionId/rows", async (c) => {

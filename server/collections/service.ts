@@ -8,6 +8,7 @@ import {
   readableCollection,
   readableCollectionPredicate,
   readableRow,
+  readableView,
   type CollectionRecord,
   type CollectionRole,
   type CollectionVisibility,
@@ -292,6 +293,92 @@ export function listViews(collectionId: string): ViewSummary[] {
   const rows = db.query("SELECT id, collection_id, name, kind, config_json, position, created_at, updated_at FROM collection_views WHERE collection_id = ? ORDER BY position, id")
     .all(collectionId) as Array<Omit<ViewSummary, "config"> & { config_json: string }>;
   return rows.map(({ config_json, ...view }) => ({ ...view, config: JSON.parse(config_json) as unknown }));
+}
+
+export type ViewConfig = QuerySpec & { hiddenFieldIds?: string[] };
+const VIEW_CONFIG_BYTES = 8192;
+
+/** A view's config must compile strictly against today's schema and fit the 8 KiB CHECK. */
+function checkViewConfig(collection: CollectionRecord, config: ViewConfig): ViewConfig {
+  const schema = schemaOf(collection);
+  const { q: _q, ...stored } = config;
+  try {
+    compileQuery(schema, stored, "strict");
+  } catch (error) {
+    if (error instanceof QueryError) throw new CollectionError(400, error.message, "INVALID_QUERY");
+    throw error;
+  }
+  const known = new Set(schema.fields.slice(1).map((field) => field.id));
+  if (stored.hiddenFieldIds?.some((id) => !known.has(id))) throw new CollectionError(400, "Hidden fields must be existing fields other than the first", "INVALID_QUERY");
+  const canonical: ViewConfig = {
+    ...(stored.sort?.length ? { sort: stored.sort } : {}),
+    ...(stored.filters?.length ? { filters: stored.filters } : {}),
+    ...(stored.hiddenFieldIds?.length ? { hiddenFieldIds: [...new Set(stored.hiddenFieldIds)] } : {})
+  };
+  if (Buffer.byteLength(JSON.stringify(canonical), "utf8") > VIEW_CONFIG_BYTES) throw new CollectionError(400, "This view is too large");
+  return canonical;
+}
+
+function viewSummary(viewId: string): ViewSummary | null {
+  const row = db.query("SELECT id, collection_id, name, kind, config_json, position, created_at, updated_at FROM collection_views WHERE id = ?")
+    .get(viewId) as (Omit<ViewSummary, "config"> & { config_json: string }) | null;
+  if (!row) return null;
+  const { config_json, ...view } = row;
+  return { ...view, config: JSON.parse(config_json) as unknown };
+}
+
+const viewNotFound = () => new CollectionError(404, "View not found");
+
+/** A view path id joined to a collection the caller owns: 404 for non-readers, 403 OWNER_ONLY for other readers. */
+function requireOwnedView(viewId: string, userId: string) {
+  const found = readableView(viewId, userId);
+  if (!found) throw viewNotFound();
+  if (found.collection.owner_id !== userId) throw ownerOnly();
+  return found;
+}
+
+export function createView(userId: string, collectionId: string, input: { name: string; config: ViewConfig }) {
+  return withCollectionLock(collectionId, () => {
+    const collection = requireOwnedCollection(collectionId, userId);
+    const config = checkViewConfig(collection, input.config);
+    const count = (db.query("SELECT COUNT(*) AS count FROM collection_views WHERE collection_id = ?").get(collectionId) as { count: number }).count;
+    if (count >= LIMITS.viewsPerCollection) throw limitReached(`A collection can have up to ${LIMITS.viewsPerCollection} views`);
+    const last = db.query("SELECT MAX(position) AS position FROM collection_views WHERE collection_id = ?").get(collectionId) as { position: number | null };
+    const id = crypto.randomUUID();
+    db.transaction(() => {
+      const timestamp = now();
+      db.query("INSERT INTO collection_views (id, collection_id, name, kind, config_json, position, created_at, updated_at) VALUES (?, ?, ?, 'table', ?, ?, ?, ?)")
+        .run(id, collectionId, input.name, JSON.stringify(config), (last.position ?? 0) + POSITION_STEP, timestamp, timestamp);
+      audit(userId, null, "collection.view_create", { collectionId, viewId: id });
+    })();
+    return { view: viewSummary(id)! };
+  });
+}
+
+export async function patchView(userId: string, viewId: string, input: { name?: string; config?: ViewConfig }) {
+  const { collection: initial } = requireOwnedView(viewId, userId);
+  return withCollectionLock(initial.id, () => {
+    const { collection } = requireOwnedView(viewId, userId);
+    const config = input.config === undefined ? null : checkViewConfig(collection, input.config);
+    db.transaction(() => {
+      db.query("UPDATE collection_views SET name = COALESCE(?, name), config_json = COALESCE(?, config_json), updated_at = ? WHERE id = ?")
+        .run(input.name ?? null, config === null ? null : JSON.stringify(config), now(), viewId);
+      audit(userId, null, "collection.view_update", { collectionId: collection.id, viewId });
+    })();
+    return { view: viewSummary(viewId)! };
+  });
+}
+
+export async function deleteView(userId: string, viewId: string) {
+  const { collection: initial } = requireOwnedView(viewId, userId);
+  return withCollectionLock(initial.id, () => {
+    const { collection } = requireOwnedView(viewId, userId);
+    db.transaction(() => {
+      db.query("DELETE FROM collection_views WHERE id = ?").run(viewId);
+      audit(userId, null, "collection.view_delete", { collectionId: collection.id, viewId });
+    })();
+    return { ok: true as const };
+  });
 }
 
 // ---------------------------------------------------------------------------

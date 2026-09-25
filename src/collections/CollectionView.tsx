@@ -1,23 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Columns3, Eye, Pencil, RotateCcw, Share2, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, Bookmark, Columns3, Eye, Pencil, RotateCcw, Save, Share2, SlidersHorizontal, Trash2, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
+import { ConfirmDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
 import { formatRoute } from "../router";
 import { collectionsRoute } from "../collectionsRoute";
 import type { GoOptions } from "./CollectionsApp";
 import {
+  createView,
   deleteRow,
+  deleteView,
   errorCode,
   errorMessage,
   errorPayload,
   getCollection,
   renameCollection,
   undoRow,
+  updateView,
   type CollectionDetail,
   type CollectionRole,
   type CollectionRow,
   type CollectionView as SavedView,
-  type FieldValue
+  type FieldValue,
+  type ViewConfig
 } from "./collectionsApi";
 import { CollectionCards, useIsPhone } from "./CollectionCards";
 import { CollectionSharePanel } from "./CollectionSharePanel";
@@ -30,7 +35,7 @@ import { RowActionSheet } from "./RowActionSheet";
 import { RowPanel } from "./RowPanel";
 import { SortFilterSheet, type SortFilter } from "./SortFilterSheet";
 import { useRows } from "./useRows";
-import { roleLabel, rowCountLabel, validateCollectionName } from "./values";
+import { roleLabel, rowCountLabel, validateCollectionName, validateName } from "./values";
 
 type CollectionViewProps = {
   userId: string;
@@ -49,6 +54,9 @@ type Dialog =
   | { kind: "rename" }
   | { kind: "sortFilter" }
   | { kind: "share" }
+  | { kind: "saveView"; value: SortFilter }
+  | { kind: "renameView" }
+  | { kind: "deleteView" }
   | { kind: "picker"; rowId: string; fieldId: string }
   | { kind: "actions"; rowId: string };
 
@@ -106,15 +114,56 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
   const closeDialog = useCallback(() => setDialog(null), []);
   useDialogLayer(dialog !== null, closeDialog);
 
-  const effective: SortFilter = local ?? { sort: view?.config.sort ?? [], filters: view?.config.filters ?? [] };
+  const effective: SortFilter = local ?? { sort: view?.config.sort ?? [], filters: view?.config.filters ?? [], hiddenFieldIds: view?.config.hiddenFieldIds ?? [] };
   const activeCount = effective.sort.length + effective.filters.length;
   const closeRow = useCallback(() => onBack(), [onBack]);
   const rowMissing = useCallback(() => onMissing("row"), [onMissing]);
 
+  const hiddenKey = effective.hiddenFieldIds.join(",");
   const fields = useMemo(() => {
-    const hidden = new Set(view?.config.hiddenFieldIds ?? []);
+    const hidden = new Set(hiddenKey ? hiddenKey.split(",") : []);
     return (collection?.fields ?? []).filter((field, index) => index === 0 || !hidden.has(field.id));
-  }, [collection?.fields, view?.config.hiddenFieldIds]);
+  }, [collection?.fields, hiddenKey]);
+
+  const configOf = (value: SortFilter): ViewConfig => ({
+    ...(value.sort.length ? { sort: value.sort } : {}),
+    ...(value.filters.length ? { filters: value.filters } : {}),
+    ...(value.hiddenFieldIds.length ? { hiddenFieldIds: value.hiddenFieldIds } : {})
+  });
+
+  async function saveAsView(name: string, value: SortFilter) {
+    const { view: saved } = await createView(collectionId, name, configOf(value));
+    setViews((items) => [...items, saved]);
+    setDialog(null);
+    setLocal(null);
+    notify(`Saved view “${saved.name}”`);
+    go(collectionsRoute(collectionId, { viewId: saved.id }));
+  }
+
+  async function updateCurrentView() {
+    if (!view || !local) return;
+    try {
+      const { view: saved } = await updateView(view.id, { config: configOf(local) });
+      setViews((items) => items.map((item) => item.id === saved.id ? saved : item));
+      setLocal(null);
+      notify(`Updated “${saved.name}”`);
+    } catch (reason) {
+      notify(errorMessage(reason, "Could not update the view"));
+    }
+  }
+
+  async function removeCurrentView() {
+    if (!view) return;
+    setDialog(null);
+    try {
+      await deleteView(view.id);
+      setViews((items) => items.filter((item) => item.id !== view.id));
+      notify(`Deleted view “${view.name}”`);
+      go(collectionsRoute(collectionId), { replace: true });
+    } catch (reason) {
+      notify(errorMessage(reason, "Could not delete the view"));
+    }
+  }
 
   const findRow = (id: string) => rows.rows.find((row) => row.id === id) ?? detached[id] ?? null;
   // Rows outside the loaded page (a deep link, a filtered-out row) are kept here after an undo.
@@ -200,8 +249,18 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     </header>
 
     <div className="collection-toolbar" role="toolbar" aria-label="Rows">
+      {views.length > 0 && <>
+        <button className={`collection-chip collection-view-chip${viewId ? "" : " active"}`} aria-pressed={!viewId} onClick={() => { if (viewId) go(collectionsRoute(collectionId)); }}>All rows</button>
+        {views.map((item) => <button key={item.id} className={`collection-chip collection-view-chip${item.id === viewId ? " active" : ""}`} aria-pressed={item.id === viewId} title={item.name}
+          onClick={() => { if (item.id !== viewId) go(collectionsRoute(collectionId, { viewId: item.id })); }}><Bookmark />{item.name}</button>)}
+      </>}
+      {isOwner && view && <>
+        <button className="icon-button" onClick={() => setDialog({ kind: "renameView" })} aria-haspopup="dialog" aria-label={`Rename view ${view.name}`} title="Rename view"><Pencil /></button>
+        <button className="icon-button" onClick={() => setDialog({ kind: "deleteView" })} aria-haspopup="dialog" aria-label={`Delete view ${view.name}`} title="Delete view"><Trash2 /></button>
+      </>}
       <input className="collection-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find rows" aria-label="Find rows" maxLength={200} />
       <button className={`collection-chip${activeCount ? " active" : ""}`} onClick={() => setDialog({ kind: "sortFilter" })} aria-haspopup="dialog"><SlidersHorizontal />{activeCount ? `Sort & filter · ${activeCount}` : "Sort & filter"}</button>
+      {local && isOwner && view && <button className="collection-chip active" onClick={() => { void updateCurrentView(); }}><Save />Update view</button>}
       {local && <button className="collection-chip" onClick={() => setLocal(null)}><X />{view ? `Reset to ${view.name}` : "Clear"}</button>}
     </div>
 
@@ -267,10 +326,19 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       notify("Sharing updated");
       void loadCollection();
     }} />}
-    {dialog?.kind === "sortFilter" &&<SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {
+    {dialog?.kind === "sortFilter" && <SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {
       setDialog(null);
       setLocal(next);
-    }} />}
+    }} onSaveAsView={isOwner ? (next) => setDialog({ kind: "saveView", value: next }) : undefined} />}
+    {dialog?.kind === "saveView" && <NameDialog title="Save as view" eyebrow={collection.name} label="View name" initialValue="" submitLabel="Save view" hint="Up to 60 characters. Everyone with access can use it."
+      validate={(value) => validateName(value, 60)} onCancel={closeDialog} onSubmit={(name) => saveAsView(name, dialog.value)} />}
+    {dialog?.kind === "renameView" && view && <NameDialog title="Rename view" eyebrow={collection.name} label="View name" initialValue={view.name} submitLabel="Rename" hint="Up to 60 characters."
+      validate={(value) => validateName(value, 60, view.name)} onCancel={closeDialog} onSubmit={async (name) => {
+        const { view: saved } = await updateView(view.id, { name });
+        setViews((items) => items.map((item) => item.id === saved.id ? saved : item));
+        setDialog(null);
+      }} />}
+    {dialog?.kind === "deleteView" && view && <ConfirmDialog title="Delete view" message={`Delete the view “${view.name}”? Rows are not affected.`} confirmLabel="Delete view" danger onCancel={closeDialog} onConfirm={() => { void removeCurrentView(); }} />}
     {dialog?.kind === "picker" && dialogRow && pickerField && <OptionPicker field={pickerField} selected={Array.isArray(dialogRow.values[pickerField.id]) ? dialogRow.values[pickerField.id] as string[] : []}
       onClose={closeDialog} onSave={async (ids) => (await rows.save(dialogRow.id, { [pickerField.id]: ids.length ? ids : null })) !== null} />}
     {dialog?.kind === "actions" && dialogRow && <RowActionSheet row={dialogRow} editable={editable} onClose={closeDialog}

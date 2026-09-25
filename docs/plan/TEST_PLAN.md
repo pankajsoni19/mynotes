@@ -222,6 +222,12 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] Role matrix: viewers read and query; every row write is 403 `READ_ONLY` for a viewer-role audience; with the editor role, members create, edit, and undo rows; every owner-only route (rename, delete, schema, sharing) is 403 `OWNER_ONLY` to members and 404 to strangers; the list shows each member's role; audit records visibility, role, and a recipient count.
 - [x] Sharing rules (owner not a recipient, `selected` needs users, unknown users, ≤ 100, bad visibility or role); `all_users` gives everyone the viewer role; switching to private revokes at once.
 
+`tests/collectionsViews.test.ts`:
+
+- [x] Views save sort, filters, and hidden fields; `query { viewId }` applies them and request clauses override; rename and reconfigure; a field removed later drops out of the view; delete.
+- [x] Configs are checked against the schema (unknown fields, mismatched operators, injected ids, the primary field hidden, stored `q`, prototype keys, 61-character names); 20-view cap; owner-only for editors (403) and strangers (404); editors still query through views.
+- [x] IDOR: a view id never works through another collection, and another owner's view cannot be renamed or deleted.
+
 `tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
 
 - [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.
