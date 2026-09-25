@@ -216,6 +216,17 @@ describe("the dispatcher", () => {
     const counts = reminders.runDispatch({ nowMs: at("2031-08-01T10:00:05Z") });
     expect(counts?.limited).toBeGreaterThanOrEqual(1);
     expect(notificationsFor(user.userId).length).toBe(60);
+    // L1: deferred, not dropped: next_fire_at is kept and the claim released.
+    expect(reminderRow(reminder.id)).toMatchObject({ next_fire_at: "2031-08-01T10:00:00.000Z", claimed_at: null, last_fired_at: null });
+    const audits = db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'reminder.rate_limited'").all(user.userId) as Array<{ metadata_json: string }>;
+    expect(audits.map((row) => JSON.parse(row.metadata_json))).toEqual([{ deferred: 1, limit: 60 }]);
+    // Still full a tick later: left out of the due query until the oldest notification ages out.
+    reminders.runDispatch({ nowMs: at("2031-08-01T10:00:35Z") });
+    expect(notificationsFor(user.userId).length).toBe(60);
+    expect(reminderRow(reminder.id)?.next_fire_at).toBe("2031-08-01T10:00:00.000Z");
+    // 09:30 + 1 h: the window has room again, and the reminder fires (late).
+    reminders.runDispatch({ nowMs: at("2031-08-01T10:30:05Z") });
+    expect(notificationsFor(user.userId).filter((row) => row.reminder_id === reminder.id)).toMatchObject([{ late: 1 }]);
     expect(reminderRow(reminder.id)?.next_fire_at).toBeNull();
   });
 });
