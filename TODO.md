@@ -147,6 +147,10 @@ The product is a private workspace (Notes, Files, Bin, Tasks next), so "MyNotes"
 - [x] Hotfix `5ce3bc4` (411 without Content-Length, 30 s inactivity watchdog with 408, explicit staging-handle close; three real-server regression tests; the reproduction script no longer crashes a scratch server) and `479d58a` (error logs print class and errno, not messages). 196 tests.
 - [x] **Released v0.4.1 (2026-09-25):** bump `d1fdb31`, pushed, deployed (no migration, no backup needed); healthy; `/api/about` reports `0.4.1` / `d1fdb31bb3ecededc5123fd61893bff18711eb3b`. **Wave 6 complete.**
 
+## Released v0.7.0 (2026-09-26) — Today, Collections, Calendar, feeds, MCP scopes
+
+Bump `80e4892`; release SHA `1cd2eb24753d239828ee5144889c7e44222a63c9`; pushed; forced backup taken; deployed; healthy; `/api/about` reports `0.7.0`; `schema_migrations` = 1–14; `/`, `/collections`, `/calendar`, `/notifications`, `/tasks` serve the SPA; `/sw.js` (`text/javascript`, no-cache) and `/manifest.webmanifest` served; push config gated by auth. Contents: Wave 10 Today (+ review fixes), Wave 11 Collections (+ review fixes, Stage E MCP tools), Wave 12 Calendar A–D (+ review fixes incl. migration 014, feeds, MCP tools, push with bounded DNS), QA polish, undo-link permission fix (`7369476`), bounded feed limiter (`227b43f`), null-prototype MCP rows + hazardous field names rejected (`a336bb7`), dialog sentinel robustness (`1cd2eb2`). 612 tests; Docker verify passes. **Open:** PNG app icons for the manifest (awaiting operator approval of the rendered candidate; `/icons/nook-*.png` 404 until then); real-device push and feed subscription checks on the HTTPS origin (TEST_PLAN manual rows).
+
 ## Waves in flight (parallel, 2026-09-25)
 
 | Wave | Where | Status |
