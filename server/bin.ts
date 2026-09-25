@@ -6,7 +6,13 @@ import { storage, withResourceLock } from "./storage";
 export const BIN_RETENTION_MS = 30 * 86_400_000;
 
 export type BinType = "note" | "document";
-export type PurgeReason = "user" | "retention" | "blank";
+/**
+ * Why an item was purged, as recorded in the audit metadata. "resumed" marks a
+ * purge the sweeper finished after it was interrupted: the original reason
+ * (user, blank, or retention) is not stored, and the start is audited through
+ * the earlier delete event.
+ */
+export type PurgeReason = "user" | "retention" | "blank" | "resumed";
 /** purged: row and bytes are gone. pending: tombstoned, bytes remain, the sweeper retries. not_found: no binned row. */
 export type PurgeOutcome = "purged" | "pending" | "not_found";
 
@@ -135,14 +141,13 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
   const counts: BinSweepCounts = { purged: 0, pending: 0 };
   for (const type of ["note", "document"] as const) {
     const table = tables[type];
-    const resumed = db.query(`SELECT id, purge_after FROM ${table} WHERE purge_started_at IS NOT NULL ORDER BY purge_started_at LIMIT ?`)
-      .all(SWEEP_RESUME_BATCH_SIZE) as Array<{ id: string; purge_after: string | null }>;
-    const due = db.query(`SELECT id, purge_after FROM ${table} WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after <= ? ORDER BY purge_after LIMIT ?`)
-      .all(cutoff, SWEEP_BATCH_SIZE) as Array<{ id: string; purge_after: string | null }>;
-    for (const row of [...resumed, ...due]) {
-      // An interrupted purge that was not due yet was started by its owner.
-      const reason: PurgeReason = row.purge_after !== null && row.purge_after > cutoff ? "user" : "retention";
-      const outcome = await withResourceLock(lockKey(type, row.id), () => purgeLocked(type, row.id, { reason, actorId: null, dueBy: cutoff }));
+    const resumed = db.query(`SELECT id FROM ${table} WHERE purge_started_at IS NOT NULL ORDER BY purge_started_at LIMIT ?`)
+      .all(SWEEP_RESUME_BATCH_SIZE) as Array<{ id: string }>;
+    const due = db.query(`SELECT id FROM ${table} WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after <= ? ORDER BY purge_after LIMIT ?`)
+      .all(cutoff, SWEEP_BATCH_SIZE) as Array<{ id: string }>;
+    const work = [...resumed.map((row) => ({ id: row.id, reason: "resumed" as const })), ...due.map((row) => ({ id: row.id, reason: "retention" as const }))];
+    for (const { id, reason } of work) {
+      const outcome = await withResourceLock(lockKey(type, id), () => purgeLocked(type, id, { reason, actorId: null, dueBy: cutoff }));
       if (outcome === "purged") counts.purged += 1;
       else if (outcome === "pending") counts.pending += 1;
     }

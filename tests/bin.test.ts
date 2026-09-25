@@ -318,7 +318,7 @@ describe("restore, purge, and the retention sweeper", () => {
     expect(noteRow(id)).toBeNull();
     expect(existsSync(noteDir(id))).toBe(false);
     const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'note.purge' AND metadata_json LIKE ?").get(`%${id}%`) as { metadata_json: string };
-    expect(JSON.parse(audit.metadata_json)).toEqual({ noteId: id, reason: "user" });
+    expect(JSON.parse(audit.metadata_json)).toEqual({ noteId: id, reason: "resumed" });
   });
 
   test("tombstones that keep failing do not starve expired items", async () => {
