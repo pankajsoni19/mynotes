@@ -33,16 +33,20 @@ Implementation plan: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [API contract
   - Gates: `bun run typecheck`, `bun test` (25 pass), `git diff --check`, tracked-file secret/personal-data scan, `docker build --target verify`, `docker compose build` all pass at `921fe28`.
 - [x] Released v0.2.3: bump `6bfe982`, pushed to `origin/main`, deployed with Docker Compose; container healthy on port 2026 and `/api/about` reports `0.2.3` / `6bfe9827ae29e3c6707f9c0c413d95f591baea0d` (2026-09-25)
 
-### Wave 2b — URL routing for every app, view, and item (target v0.2.4)
+### Wave 2b — URL routing for every app, view, and item (v0.2.4)
 
-Operator request (2026-09-25): every module, page, note, file, and view gets its own URL instead of everything living at `/`. Ships before the Bin and Files UIs so they are built on real routes. See DEVELOPMENT_PLAN §4b.
+Operator request (2026-09-25): every module, page, note, file, and view gets its own URL instead of everything living at `/`. Shipped before the Bin and Files UIs so they are built on real routes. See DEVELOPMENT_PLAN §4b.
 
-- [ ] Route table and client router (`src/router.ts`): `/` Home, `/notes`, `/notes/folder/:folderId`, `/notes/shared`, `/notes/:noteId`, `/files`, `/files/folder/:folderId`, `/files/:documentId`, `/bin`; unknown paths fall back to Home
-- [ ] Desktop and mobile both push real history entries; the mobile-only `mynotes.mobile-navigation` and `mynotes.app-shell` state layers become a panel hint on top of the URL
-- [ ] Deep links resume the right note/folder; inaccessible ids fall back gracefully; login preserves the requested URL
-- [ ] Leaving a note by URL change still runs `finalizeOpenNote`; failures keep the URL on the note
-- [ ] Server: SPA fallback already serves `dist/index.html` for every non-API path in production; confirm `/api/*` 404s are unchanged and Vite dev fallback works
-- [ ] Tests: router parse/format round trips, history helper compatibility, and a manual desktop + 390 px matrix; release v0.2.4
+- [x] Route table and client router (`src/router.ts`, `dbdf321`): `/` Home, `/notes`, `/notes/folder/:folderId`, `/notes/shared`, `/notes/:noteId`, `/files`, `/files/folder/:folderId`, `/files/:documentId`, `/bin`; unknown paths fall back to Home; ids are validated and lowercased (`521e39e`)
+- [x] Desktop and mobile both push real history entries (`aa7f5d5`); the mobile panel hint and app section ride along as history state with a `mynotes.depth` counter (`f0a84a3`) so in-app Back never leaves the site from a first entry
+- [x] Deep links resume the right note/folder, including shared notes under Shared (`8d07456`); missing ids fall back to `/notes` with a toast; login keeps the requested URL in memory only
+- [x] Leaving a note by any route change runs `finalizeOpenNote`; failures keep the URL on the note; the editor is locked during every switch (`d5cfe58`) and a failed note load recovers to the list (`b6200cf`)
+- [x] A failed first workspace load retries on the next route change (`81c548c`)
+- [x] Server unchanged: production SPA fallback covers every route (verified `/notes/<uuid>` → 200 while logged out; `/api/*` still 401/404 JSON)
+- [x] Tests: `tests/router.test.ts`, `tests/notesRoute.test.ts`, depth and startup-state helpers in `tests/appShellNavigation.test.ts` (39 tests)
+- [x] Two independent reviews (fresh sessions). Fixed: first-load failure freezing Back/Forward, keystrokes lost during history-driven switches, shared deep links, uppercase ids, and a failed note load leaving the editor locked. Accepted low risks: Back pressed mid-switch truncates the Forward stack; pre-upgrade tabs' history entries read as Home; the login page ignores Back/Forward; only ids (not `/NOTES`) are case-normalised; overlapping retries after a two-factor change settle harmlessly.
+- [x] Director QA on isolated data, desktop and 390 px: Home ⇄ Notes ⇄ folder ⇄ note with Back/Forward; reload on `/files/folder/:id` and `/bin`; unknown path → `/`; logged-out deep link → login → note; blank new note removed on Back with no dead target; edits published on click and history switches with the editor locked meanwhile.
+- [ ] Bump to 0.2.4, push, deploy, smoke test
 
 ### Wave 3 — Secure documents backend (released with Wave 4 as v0.3.0)
 

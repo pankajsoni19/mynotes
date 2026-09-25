@@ -177,6 +177,8 @@ Out of scope: history entries for dialogs (settings, share, history panels), and
 
 Gate: router unit tests, all existing tests, desktop + 390 px manual matrix (Home ⇄ each app ⇄ item, Back/Forward, reload on every route, deep link while logged out), then release v0.2.4.
 
+**Outcome (2026-09-25):** implemented in `dbdf321`, `f0a84a3`, `aa7f5d5` with review fixes `521e39e`, `8d07456`, `81c548c`, `d5cfe58`, and the failed-load recovery fix `b6200cf`. Deviations from the sketch above: (a) the localStorage resume applies whenever the URL names no folder or note (so Home → Notes returns to the last note), and bare `/notes` is then rewritten to the resumed note; (b) a same-folder click keeps the open note; (c) a `mynotes.depth` counter in history state lets in-app Back decide between `history.back()` and a panel change without leaving the site; (d) a failed first load is retried on the next route change rather than blocking. Waves 4 and 5 must route Bin and Files views through `src/router.ts` and `navigate()`.
+
 ---
 
 ## 5. Data model
