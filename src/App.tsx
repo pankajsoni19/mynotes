@@ -1212,7 +1212,8 @@ export function App() {
   // one entry of its own (same URL), so Back from the results returns to the list without them;
   // later changes update that entry in place. Desktops only update the current entry.
   function syncSearchHistory() {
-    if (!session || activeApp !== "notes" || selectionOwner !== session.user.id) return;
+    // sessionUserRef, not the render's `session`: a timer from before sign-out must not write a hint afterwards.
+    if (!session || activeApp !== "notes" || selectionOwner !== session.user.id || sessionUserRef.current !== session.user.id) return;
     const userId = session.user.id;
     const state: unknown = window.history.state;
     if (resolveAppHistorySection(state, userId) !== "notes") return;
@@ -1370,6 +1371,8 @@ export function App() {
     routeAppliedUserRef.current = null;
     startupFailedUserRef.current = null;
     pendingRouteRef.current = { app: "home" };
+    // A bare entry: drops the search hint (the query text) and every other hint from the current
+    // entry. Older entries keep theirs, but each is tied to the user id and ignored while signed out.
     window.history.replaceState(null, "", "/");
     setActiveApp("home");
     setSession(null);
