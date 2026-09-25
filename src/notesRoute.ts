@@ -21,14 +21,17 @@ function knownFolder(folder: FolderSelection, folders: FolderRow[]) {
 }
 
 // Maps a Notes URL onto loaded data. A note URL keeps the folder from its own history entry when
-// that entry still matches, then the note's folder, then the last selected folder, then "all".
+// that entry still matches, then the note's folder (or Shared for another user's note), then the
+// last selected folder, then "all".
 export function resolveNotesRoute(route: NotesRoute, data: { folders: FolderRow[]; notes: NoteRow[] }, context: { snapshot: MobileNavigationSnapshot | null; lastFolder: FolderSelection }): NotesRouteResolution {
   if (route.noteId) {
     const note = data.notes.find((item) => item.id === route.noteId);
     if (!note) return { folder: "all", noteId: null, missing: "note" };
     const candidates: FolderSelection[] = [];
     if (context.snapshot?.noteId === note.id) candidates.push(context.snapshot.folder);
-    if (note.folder_id) candidates.push(note.folder_id);
+    if (note.folder_id && knownFolder(note.folder_id, data.folders)) candidates.push(note.folder_id);
+    // Someone else's note whose folder the viewer cannot see belongs under Shared.
+    else if (note.is_owner === 0) candidates.push("shared");
     candidates.push(context.lastFolder);
     const folder = candidates.find((candidate) => knownFolder(candidate, data.folders) && noteInFolder(note, candidate)) ?? "all";
     return { folder, noteId: note.id, missing: null };

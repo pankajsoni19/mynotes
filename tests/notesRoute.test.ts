@@ -19,7 +19,6 @@ test("a note URL takes its folder from the matching history entry, then the note
   expect(resolveNotesRoute(notesRoute("all", own.id), data, { snapshot, lastFolder: folderB }).folder).toBe("all");
   expect(resolveNotesRoute(notesRoute("all", own.id), data, { snapshot: null, lastFolder: folderB }).folder).toBe(folderA);
   expect(resolveNotesRoute(notesRoute("all", shared.id), data, { snapshot: null, lastFolder: "shared" }).folder).toBe("shared");
-  expect(resolveNotesRoute(notesRoute("all", shared.id), data, { snapshot: null, lastFolder: folderB }).folder).toBe("all");
 });
 
 test("the phone panel follows a matching hint and otherwise falls back by selection", () => {
@@ -29,4 +28,15 @@ test("the phone panel follows a matching hint and otherwise falls back by select
   expect(resolveNotesPanel({ folder: "all", noteId: null }, null)).toBe("folders");
   expect(resolveNotesPanel({ folder: folderA, noteId: null }, null)).toBe("notes");
   expect(resolveNotesPanel({ folder: folderA, noteId: null }, { panel: "editor", folder: folderA, noteId: null })).toBe("notes");
+});
+
+test("shared note prefers Shared", () => {
+  const hiddenFolder = { ...shared, folder_id: "e1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d" };
+  const withHidden = { ...data, notes: [own, hiddenFolder] };
+  expect(resolveNotesRoute(notesRoute("all", shared.id), data, none).folder).toBe("shared");
+  expect(resolveNotesRoute(notesRoute("all", hiddenFolder.id), withHidden, { snapshot: null, lastFolder: folderB }).folder).toBe("shared");
+  const visibleShared = { ...shared, folder_id: folderB };
+  expect(resolveNotesRoute(notesRoute("all", shared.id), { ...data, notes: [own, visibleShared] }, none).folder).toBe(folderB);
+  const snapshot = { panel: "editor" as const, folder: "all", noteId: shared.id };
+  expect(resolveNotesRoute(notesRoute("all", shared.id), data, { snapshot, lastFolder: "all" }).folder).toBe("all");
 });
