@@ -30,6 +30,7 @@ import {
 } from "./calendarApi";
 import { formFromEvent, formToInput, newEventForm, sameForm, shortDate, type EventForm } from "./calendarFormat";
 import { CalendarSharePanel, CalendarsDialog } from "./CalendarsDialog";
+import { FeedDialog } from "./FeedDialog";
 import { EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
 import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderSummary } from "./EventReminders";
@@ -120,6 +121,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [calendarsOpen, setCalendarsOpen] = useState(false);
   const [sharing, setSharing] = useState<CalendarSummary | null>(null);
+  const [feeds, setFeeds] = useState<CalendarSummary | null>(null);
   const [picker, setPicker] = useState<EventResponse | null>(null);
   const [reminderPicker, setReminderPicker] = useState<{ eventId: string; allDay: boolean; existing: number[] } | null>(null);
   const [showTasks, setShowTasks] = useState(() => readShowTasks(userId));
@@ -185,7 +187,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
 
   // ---- dialogs ---------------------------------------------------------------------------------
 
-  const dialogOpen = sheet !== null || repeatOpen || confirm !== null || calendarsOpen || sharing !== null || picker !== null || reminderPicker !== null;
+  const dialogOpen = sheet !== null || repeatOpen || confirm !== null || calendarsOpen || sharing !== null || feeds !== null || picker !== null || reminderPicker !== null;
   const sheetDirty = sheet !== null && !sameForm(sheet.initial, sheet.form);
 
   function closeSheet() {
@@ -203,6 +205,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       setConfirm(null);
       closeSheet();
       setSharing(null);
+      setFeeds(null);
       setPicker(null);
       setReminderPicker(null);
       setCalendarsOpen(false);
@@ -214,6 +217,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     else if (picker) setPicker(null);
     else if (reminderPicker) setReminderPicker(null);
     else if (sharing) setSharing(null);
+    else if (feeds) setFeeds(null);
     else setCalendarsOpen(false);
   });
 
@@ -481,7 +485,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onDone={(repeat) => { setSheet((current) => current && { ...current, form: { ...current.form, repeat } }); setRepeatOpen(false); }}
       onCancel={() => setRepeatOpen(false)}
     />}
-    {calendarsOpen && !sharing && !confirm && calendars && <CalendarsDialog
+    {calendarsOpen && !sharing && !feeds && !confirm && calendars && <CalendarsDialog
       calendars={calendars}
       hidden={hidden}
       busy={busy}
@@ -489,6 +493,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onCreate={addCalendar}
       onUpdate={changeCalendar}
       onShare={setSharing}
+      onFeeds={setFeeds}
       onDelete={(calendar) => setConfirm({ kind: "deleteCalendar", calendar })}
       onClose={() => setCalendarsOpen(false)}
       showTasks={showTasks}
@@ -496,6 +501,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     />}
     {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} onPick={(offset) => addReminder(reminderPicker.eventId, offset)} onClose={() => setReminderPicker(null)} />}
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
+    {feeds && <FeedDialog calendar={feeds} onClose={() => setFeeds(null)} flash={flash} />}
     {sharing && <CalendarSharePanel calendar={sharing} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Sharing updated"); void loadCalendars(); }} />}
     {confirm?.kind === "discard" && <ConfirmDialog title="Discard changes?" message="Your changes to this event will be lost." confirmLabel="Discard" danger onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
     {confirm?.kind === "deleteEvent" && <ConfirmDialog title="Move to the Bin?" message={`Move “${confirm.data.event.title}”${confirm.data.event.repeat ? " and all its repeats" : ""} to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}

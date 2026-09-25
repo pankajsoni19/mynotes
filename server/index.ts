@@ -21,6 +21,7 @@ import { registerTodayRoutes } from "./today/routes";
 import { registerCollectionRoutes } from "./collections/routes";
 import { reconcileCollectionSearchIndex } from "./collections/search";
 import { registerCalendarRoutes } from "./calendar/routes";
+import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -286,6 +287,8 @@ app.get("/api/auth/me", (c) => {
 
 app.use("/api/*", async (c, next) => {
   if (["/api/health", "/api/about", "/api/auth/login", "/api/auth/register"].includes(c.req.path)) return next();
+  // Calendar feeds carry their own token (D66); only GET or HEAD of the exact feed pattern skips the session.
+  if (isFeedRequest(c.req.method, c.req.path)) return next();
   return requireAuth(c, next);
 });
 
@@ -299,6 +302,8 @@ const totpSetupPaths = new Set([
 ]);
 app.use("/api/*", async (c, next) => {
   if (["/api/health", "/api/about", "/api/auth/login", "/api/auth/register"].includes(c.req.path)) return next();
+  // A feed token was created from a gated session and is read-only (T70).
+  if (isFeedRequest(c.req.method, c.req.path)) return next();
   if (config.totpPolicy === "required" && !c.get("user").totp_enabled_at && !totpSetupPaths.has(c.req.path)) {
     return c.json({ error: "Two-factor authentication setup is required", code: "TOTP_SETUP_REQUIRED" }, 403);
   }

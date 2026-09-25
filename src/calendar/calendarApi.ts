@@ -110,3 +110,9 @@ export const skipOccurrence = (id: string, date: string, revision: number) => ap
 export const deleteEvent = (id: string) => api<{ ok: true; purgeAfter: string }>(`/events/${id}`, { method: "DELETE", body: "{}" });
 export const addEventLink = (id: string, targetType: EventLink["targetType"], targetId: string) => api<{ link: EventLink }>(`/events/${id}/links`, { method: "POST", body: json({ targetType, targetId }) });
 export const removeEventLink = (id: string, targetType: EventLink["targetType"], targetId: string) => api<{ ok: true }>(`/events/${id}/links`, { method: "DELETE", body: json({ targetType, targetId }) });
+
+export type FeedDetail = "busy" | "full";
+export type CalendarFeed = { id: string; calendarId: string; prefix: string; detail: FeedDetail; createdAt: string; lastUsedAt: string | null };
+export const listFeeds = (calendarId: string) => api<{ feeds: CalendarFeed[] }>(`/calendars/${calendarId}/feeds`);
+export const createFeed = (calendarId: string, detail: FeedDetail) => api<{ feed: CalendarFeed; token: string; url: string }>(`/calendars/${calendarId}/feeds`, { method: "POST", body: json({ detail }) });
+export const revokeFeed = (feedId: string) => api<{ ok: true }>(`/feeds/${feedId}`, { method: "DELETE", body: "{}" });

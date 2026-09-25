@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, Lock, Pencil, Plus, Share2, Trash2, Users, X } from "lucide-react";
+import { Eye, EyeOff, Lock, Pencil, Plus, Rss, Share2, Trash2, Users, X } from "lucide-react";
 import { api } from "../api";
 import { ModalDialog, trapTabKey } from "../files/Dialog";
 import type { User, Visibility } from "../types";
@@ -14,6 +14,8 @@ type CalendarsDialogProps = {
   onCreate: (name: string, color: CalendarColor) => Promise<void>;
   onUpdate: (calendar: CalendarSummary, patch: { name?: string; color?: CalendarColor }) => Promise<void>;
   onShare: (calendar: CalendarSummary) => void;
+  /** Subscribe links (any reader). */
+  onFeeds: (calendar: CalendarSummary) => void;
   onDelete: (calendar: CalendarSummary) => void;
   onClose: () => void;
   showTasks: boolean;
@@ -25,7 +27,7 @@ const roleLabel = (calendar: CalendarSummary) => calendar.role === "owner"
   : `${calendar.owner_name} · ${calendar.role === "editor" ? "you can edit" : "view only"}`;
 
 /** Show or hide calendars, and (for owners) rename, recolour, share, or bin them. Pushes no history entry. */
-export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, onUpdate, onShare, onDelete, onClose, showTasks, onToggleTasks }: CalendarsDialogProps) {
+export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, onUpdate, onShare, onFeeds, onDelete, onClose, showTasks, onToggleTasks }: CalendarsDialogProps) {
   const [name, setName] = useState("");
   const [color, setColor] = useState<CalendarColor>("green");
   const [editing, setEditing] = useState<string | null>(null);
@@ -79,7 +81,11 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
             </select>
             <button className="icon-button" onClick={() => { setDraft(calendar.name); setEditing(calendar.id); }} aria-label={`Rename ${calendar.name}`}><Pencil /></button>
             <button className="icon-button" onClick={() => onShare(calendar)} aria-label={`Share ${calendar.name}`}><Share2 /></button>
+            <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>
             <button className="icon-button danger" onClick={() => onDelete(calendar)} aria-label={`Move ${calendar.name} to the Bin`}><Trash2 /></button>
+          </span>}
+          {calendar.is_owner !== 1 && <span className="calendar-list-actions">
+            <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>
           </span>}
         </li>;
       })}

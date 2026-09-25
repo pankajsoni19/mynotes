@@ -185,3 +185,19 @@ button.calendar-link:hover strong { color: #f5cf79; }
 .calendar-links li.restricted svg { color: #77777e; }
 .calendar-link-add { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; font-size: .84rem; }
 .calendar-link-add svg { width: 15px; }
+
+/* Feed dialog (D66): subscribe links, shown once. */
+.calendar-feed { display: grid; gap: 12px; padding: 4px 20px 20px; }
+.calendar-feed-warning { margin: 0; padding: 10px 12px; border: 1px solid #5a4a22; border-radius: 10px; background: #221d10; color: #f0dca6; font-size: .86rem; line-height: 1.45; }
+.calendar-feed-new, .calendar-feed-created { display: grid; gap: 10px; }
+.calendar-feed-created label { font-size: .86rem; color: #c9c9cc; }
+.calendar-feed-created input { min-height: 44px; min-width: 0; border: 1px solid #333338; border-radius: 10px; padding: 0 12px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .82rem; }
+.calendar-feed-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.calendar-feed .primary-button, .calendar-feed .secondary-button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin: 0; padding: 0 14px; }
+.calendar-feed .primary-button svg { width: 16px; }
+.calendar-feed-heading { margin: 6px 0 0; font-size: .9rem; }
+.calendar-feed-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.calendar-feed-list li { display: flex; align-items: center; gap: 8px; min-height: 48px; }
+.calendar-feed-list .calendar-list-copy { flex: 1; min-width: 0; }
+.calendar-feed-list .icon-button { width: 44px; height: 44px; flex: none; }
+.calendar-feed-list .icon-button.danger { color: #f3a3ae; }
