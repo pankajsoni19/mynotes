@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, Ellipsis, File as FileIcon, House, NotebookText, RotateCcw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon, House, NotebookText, RotateCcw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { AccountActions } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
@@ -9,11 +9,13 @@ import { deleteBinItem, emptyBin, listBin, restoreBinItem } from "./binApi";
 import {
   binFolderLabel,
   binItemLabel,
+  binTypeLabel,
   deleteForeverConfirm,
   emptiedMessage,
   emptyBinConfirm,
   filterBinItems,
   purgeCountdownLabel,
+  restoredCalendarMessage,
   restoredMessage,
   type BinFilter
 } from "./binFormat";
@@ -34,8 +36,12 @@ type PendingAction = "restore" | "delete";
 const filters: Array<{ value: BinFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "note", label: "Notes" },
-  { value: "document", label: "Files" }
+  { value: "document", label: "Files" },
+  { value: "calendar", label: "Calendar" }
 ];
+
+const typeIcons = { note: NotebookText, document: FileIcon, calendar: CalendarDays, event: CalendarClock } as const;
+const canPurge = (item: BinItem) => item.can_purge !== false;
 
 const itemKey = (item: Pick<BinItem, "type" | "id">) => `${item.type}:${item.id}`;
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -110,10 +116,13 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
       const result = await restoreBinItem(item);
       removeItem(item);
       const folderName = result.folderName ?? "Default";
-      flash(result.alreadyRestored ? `Already restored to ${folderName}` : restoredMessage(folderName, result.visibility));
+      if (item.type === "calendar" || item.type === "event") flash(restoredCalendarMessage(item, result.calendarName, Boolean(result.alreadyRestored)));
+      else flash(result.alreadyRestored ? `Already restored to ${folderName}` : restoredMessage(folderName, result.visibility));
       onRestored?.(item);
     } catch (reason) {
       if (errorCode(reason) === "PURGING") flash("This item is being deleted forever and can't be restored");
+      else if (errorCode(reason) === "PARENT_IN_BIN") flash("Its calendar is in the Bin. Restore the calendar first.");
+      else if (errorCode(reason) === "LIMIT_REACHED") flash("You already have 20 calendars. Delete one before restoring this one.");
       else if (reason instanceof ApiError && reason.status === 404) flash("This item is no longer in the Bin");
       else flash(reason instanceof Error ? reason.message : "Could not restore this item");
       void load();
@@ -178,7 +187,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     setSheetKey(itemKey(item));
   }
 
-  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : "Nothing in the Bin.";
+  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "calendar" ? "No calendars or events in the Bin." : "Nothing in the Bin.";
 
   return <main className="app-page bin-app">
     <header className="app-page-header">
@@ -192,7 +201,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
         <div>
           <span className="eyebrow">Shared Bin</span>
           <h1 id="bin-title">Bin</h1>
-          <p>Deleted notes and files stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
+          <p>Deleted notes, files, and calendar items stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
         </div>
         <button className="bin-empty-button" onClick={() => { void emptyAll(); }} disabled={!all.length || busy}><Trash2 />{emptying ? "Emptying…" : "Empty Bin"}</button>
       </div>
@@ -218,22 +227,22 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
       {!loadError && items && !visible.length && <div className="bin-state">
         <span className="bin-state-icon"><Trash2 /></span>
         <h2>{emptyCopy}</h2>
-        <p>Deleted notes and files stay here for 30 days.</p>
+        <p>Deleted notes, files, and calendar items stay here for 30 days.</p>
       </div>}
 
       {!loadError && visible.length > 0 && <ul className="bin-list" aria-label="Items in the Bin">
         {visible.map((item) => {
           const key = itemKey(item);
           const action = pending[key];
-          const Icon = item.type === "note" ? NotebookText : FileIcon;
+          const Icon = typeIcons[item.type];
           const label = binItemLabel(item);
           const disabled = Boolean(action) || item.purging || emptying;
           return <li key={key} className={`bin-row${action || item.purging ? " pending" : ""}`} aria-busy={action || item.purging ? true : undefined}>
             <span className="bin-row-icon" aria-hidden="true"><Icon /></span>
             <span className="bin-row-copy">
-              <span className="bin-row-title" title={label}><span className="sr-only">{item.type === "note" ? "Note: " : "File: "}</span>{label}</span>
+              <span className="bin-row-title" title={label}><span className="sr-only">{`${binTypeLabel(item.type)}: `}</span>{label}</span>
               <span className="bin-row-meta">
-                <span>{binFolderLabel(item)}</span>
+                <span>{item.type === "event" ? `In ${binFolderLabel(item)}` : binFolderLabel(item)}</span>
                 <time dateTime={item.deleted_at}>Deleted {relativeTime(item.deleted_at)}</time>
                 {item.purging || action === "delete"
                   ? <span className="bin-row-status">Deleting forever…</span>
@@ -245,7 +254,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
             </span>
             <span className="bin-row-actions">
               <button className="bin-action" onClick={() => { void restore(item); }} disabled={disabled} aria-label={`Restore ${label}`}><ArchiveRestore />Restore</button>
-              <button className="bin-action danger" onClick={() => { void deleteForever(item); }} disabled={disabled} aria-label={`Delete ${label} forever`}><Trash2 />Delete forever</button>
+              {canPurge(item) && <button className="bin-action danger" onClick={() => { void deleteForever(item); }} disabled={disabled} aria-label={`Delete ${label} forever`}><Trash2 />Delete forever</button>}
             </span>
             <button className="icon-button bin-more" onClick={(event) => openSheet(item, event.currentTarget)} disabled={disabled} aria-haspopup="dialog" aria-label={`Actions for ${label}`}><Ellipsis /></button>
           </li>;
@@ -260,8 +269,8 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
           <strong id="bin-sheet-title" title={binItemLabel(sheetItem)}>{binItemLabel(sheetItem)}</strong>
           <button className="icon-button" onClick={closeSheet} aria-label="Close actions"><X /></button>
         </header>
-        <button autoFocus onClick={() => { void restore(sheetItem); }}><ArchiveRestore />Restore to {binFolderLabel(sheetItem)}</button>
-        <button className="danger" onClick={() => { void deleteForever(sheetItem); }}><Trash2 />Delete forever</button>
+        <button autoFocus onClick={() => { void restore(sheetItem); }}><ArchiveRestore />{sheetItem.type === "calendar" ? "Restore" : `Restore to ${binFolderLabel(sheetItem)}`}</button>
+        {canPurge(sheetItem) && <button className="danger" onClick={() => { void deleteForever(sheetItem); }}><Trash2 />Delete forever</button>}
         <button onClick={closeSheet}>Cancel</button>
       </div>
     </>}

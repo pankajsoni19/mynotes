@@ -407,10 +407,10 @@ describe("Bin API", () => {
     const [documentItem, noteItem] = items;
     expect(noteItem).toEqual({
       type: "note", id: noteId, title: "Listed note", folder_id: folderId, folder_name: "Listed folder", size_bytes: null,
-      deleted_at: noteRow(noteId)!.deleted_at!, purge_after: noteRow(noteId)!.purge_after!, purging: false
+      deleted_at: noteRow(noteId)!.deleted_at!, purge_after: noteRow(noteId)!.purge_after!, purging: false, can_purge: true
     });
     expect(documentItem).toMatchObject({ type: "document", title: "listed.txt", folder_name: "Default", size_bytes: 12, purging: false });
-    expect(Object.keys(documentItem!).sort()).toEqual(["deleted_at", "folder_id", "folder_name", "id", "purge_after", "purging", "size_bytes", "title", "type"]);
+    expect(Object.keys(documentItem!).sort()).toEqual(["can_purge", "deleted_at", "folder_id", "folder_name", "id", "purge_after", "purging", "size_bytes", "title", "type"]);
     expect(items.some((item) => item.id === live || item.id === othersNote)).toBe(false);
     expect((await listBin(owner, "?type=note")).items.map((item) => item.id)).toEqual([noteId]);
     expect((await listBin(owner, "?type=document")).items.map((item) => item.id)).toEqual([document.id]);

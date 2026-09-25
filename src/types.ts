@@ -56,7 +56,7 @@ export type DocumentSummary = {
   updated_at: string;
 };
 export type BinItem = {
-  type: "note" | "document";
+  type: "note" | "document" | "calendar" | "event";
   id: string;
   title: string;
   folder_id: string | null;
@@ -65,5 +65,7 @@ export type BinItem = {
   deleted_at: string;
   purge_after: string;
   purging: boolean;
+  /** False for an event the caller deleted on someone else's calendar (restore only). */
+  can_purge?: boolean;
 };
-export type BinRestoreResult = { ok: true; folderId: string | null; folderName: string | null; visibility?: Visibility; alreadyRestored?: true };
+export type BinRestoreResult = { ok: true; folderId?: string | null; folderName?: string | null; visibility?: Visibility; alreadyRestored?: true; calendarId?: string; calendarName?: string };

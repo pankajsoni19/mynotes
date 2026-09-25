@@ -44,7 +44,7 @@ type DocumentSummary = {
 };
 
 type BinItem = {
-  type: "note" | "document";
+  type: "note" | "document" | "calendar" | "event";   // calendar types: Wave 12
   id: string;
   title: string;                 // note title or document name
   folder_id: string | null;      // original folder, null if it no longer exists
@@ -53,6 +53,7 @@ type BinItem = {
   deleted_at: string;
   purge_after: string;
   purging: boolean;              // purge_started_at IS NOT NULL
+  can_purge: boolean;            // false for an event the caller deleted on someone else's calendar (restore only)
 };
 ```
 
@@ -179,7 +180,7 @@ Streaming: open the object with `O_NOFOLLOW` and verify it with `fstat`, then st
 <a id="bin"></a>
 ## Bin
 
-Every Bin endpoint is scoped to the caller's own items. `:type` is `note` or `document`; any other value returns 400.
+Every Bin endpoint is scoped to the caller's own items. `:type` is `note`, `document`, `calendar`, or `event` (see [Calendar § Bin](#calendar-items-in-the-bin)); any other value returns 400.
 
 ### List
 
@@ -327,6 +328,23 @@ type Occurrence = {
 **Links.** The linker must be able to read the target, and an unreadable target returns the same 404 as a missing one. Links are resolved per viewer on every read: the title when the viewer can read the target, otherwise `{ title: null, restricted: true }` (T59). Links never grant access. `note` targets use the live note ACL. `card` and `collection_row` targets are validated as UUIDs only and resolve as restricted until the Tasks and Collections modules register a resolver (`server/calendar/links.ts`).
 
 **Audit.** `calendar.create`, `calendar.update`, `calendar.delete`, `calendar.sharing_changed { calendarId, visibility, shareRole, recipientCount }`, `event.create { eventId, calendarId }`, `event.update`, `event.undo`, `event.exdate`, `event.delete { eventId }`, `event.link` / `event.unlink { eventId, targetType, targetId }`. Ids only: titles, descriptions, and locations are never audited.
+
+<a id="calendar-items-in-the-bin"></a>
+### Calendar items in the Bin (D68)
+
+`DELETE /api/calendars/:k` and `DELETE /api/events/:e` move items to the shared Bin with the same columns, 30-day retention, tombstone, and compare-and-swap restore as notes and documents (no bytes to remove).
+
+| Item | Listed for | Restore | Delete forever |
+| --- | --- | --- | --- |
+| `calendar` (`folder_id`/`folder_name` null) | its owner | owner | owner; cascades to its events, members, links, reminders, and feeds |
+| `event` (`folder_id`/`folder_name` = its calendar) | the calendar's owner, and whoever deleted it while they can still edit the calendar (`can_purge: false` for them) | the same two | the calendar's owner only (404 for anyone else) |
+
+- A binned calendar hides all of its events; they are not listed one by one and come back with it.
+- Restore responses for these types are `{ ok: true, calendarId, calendarName }` (plus `alreadyRestored: true` for a live item). Restoring an event whose calendar is in the Bin returns 409 `{ code: "PARENT_IN_BIN" }`; restoring a calendar when the owner already has 20 live ones returns 409 `{ code: "LIMIT_REACHED" }`. A purge in progress returns 409 `PURGING`, as for other types.
+- `GET /api/bin?type=calendar|event` filters; the Bin app's Calendar chip shows both.
+- Empty Bin purges the caller's binned calendars and the binned events on calendars they own; events they deleted on someone else's calendar stay for that owner.
+- The hourly sweeper resumes tombstones and purges expired calendars and events with the same per-table budgets (events first).
+- Audit: `calendar.restore { calendarId }`, `event.restore { eventId, calendarId }`, `calendar.purge { calendarId, reason }`, `event.purge { eventId, reason }` with `reason` `user`, `retention`, or `resumed`.
 
 ## Changes to existing note endpoints (Wave 4)
 

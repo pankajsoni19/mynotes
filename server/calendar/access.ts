@@ -56,13 +56,15 @@ export type EventRow = {
  * for `selected`. Binned calendars never match. Events are always joined to
  * their calendar through this predicate (T61).
  */
-export const readableCalendarPredicate = `(
-  k.deleted_at IS NULL AND (k.owner_id = $userId OR k.visibility = 'all_users'
-    OR (k.visibility = 'selected' AND EXISTS (SELECT 1 FROM calendar_members m WHERE m.calendar_id = k.id AND m.user_id = $userId)))
-)`;
+export const calendarAudiencePredicate = `(k.owner_id = $userId OR k.visibility = 'all_users'
+  OR (k.visibility = 'selected' AND EXISTS (SELECT 1 FROM calendar_members m WHERE m.calendar_id = k.id AND m.user_id = $userId)))`;
+export const readableCalendarPredicate = `(k.deleted_at IS NULL AND ${calendarAudiencePredicate})`;
 
 /** Readers who may write events (D54): the owner, or everyone shared with when the audience role is `editor`. */
 export const editableCalendarPredicate = `(${readableCalendarPredicate} AND (k.owner_id = $userId OR k.share_role = 'editor'))`;
+
+/** The same audience and role as editableCalendarPredicate, whatever the calendar's Bin state (Bin restore only). */
+export const calendarWriterPredicate = `(${calendarAudiencePredicate} AND (k.owner_id = $userId OR k.share_role = 'editor'))`;
 
 export function readableCalendar(calendarId: string, userId: string) {
   return db.query(`SELECT k.* FROM calendars k WHERE k.id = $calendarId AND ${readableCalendarPredicate}`).get({ calendarId, userId }) as CalendarRow | null;

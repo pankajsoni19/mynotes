@@ -1,7 +1,7 @@
 // Pure Bin display helpers. No DOM or network access, so they are unit tested directly.
 import type { BinItem, Visibility } from "../types";
 
-export type BinFilter = "all" | "note" | "document";
+export type BinFilter = "all" | "note" | "document" | "calendar";
 
 const DAY_MS = 86_400_000;
 
@@ -18,17 +18,33 @@ export function purgeCountdownLabel(purgeAfter: string, nowMs = Date.now()) {
   return days === 1 ? "Deletes in 1 day" : `Deletes in ${days} days`;
 }
 
-/** Where a restore will put the item: its original folder, or Default when that folder is gone. */
-export function binFolderLabel(item: Pick<BinItem, "folder_name">) {
+/** Where a restore will put the item: its original folder, or Default when that folder is gone. Calendar items name their calendar. */
+export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick<BinItem, "type">>) {
+  if (item.type === "calendar") return "Calendar";
+  if (item.type === "event") return item.folder_name ?? "Calendar";
   return item.folder_name ?? "Default";
 }
 
+const isCalendarItem = (type: BinItem["type"]) => type === "calendar" || type === "event";
+
+/** Screen-reader prefix for a row. */
+export function binTypeLabel(type: BinItem["type"]) {
+  return { note: "Note", document: "File", calendar: "Calendar", event: "Event" }[type];
+}
+
+/** Toast after restoring a calendar or an event. */
+export function restoredCalendarMessage(item: Pick<BinItem, "type" | "title">, calendarName: string | undefined, alreadyRestored: boolean) {
+  if (item.type === "calendar") return alreadyRestored ? `“${calendarName ?? item.title}” was already restored` : `Restored “${calendarName ?? item.title}”`;
+  return alreadyRestored ? `Already restored to ${calendarName ?? "its calendar"}` : `Restored to ${calendarName ?? "its calendar"}`;
+}
+
 export function filterBinItems(items: BinItem[], filter: BinFilter) {
+  if (filter === "calendar") return items.filter((item) => isCalendarItem(item.type));
   return filter === "all" ? items : items.filter((item) => item.type === filter);
 }
 
 export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
-  return item.title.trim() || (item.type === "note" ? "Untitled note" : "Untitled file");
+  return item.title.trim() || { note: "Untitled note", document: "Untitled file", calendar: "Untitled calendar", event: "Untitled event" }[item.type];
 }
 
 export function deleteForeverConfirm(title: string) {

@@ -1,11 +1,23 @@
 import { audit, db, ensureDefaultFolder, now } from "./db";
 import { removeObject } from "./documentStorage";
 import { storage, withResourceLock } from "./storage";
+import {
+  calendarBinSources,
+  emptyCalendarBin,
+  isCalendarBinType,
+  purgeOwnedCalendarItem,
+  restoreCalendarItem,
+  sweepCalendarBin,
+  type CalendarBinType
+} from "./calendar/calendarBin";
 
 /** Bin retention is a constant (D11), not configurable. */
 export const BIN_RETENTION_MS = 30 * 86_400_000;
 
-export type BinType = "note" | "document";
+/** Notes and documents have bytes and folders; calendars and events use server/calendar/calendarBin.ts. */
+export type StoredBinType = "note" | "document";
+export type BinType = StoredBinType | CalendarBinType;
+export const isBinType = (value: string | undefined): value is BinType => value === "note" || value === "document" || (value !== undefined && isCalendarBinType(value));
 /**
  * Why an item was purged, as recorded in the audit metadata. "resumed" marks a
  * purge the sweeper finished after it was interrupted: the original reason
@@ -19,14 +31,14 @@ export type PurgeOutcome = "purged" | "pending" | "not_found";
 export const purgeAfterFrom = (deletedAt: Date) => new Date(deletedAt.getTime() + BIN_RETENTION_MS).toISOString();
 
 const tables = { note: "notes", document: "documents" } as const;
-export const lockKey = (type: BinType, id: string) => `${type}:${id}`;
+export const lockKey = (type: StoredBinType, id: string) => `${type}:${id}`;
 
 /**
  * Byte removal for each type. ENOENT counts as success in both. Kept on an
  * object so tests can inject a failure without touching the filesystem.
  */
 export const binStorage = {
-  removeBytes: (type: BinType, id: string) => type === "note" ? storage.removeNote(id) : removeObject(id)
+  removeBytes: (type: StoredBinType, id: string) => type === "note" ? storage.removeNote(id) : removeObject(id)
 };
 
 /**
@@ -38,7 +50,7 @@ export const binStorage = {
  * 3. Delete the row in a transaction (cascades clear versions and shares) and
  *    audit the purge with the id in metadata, since audit_log.note_id is nulled.
  */
-export async function purgeLocked(type: BinType, id: string, options: { reason: PurgeReason; actorId: string | null; ownerId?: string; dueBy?: string }): Promise<PurgeOutcome> {
+export async function purgeLocked(type: StoredBinType, id: string, options: { reason: PurgeReason; actorId: string | null; ownerId?: string; dueBy?: string }): Promise<PurgeOutcome> {
   const table = tables[type];
   const startedAt = new Date().toISOString();
   // Sweeper purges re-check retention under the lock: an item restored and deleted
@@ -70,6 +82,7 @@ export async function purgeLocked(type: BinType, id: string, options: { reason: 
  * from a missing one (404). A row already being purged is finished here.
  */
 export function purgeOwnedItem(type: BinType, id: string, ownerId: string): Promise<PurgeOutcome | "live"> {
+  if (isCalendarBinType(type)) return purgeOwnedCalendarItem(type, id, ownerId);
   return withResourceLock(lockKey(type, id), async () => {
     const row = db.query(`SELECT deleted_at FROM ${tables[type]} WHERE id = ? AND owner_id = ?`).get(id, ownerId) as { deleted_at: string | null } | null;
     if (!row) return "not_found";
@@ -82,7 +95,10 @@ export type Visibility = "private" | "selected" | "all_users";
 export type RestoreOutcome =
   | { status: "restored"; folderId: string; folderName: string; visibility: Visibility }
   | { status: "already_restored"; folderId: string | null; folderName: string | null }
+  | { status: "calendar_restored"; alreadyRestored: boolean; calendarId: string; calendarName: string }
   | { status: "purging" }
+  | { status: "parent_in_bin" }
+  | { status: "limit" }
   | { status: "not_found" };
 
 type RestorableRow = { folder_id: string | null; visibility: Visibility; sharing_override: number; deleted_at: string | null; purge_started_at: string | null };
@@ -99,7 +115,13 @@ const ownedFolder = (folderId: string | null, ownerId: string) => folderId === n
  * the owner's Default folder. Share rows were kept, so the item's previous
  * audience regains access; the response reports the effective visibility.
  */
-export function restoreItem(type: BinType, id: string, ownerId: string): Promise<RestoreOutcome> {
+export async function restoreItem(type: BinType, id: string, ownerId: string): Promise<RestoreOutcome> {
+  if (isCalendarBinType(type)) {
+    const outcome = await restoreCalendarItem(type, id, ownerId);
+    return outcome.status === "restored" || outcome.status === "already_restored"
+      ? { status: "calendar_restored", alreadyRestored: outcome.status === "already_restored", calendarId: outcome.calendarId, calendarName: outcome.calendarName }
+      : outcome as Extract<RestoreOutcome, { status: "purging" | "parent_in_bin" | "limit" | "not_found" }>;
+  }
   const table = tables[type];
   return withResourceLock(lockKey(type, id), async () => {
     const row = db.query(`SELECT folder_id, visibility, sharing_override, deleted_at, purge_started_at FROM ${table} WHERE id = ? AND owner_id = ?`)
@@ -152,6 +174,8 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
       else if (outcome === "pending") counts.pending += 1;
     }
   }
+  const calendar = await sweepCalendarBin(cutoff, { resume: SWEEP_RESUME_BATCH_SIZE, due: SWEEP_BATCH_SIZE });
+  counts.purged += calendar.purged;
   return counts;
 }
 
@@ -165,6 +189,8 @@ export type BinItem = {
   deleted_at: string;
   purge_after: string;
   purging: boolean;
+  /** False for an event the caller deleted on someone else's calendar: they may restore it, only the owner purges it. */
+  can_purge: boolean;
 };
 
 export const BIN_LIST_LIMIT = 500;
@@ -172,18 +198,20 @@ export const BIN_LIST_LIMIT = 500;
 /** The caller's own binned items, newest deletion first. Folder columns are null when the original folder is gone (restore then targets Default). */
 export function listBin(ownerId: string, type: BinType | null) {
   const notes = `SELECT 'note' AS type, n.id, n.title, f.id AS folder_id, f.name AS folder_name, NULL AS size_bytes,
-      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging
+      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 1 AS can_purge
     FROM notes n LEFT JOIN folders f ON f.id = n.folder_id AND f.owner_id = n.owner_id
     WHERE n.owner_id = $ownerId AND n.deleted_at IS NOT NULL`;
   const documents = `SELECT 'document' AS type, d.id, d.name AS title, f.id AS folder_id, f.name AS folder_name, d.size_bytes,
-      d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging
+      d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging, 1 AS can_purge
     FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
     WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
   // The Files filter shows Files items only; attachments appear under All (WAVES_7-9.md §7).
-  const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'` : `${notes} UNION ALL ${documents}`;
+  const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'`
+    : type !== null ? calendarBinSources(type).join(" UNION ALL ")
+    : [notes, documents, ...calendarBinSources(null)].join(" UNION ALL ");
   const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
-    .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging"> & { purging: number }>;
-  return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1 }));
+    .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging" | "can_purge"> & { purging: number; can_purge: number }>;
+  return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1, can_purge: row.can_purge === 1 }));
 }
 
 /**
@@ -206,5 +234,7 @@ export async function emptyBin(ownerId: string) {
       after = batch[batch.length - 1]!.id;
     }
   }
+  const calendar = await emptyCalendarBin(ownerId, SWEEP_BATCH_SIZE);
+  counts.purged += calendar.purged;
   return counts;
 }
