@@ -144,3 +144,13 @@ test("field drafts mirror the schema rules and build the PUT body", () => {
   expect(moveDraft([1, 2, 3], 0, -1)).toEqual([1, 2, 3]);
   expect(moveDraft([1, 2, 3], 2, -1)).toEqual([1, 3, 2]);
 });
+
+test("small Collections controls get 44 px hit areas on phones without growing", async () => {
+  const css = await Bun.file(new URL("../src/collections/collections.css", import.meta.url)).text();
+  const phone = css.slice(css.indexOf("@media (max-width: 760px)"));
+  expect(phone).toMatch(/\.sort-filter-options label::after, \.collection-reload::after, \.field-editor-check::after \{[^}]*width: max\(100%, 44px\); height: max\(100%, 44px\);/);
+  expect(phone).toMatch(/\.sort-filter-options label, \.collection-reload, \.field-editor-check \{ position: relative; \}/);
+  // The visible sizes stay as they are.
+  expect(css).toMatch(/\.field-editor-check input \{ min-height: 0; width: 16px; height: 16px;/);
+  expect(css).toMatch(/\.collection-reload \{ min-height: 28px;/);
+});

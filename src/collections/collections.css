@@ -248,6 +248,9 @@
   .sort-filter select, .sort-filter input { min-height: 44px; font-size: 1rem; }
   .sort-filter .icon-button { width: 44px; height: 44px; }
   .sort-filter-options label { min-height: 36px; display: inline-flex; align-items: center; }
+  /* 44 px hit areas without changing how these controls look (the label toggles its checkbox). */
+  .sort-filter-options label, .collection-reload, .field-editor-check { position: relative; }
+  .sort-filter-options label::after, .collection-reload::after, .field-editor-check::after { content: ""; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
 }
 
 @media (max-width: 760px) {
