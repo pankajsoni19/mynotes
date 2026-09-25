@@ -147,6 +147,18 @@ The product is a private workspace (Notes, Files, Bin, Tasks next), so "MyNotes"
 - [x] Hotfix `5ce3bc4` (411 without Content-Length, 30 s inactivity watchdog with 408, explicit staging-handle close; three real-server regression tests; the reproduction script no longer crashes a scratch server) and `479d58a` (error logs print class and errno, not messages). 196 tests.
 - [x] **Released v0.4.1 (2026-09-25):** bump `d1fdb31`, pushed, deployed (no migration, no backup needed); healthy; `/api/about` reports `0.4.1` / `d1fdb31bb3ecededc5123fd61893bff18711eb3b`. **Wave 6 complete.**
 
+## Waves in flight (parallel, 2026-09-25)
+
+| Wave | Where | Status |
+| --- | --- | --- |
+| 9 Task Boards | `main` | Stage A merged (`cc7faa3`…`d7e94d3`, 285 tests: migration 009 with `documents.purpose`, boards/sharing/columns/cards APIs, Tasks routes + Home card, desktop drag and drop, mobile snap columns + Move sheet). Stages B–D (comments, attachments, Bin) in progress. |
+| 8 MCP scopes | branch `wave8-mcp-scopes` | In progress: migration 010, per-scope tools, draft-only writes, document tools, Settings scopes; also changes auto-publish-on-leave to session-edited drafts only. Task tools land after Wave 9 merges. |
+| 12 Calendar | branch `wave12-calendar` | Stage A in progress: migration 013, recurrence helpers, calendar/event APIs, agenda/month/event routes, links, Bin parity. Reminders/push/feeds/MCP later. |
+| 11 Collections | branch `wave11-collections` | Stages A–D in progress: migration 012, schema/templates, query API, table + mobile UI, sharing, views, attachments, Bin, search, CSV. MCP tools after Wave 8. |
+| 10 Today | not started | After Wave 9 (needs cards for migration 011). |
+
+Merge order: 9 → 8 → 11 → 12 (then 10). Each gets one independent review; QA is delegated; container verification once per release.
+
 ## Backlog — candidate modules and enhancements (for later picking)
 
 Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md). Nothing here is scheduled until the operator picks it.
