@@ -11,6 +11,7 @@ import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
 import { initPush } from "./calendar/push";
+import { reconcileEventNextOccurrences } from "./calendar/service";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
@@ -861,6 +862,11 @@ try {
   reconcileCollectionSearchIndex();
 } catch (error) {
   console.error("Collection search index reconcile failed", errorClass(error));
+}
+try {
+  await reconcileEventNextOccurrences();
+} catch (error) {
+  console.error("Calendar range index reconcile failed", errorClass(error));
 }
 startSweeper();
 try {

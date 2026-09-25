@@ -176,7 +176,7 @@ describe("rules, exdates, timing, and bounds", () => {
 
   test("normalizeRule accepts the subset and rejects everything else", () => {
     expect(normalizeRule({ freq: "weekly", interval: 1, byDay: ["FR", "MO", "MO"] }, start)).toEqual({ freq: "weekly", interval: 1, byDay: ["MO", "FR"] });
-    expect(normalizeRule({ freq: "monthly", interval: 99, count: 730 }, start)).toEqual({ freq: "monthly", interval: 99, count: 730 });
+    expect(normalizeRule({ freq: "monthly", interval: 1, count: 120 }, start)).toEqual({ freq: "monthly", interval: 1, count: 120 });
     for (const bad of [
       { freq: "hourly", interval: 1 },
       { freq: "daily", interval: 0 },

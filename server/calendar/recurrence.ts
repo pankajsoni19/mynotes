@@ -23,6 +23,11 @@ export const MAX_RANGE_DAYS = 100;
 /** Longest all-day event. Timed events are capped by duration_minutes ≤ 10080 (7 days). */
 export const MAX_ALL_DAY_DAYS = 366;
 export const MAX_DURATION_MINUTES = 10_080;
+/** Repeating events start between these years (T66). */
+export const MIN_RECURRING_YEAR = 1970;
+export const MAX_RECURRING_YEAR = 2100;
+/** A repeat with a number of times spans at most this many days (about 10 years). */
+export const MAX_COUNT_SPAN_DAYS = 3653;
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -189,6 +194,8 @@ export function normalizeRule(rule: RecurrenceRule, timing: EventTiming): Recurr
   if (!freqs.includes(rule.freq)) throw new RecurrenceError("Unknown repeat frequency");
   if (!Number.isInteger(rule.interval) || rule.interval < 1 || rule.interval > MAX_INTERVAL) throw new RecurrenceError(`Repeat every 1 to ${MAX_INTERVAL} periods`);
   if (rule.until !== undefined && rule.count !== undefined) throw new RecurrenceError("Choose an end date or a number of times, not both");
+  const startYear = Number(startDateOf(timing).slice(0, 4));
+  if (startYear < MIN_RECURRING_YEAR || startYear > MAX_RECURRING_YEAR) throw new RecurrenceError(`A repeating event starts between ${MIN_RECURRING_YEAR} and ${MAX_RECURRING_YEAR}`);
   const normalized: RecurrenceRule = { freq: rule.freq, interval: rule.interval };
   if (rule.byDay !== undefined) {
     if (rule.freq !== "weekly") throw new RecurrenceError("Weekdays apply to weekly repeats only");
@@ -206,6 +213,11 @@ export function normalizeRule(rule: RecurrenceRule, timing: EventTiming): Recurr
   if (rule.count !== undefined) {
     if (!Number.isInteger(rule.count) || rule.count < 1 || rule.count > MAX_COUNT) throw new RecurrenceError(`Repeat 1 to ${MAX_COUNT} times`);
     normalized.count = rule.count;
+    const periodDays = { daily: 1, weekly: 7, monthly: 30.44, yearly: 365.25 }[rule.freq];
+    const periods = Math.ceil(rule.count / (normalized.byDay?.length ?? 1));
+    if ((periods - 1) * rule.interval * periodDays > MAX_COUNT_SPAN_DAYS) {
+      throw new RecurrenceError("A repeat with a number of times can span at most 10 years. Choose an end date or no end instead.");
+    }
   }
   return normalized;
 }
@@ -300,11 +312,15 @@ export function rangeFor(fromDate: string, toDate: string, viewerTz: string): Ex
   return { fromDate, toDate, startMs: zonedToUtc(`${fromDate}T00:00`, viewerTz), endMs: zonedToUtc(`${toDate}T00:00`, viewerTz) };
 }
 
+/** A shared per-request allowance of recurrence steps (T66); expansion stops when it runs out. */
+export type ExpansionBudget = { steps: number };
+
 /**
  * Occurrences of one series that overlap `range`, in order, skipping exdates,
- * and at most `limit` of them. `truncated` is true when more existed.
+ * and at most `limit` of them. `truncated` is true when more existed, or when
+ * `budget` ran out before the series was fully expanded.
  */
-export function expandSeries(series: SeriesInput, range: ExpansionRange, limit = MAX_INSTANCES): { occurrences: Occurrence[]; truncated: boolean } {
+export function expandSeries(series: SeriesInput, range: ExpansionRange, limit = MAX_INSTANCES, budget?: ExpansionBudget): { occurrences: Occurrence[]; truncated: boolean } {
   const occurrences: Occurrence[] = [];
   if (limit <= 0) return { occurrences, truncated: true };
   const exdates = new Set(series.exdates ?? []);
@@ -317,6 +333,7 @@ export function expandSeries(series: SeriesInput, range: ExpansionRange, limit =
   const time = series.allDay ? "" : series.startLocal.slice(10);
   for (const day of seriesDays(startDay, series.rule, firstUseful)) {
     if (day > toDay + 2) break;
+    if (budget && --budget.steps < 0) return { occurrences, truncated: true };
     if (day < firstUseful) continue;
     const date = dayToDate(day);
     if (exdates.has(date)) continue;
@@ -382,6 +399,17 @@ export function nextOccurrence(series: SeriesInput, afterMs: number, allDayTz: s
     if (startMs >= afterMs) return { date, startMs };
   }
   return null;
+}
+
+/**
+ * `next_occurrence_utc` for the range index (migration 014): a lower bound on the start of every
+ * occurrence that ends after `fromMs`, or null when there is none. All-day occurrences sit at UTC
+ * midnight, like `start_utc`; range queries add slack for the viewer's zone.
+ */
+export function nextOccurrenceBound(series: SeriesInput, fromMs: number): string | null {
+  const spanMs = series.allDay ? (dateToDay(series.endDate) - dateToDay(series.startDate)) * DAY_MS : series.durationMinutes * MINUTE_MS;
+  const next = nextOccurrence(series, fromMs - spanMs - DAY_MS, "UTC");
+  return next ? new Date(next.startMs).toISOString() : null;
 }
 
 /** Whether `date` is the local start date of an occurrence of the series (exdates ignored). */

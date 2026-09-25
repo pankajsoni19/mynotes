@@ -21,6 +21,7 @@ import {
   isValidTimeZone,
   MAX_INSTANCES,
   normalizeExdates,
+  nextOccurrenceBound,
   normalizeRule,
   rangeFor,
   RecurrenceError,
@@ -28,6 +29,7 @@ import {
   utcToZoned,
   validateTiming,
   type EventTiming,
+  type ExpansionBudget,
   type ExpansionRange,
   type RecurrenceRule,
   type SeriesInput
@@ -37,9 +39,15 @@ export const MAX_CALENDARS_PER_OWNER = 20;
 export const MAX_EVENTS_PER_CALENDAR = 20_000;
 export const MAX_SHARE_RECIPIENTS = 100;
 export const DEFAULT_CALENDAR_NAME = "Personal";
+/** Event creations per user per minute (T66). */
+export const EVENT_CREATES_PER_MINUTE = 60;
+/** Per-request work budget for the range API (T66): rows expanded and recurrence steps taken. */
+export const MAX_ROWS_EXAMINED = 5000;
+export const MAX_EXPANSION_STEPS = 50_000;
+const NEXT_OCCURRENCE_BATCH = 500;
 
 export class CalendarError extends Error {
-  constructor(public status: 400 | 403 | 404 | 409, message: string, public code?: string, public extra: Record<string, unknown> = {}) {
+  constructor(public status: 400 | 403 | 404 | 409 | 429, message: string, public code?: string, public extra: Record<string, unknown> = {}) {
     super(message);
   }
 
@@ -312,6 +320,55 @@ function writableEvent(eventId: string, userId: string) {
 
 const eventById = (eventId: string) => db.query("SELECT * FROM events WHERE id = ?").get(eventId) as EventRow;
 
+/** Writes the range-index bound of migration 014 for one event, from `nowMs`. */
+function refreshNextOccurrence(event: EventRow, nowMs = Date.now()) {
+  let bound: string | null;
+  try {
+    bound = nextOccurrenceBound(seriesOf(event), nowMs);
+  } catch {
+    // Unreadable timing: the first start is always a safe lower bound.
+    bound = event.start_utc;
+  }
+  db.query("UPDATE events SET next_occurrence_utc = ?, next_occurrence_from = ?, next_occurrence_revision = ? WHERE id = ?")
+    .run(bound, new Date(nowMs).toISOString(), event.revision, event.id);
+}
+
+/**
+ * Boot: fills the range-index bound for events that have none (rows from before migration 014, or
+ * written by a path that does not refresh it), in batches, yielding between them.
+ */
+export async function reconcileEventNextOccurrences(nowMs = Date.now()) {
+  let updated = 0;
+  for (;;) {
+    const rows = db.query("SELECT * FROM events WHERE next_occurrence_from IS NULL OR next_occurrence_revision IS NOT revision LIMIT ?").all(NEXT_OCCURRENCE_BATCH) as EventRow[];
+    if (!rows.length) return updated;
+    db.transaction(() => { for (const row of rows) refreshNextOccurrence(row, nowMs); })();
+    updated += rows.length;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+const createWindows = new Map<string, { count: number; resetAt: number }>();
+
+/** Fixed one-minute window per user; a refused creation costs nothing. */
+function chargeEventCreate(userId: string, nowMs: number) {
+  if (createWindows.size > 5000) for (const [key, window] of createWindows) if (window.resetAt <= nowMs) createWindows.delete(key);
+  let window = createWindows.get(userId);
+  if (!window || window.resetAt <= nowMs) {
+    window = { count: 0, resetAt: nowMs + 60_000 };
+    createWindows.set(userId, window);
+  }
+  if (window.count >= EVENT_CREATES_PER_MINUTE) {
+    throw new CalendarError(429, "Too many new events. Try again in a minute.", "RATE_LIMITED", { retryAfter: Math.ceil((window.resetAt - nowMs) / 1000) });
+  }
+  window.count += 1;
+}
+
+/** Test hook. */
+export function resetEventCreateLimit() {
+  createWindows.clear();
+}
+
 function eventResponse(event: EventRow, calendar: CalendarRow, userId: string) {
   const links = db.query("SELECT target_type, target_id FROM event_links WHERE event_id = ? ORDER BY rowid")
     .all(event.id) as Array<{ target_type: LinkTargetType; target_id: string }>;
@@ -323,9 +380,10 @@ function eventResponse(event: EventRow, calendar: CalendarRow, userId: string) {
   };
 }
 
-export function createEvent(userId: string, calendarId: string, input: EventInput) {
+export function createEvent(userId: string, calendarId: string, input: EventInput, nowMs = Date.now()) {
   writableCalendar(calendarId, userId);
   const columns = timingColumns(input, []);
+  chargeEventCreate(userId, nowMs);
   const id = crypto.randomUUID();
   const timestamp = now();
   db.transaction(() => {
@@ -336,6 +394,7 @@ export function createEvent(userId: string, calendarId: string, input: EventInpu
       VALUES ($id, $calendarId, $title, $description, $location, $all_day, $start_date, $end_date, $start_local, $tz, $duration_minutes,
         $start_utc, $series_end_utc, $rrule_json, $exdates_json, $userId, $userId, $timestamp, $timestamp)`)
       .run({ id, calendarId, title: input.title, description: input.description ?? "", location: input.location ?? "", ...columns, userId, timestamp });
+    refreshNextOccurrence(eventById(id), nowMs);
     audit(userId, null, "event.create", { eventId: id, calendarId });
   })();
   const found = readableEvent(id, userId)!;
@@ -364,6 +423,7 @@ function applyChange(event: EventRow, userId: string, baseRevision: number, valu
     WHERE id = $id AND revision = $revision AND deleted_at IS NULL`)
     .run({ ...next, prev: JSON.stringify(snapshotOf(event)), userId, timestamp, id: event.id, revision: baseRevision });
   if (result.changes !== 1) throw changed(eventById(event.id));
+  refreshNextOccurrence(eventById(event.id));
   audit(userId, null, eventType, { eventId: event.id, ...metadata });
   return eventById(event.id);
 }
@@ -404,6 +464,7 @@ export function undoEvent(userId: string, eventId: string, revision: number) {
     WHERE id = $id AND revision = $revision AND deleted_at IS NULL AND prev_json IS NOT NULL`)
     .run({ ...previous, userId, timestamp, id: eventId, revision });
   if (result.changes !== 1) throw changed(eventById(eventId));
+  refreshNextOccurrence(eventById(eventId));
   audit(userId, null, "event.undo", { eventId });
   rescheduleEventReminders(eventId);
   return eventResponse(eventById(eventId), calendar, userId);
@@ -484,7 +545,10 @@ const DAY_MS = 86_400_000;
  * Occurrences of live events on readable calendars (optionally only
  * `calendarIds`) overlapping the range, expanded server-side, sorted by start,
  * at most MAX_INSTANCES in total (T66). Calendar ids the caller cannot read
- * are ignored.
+ * are ignored. Rows whose stored next-occurrence bound (migration 014) lies
+ * past the range are skipped unexpanded; the rest are expanded within a work
+ * budget of MAX_ROWS_EXAMINED rows and MAX_EXPANSION_STEPS recurrence steps,
+ * and `truncated` is true when the budget ran out.
  */
 export function listOccurrences(userId: string, range: ExpansionRange, calendarIds: string[] | null) {
   // All-day rows are stored as UTC midnight; a day of slack covers every viewer zone.
@@ -494,12 +558,14 @@ export function listOccurrences(userId: string, range: ExpansionRange, calendarI
   const rows = db.query(`SELECT e.*, k.color AS calendar_color FROM events e JOIN calendars k ON k.id = e.calendar_id
       WHERE e.deleted_at IS NULL AND ${readableCalendarPredicate} ${filter}
         AND e.start_utc < $upper AND (e.series_end_utc IS NULL OR e.series_end_utc > $lower)
-      ORDER BY e.start_utc, e.id`)
-    .all({ userId, upper, lower, ...(calendarIds === null ? {} : { calendarIds: JSON.stringify(calendarIds) }) }) as Array<EventRow & { calendar_color: CalendarColor }>;
+        AND (e.next_occurrence_from IS NULL OR e.next_occurrence_revision IS NOT e.revision OR e.next_occurrence_from > $lower OR e.next_occurrence_utc < $upper)
+      ORDER BY e.start_utc, e.id LIMIT $rowLimit`)
+    .all({ userId, upper, lower, rowLimit: MAX_ROWS_EXAMINED + 1, ...(calendarIds === null ? {} : { calendarIds: JSON.stringify(calendarIds) }) }) as Array<EventRow & { calendar_color: CalendarColor }>;
   const items: Array<OccurrenceItem & { sortKey: string }> = [];
-  let truncated = false;
-  for (const row of rows) {
-    const { occurrences, truncated: cut } = expandSeries(seriesOf(row), range, MAX_INSTANCES - items.length);
+  let truncated = rows.length > MAX_ROWS_EXAMINED;
+  const budget: ExpansionBudget = { steps: MAX_EXPANSION_STEPS };
+  for (const row of rows.slice(0, MAX_ROWS_EXAMINED)) {
+    const { occurrences, truncated: cut } = expandSeries(seriesOf(row), range, MAX_INSTANCES - items.length, budget);
     for (const occurrence of occurrences) {
       const start = occurrence.allDay ? occurrence.startDate : new Date(occurrence.startMs).toISOString();
       const end = occurrence.allDay ? occurrence.endDate : new Date(occurrence.endMs).toISOString();
