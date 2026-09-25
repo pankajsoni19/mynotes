@@ -1,4 +1,5 @@
 import { db, type DocumentRow } from "./db";
+import { readableBoardPredicate } from "./tasks/access";
 import type { PreviewKind } from "./mimeSniff";
 
 export type Visibility = "private" | "selected" | "all_users";
@@ -68,12 +69,25 @@ const readablePredicate = `
   )
 `;
 
+/**
+ * D43: a live document linked to a live card on a board `$userId` can read. OR-ed into the single
+ * document reads below and never into lists, so attachments stay out of Files and access ends the
+ * moment the membership, the card, the board, or the link does (T40).
+ */
+const attachedToReadableCard = `(
+  d.deleted_at IS NULL AND EXISTS (
+    SELECT 1 FROM card_attachments ca JOIN cards c ON c.id = ca.card_id AND c.deleted_at IS NULL
+    JOIN boards b ON b.id = c.board_id
+    WHERE ca.document_id = d.id AND ${readableBoardPredicate}
+  )
+)`;
+
 export function readableDocument(documentId: string, userId: string) {
-  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readablePredicate}`).get({ documentId, userId }) as DocumentRow | null;
+  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND (${readablePredicate} OR ${attachedToReadableCard})`).get({ documentId, userId }) as DocumentRow | null;
 }
 
 export function readableDocumentSummary(documentId: string, userId: string) {
-  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readablePredicate}`).get({ documentId, userId }) as DocumentSummary | null;
+  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND (${readablePredicate} OR ${attachedToReadableCard})`).get({ documentId, userId }) as DocumentSummary | null;
 }
 
 /**

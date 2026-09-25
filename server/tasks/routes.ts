@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
+import { attachToCard, detachFromCard, listAttachments } from "./attachments";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
   createBoard,
@@ -50,7 +51,8 @@ export const cardPatchSchema = z.object({
 }).strict().refine((value) => value.title !== undefined || value.description !== undefined, "Provide a title or a description");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
-export const commentCreateSchema = z.object({ body: commentBody }).strict();
+export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();
+export const attachmentSchema = z.object({ documentId: uuid, commentId: uuid.nullable().optional() }).strict();
 export const commentPatchSchema = z.object({ body: commentBody }).strict();
 export const cardMoveSchema = z.object({ columnId: uuid, afterCardId: uuid.nullable() }).strict();
 
@@ -131,7 +133,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     return respond(c, () => {
       const { card } = getCard(userId, cardId);
       const page = listComments(userId, cardId);
-      return { card, comments: page.comments, hasMoreComments: page.hasMore, attachments: [] };
+      return { card, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId) };
     });
   });
 
@@ -155,6 +157,24 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     const cardId = id(c, "cardId");
     const body = await parseJson(c.req.raw, commentCreateSchema);
     return respond(c, () => createComment(c.get("user").id, cardId, body), 201);
+  });
+
+  app.post("/api/tasks/cards/:cardId/attachments", async (c) => {
+    const cardId = id(c, "cardId");
+    const body = await parseJson(c.req.raw, attachmentSchema);
+    try {
+      const result = await attachToCard(c.get("user").id, cardId, body);
+      return c.json({ attachment: result.attachment }, result.status);
+    } catch (error) {
+      if (error instanceof TaskError) return c.json(error.body(), error.status);
+      throw error;
+    }
+  });
+
+  app.delete("/api/tasks/cards/:cardId/attachments/:documentId", (c) => {
+    const cardId = id(c, "cardId");
+    const documentId = id(c, "documentId");
+    return respond(c, () => detachFromCard(c.get("user").id, cardId, documentId));
   });
 
   app.patch("/api/tasks/comments/:commentId", async (c) => {

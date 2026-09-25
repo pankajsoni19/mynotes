@@ -1,5 +1,6 @@
 import { audit, db, now } from "../db";
 import { readableBoardPredicate } from "./access";
+import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments } from "./attachments";
 import { LIMITS, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
 
 /**
@@ -61,7 +62,7 @@ function readableComment(commentId: string, userId: string) {
     WHERE m.id = $commentId AND ${readableBoardPredicate}`).get({ commentId, userId }) as CommentRow | null;
 }
 
-export async function createComment(userId: string, cardId: string, input: { body: string }) {
+export async function createComment(userId: string, cardId: string, input: { body: string; attachmentIds?: string[] }) {
   const { board } = requireReadableCard(cardId, userId);
   return withBoardLock(board.id, () => {
     requireReadableCard(cardId, userId);
@@ -71,6 +72,12 @@ export async function createComment(userId: string, cardId: string, input: { bod
     db.transaction(() => {
       const timestamp = now();
       db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)").run(id, cardId, userId, input.body, timestamp);
+      // Files attached with the comment are linked to the card through it (their owner only).
+      if (input.attachmentIds?.length) {
+        for (const documentId of linkAttachments({ userId, cardId, documentIds: input.attachmentIds, commentId: id })) {
+          audit(userId, null, "task.attachment_link", { boardId: board.id, cardId, documentId, commentId: id });
+        }
+      }
       db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(timestamp, cardId);
       audit(userId, null, "task.comment_create", { boardId: board.id, cardId, commentId: id });
     })();
@@ -101,7 +108,10 @@ export async function deleteComment(userId: string, commentId: string) {
     if (!current) throw commentNotFound();
     if (current.author_id !== userId && current.owner_id !== userId) throw new TaskError(403, "Only the author or the board owner can delete this comment", "AUTHOR_ONLY");
     db.transaction(() => {
+      // Links made through the comment go with it; files no card links any more move to the Bin.
+      const documentIds = commentAttachmentIds(commentId);
       db.query("DELETE FROM card_comments WHERE id = ?").run(commentId);
+      binUnlinkedAttachments(documentIds, userId);
       audit(userId, null, "task.comment_delete", { boardId: current.board_id, cardId: current.card_id, commentId });
     })();
     return { ok: true as const };

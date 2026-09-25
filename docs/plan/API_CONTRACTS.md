@@ -64,7 +64,7 @@ type BinItem = {
 
 `POST /api/files?folderId=<uuid>`. If `folderId` is omitted, the file goes to the caller's Default folder.
 
-`purpose` (Wave 9, migration 009): every document has `documents.purpose` = `file` (default), `task_attachment`, or `collection_attachment` (reserved for Wave 11). Until Task Boards stage C, the only accepted value of the optional `?purpose=` parameter is `file`; any other value returns 400 `{ error: "Invalid request", details }`.
+`purpose` (Wave 9, migration 009): every document has `documents.purpose` = `file` (default), `task_attachment`, or `collection_attachment` (reserved for Wave 11). The optional `?purpose=` parameter accepts `file` or `task_attachment`; anything else returns 400. A `task_attachment` upload takes no `folderId` (400 otherwise), is stored with `folder_id = NULL`, never appears in Files, counts toward the quota, and becomes readable to a board's readers only once linked to one of its cards (§ Tasks, Attachments).
 
 The request body is `multipart/form-data` with **exactly one** part, named `file`. The part's `filename` parameter becomes the display name after sanitization (DEVELOPMENT_PLAN §6.4). The part's `Content-Type` is ignored for classification.
 
@@ -323,7 +323,7 @@ type CardDetail = CardSummary & { description: string };  // Markdown, at most 6
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `POST /boards/:b/cards { columnId, title, description?, afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. | 400, 404 (board, or a column not on this board), 409 `STALE_POSITION` or `LIMIT_REACHED` |
-| `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: [] }`: the newest 50 comments in chronological order (attachments fill in with stage C) | 404 |
+| `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: CardAttachment[] }`: the newest 50 comments in chronological order, and every live attachment | 404 |
 | `PATCH /cards/:k { title?, description?, revision }` | reader | 200 `{ card }` with `revision + 1` | 400, 404, 409 `{ code: "CARD_CHANGED", card }` (the current card) when `revision` is not the stored one |
 | `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION` |
 | `DELETE /cards/:k` | reader | 200 `{ ok: true, purgeAfter }`: the card moves to the Bin and keeps its column | 404 |
@@ -347,13 +347,34 @@ type CardComment = {
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `GET /cards/:k/comments?before=<commentId>&limit=1–50` | reader | 200 `{ comments, hasMore }`: the `limit` comments before `before` (or the newest), in chronological order | 400, 404 (card, or `before` not a comment of this card) |
-| `POST /cards/:k/comments { body }` | reader | 201 `{ comment }`. The author is always the session user. | 400, 404, 409 `LIMIT_REACHED` (500 per card) |
+| `POST /cards/:k/comments { body, attachmentIds? }` | reader | 201 `{ comment }`. The author is always the session user. `attachmentIds` (≤ 10) are linked through the comment, with the linking rules below. | 400, 404 (card, or a file that is not the caller's live attachment), 409 `LIMIT_REACHED` (500 comments per card, 10 attachments per comment, 50 per card) |
 | `PATCH /comments/:m { body }` | author | 200 `{ comment }` with `edited_at` set | 400, 403 `AUTHOR_ONLY`, 404 |
-| `DELETE /comments/:m` | author or board owner | 200 `{ ok: true }`. Comments are deleted outright, not binned. | 403 `AUTHOR_ONLY`, 404 |
+| `DELETE /comments/:m` | author or board owner | 200 `{ ok: true }`. Comments are deleted outright, not binned; links made through the comment go with it. | 403 `AUTHOR_ONLY`, 404 |
 
 Comments on binned cards, binned boards, or boards the caller can no longer read return 404.
 
-**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.card_create`, `task.card_update`, `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, each with `{ boardId, columnId?, cardId? }`.
+### Attachments
+
+```ts
+type CardAttachment = {
+  document_id: string; card_id: string;
+  comment_id: string | null;           // set when linked through a comment
+  linked_by: string | null; linker_name: string | null;
+  name: string; mime_type: string; preview_kind: PreviewKind; size_bytes: number;
+  created_at: string;                   // when it was linked
+};
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /cards/:k/attachments { documentId, commentId? }` | reader | 201 `{ attachment }`, or 200 when this owner already linked it | 400, 404 (card; a document that is not a live `task_attachment` owned by the caller; a comment that is not the caller's own on this card), 409 `LIMIT_REACHED` (50 per card, 10 per comment) |
+| `DELETE /cards/:k/attachments/:d` | linker or board owner | 200 `{ ok: true, movedToBin }` | 403 `LINKER_ONLY`, 404 |
+
+- **Reading (D43).** `GET /api/files/:id` and `/content` also admit a caller when the live document is linked to a live card on a board they can read. This never applies to lists. Access ends the moment the member is removed, the card or board is binned, the comment is deleted, or the link is removed.
+- **Lifecycle (director review §7).** Unlinking never deletes the file directly. When a document loses its last link (unlink, comment deleted, card or board purged), it moves to its uploader's Bin with `deleted_by` = the actor, and purges 30 days later. Binning a card keeps its links, so restoring the card brings its attachments back.
+- Inline images in a description use the same content URL, `/api/files/:id/content?disposition=inline`.
+
+**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.card_create`, `task.card_update`, `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
 
 ## Changes to existing note endpoints (Wave 4)
 
