@@ -349,26 +349,26 @@ Tools run the HTTP services as the key owner. Errors come back as `isError` with
 6. `feat: choose key scopes in Settings`
 7. `docs: document MCP scopes`
 
-## 5. Threat rows (append to THREAT_MODEL.md)
+## 5. Threat rows (append to THREAT_MODEL.md; numbered T29–T44 because THREAT_MODEL.md already had a T28 when Wave 7 shipped)
 
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
-| T28 | A snippet leaks an unreadable note or draft | ACL applied before `LIMIT`; parity test | Required |
-| T29 | FTS injection or expensive queries | Quoted-term builder, caps, rate limit | Required |
-| T30 | The index outlives an unshare, edit, or purge | Live ACL, same-transaction writes, cascade test | Required |
-| T31 | Note text is duplicated in SQLite; bm25 statistics span all users | Same disk and backups; scores never returned | Accepted |
-| T32 | MCP scope escalation | Per-scope registration, handler checks, immutable scopes | Required |
-| T33 | MCP publishes or destroys content | Drafts on owned notes only, CAS, no destructive tools | Required |
-| T34 | Prompt injection via stored content | **Out of scope for the server.** Clients must treat tool output as data. Mitigated by opt-in write scopes, a human publishing, and audit. | Accepted (documented) |
-| T35 | A stolen key floods writes | Per-key limits, concurrency cap, bounded bodies, revocation | Required |
-| T36 | Binary exfiltration | Text only, up to 1 MiB | Required |
-| T37 | An MCP draft overwrites a human's autosave | Revision CAS | Required |
-| T38 | IDOR across boards | Path ids joined to their board; same-board move targets | Required |
-| T39 | An attachment stays reachable after a membership change | Live predicate, no copies, `no-store` | Required |
-| T40 | Linking someone else's document | Only the owner can link | Required |
-| T41 | XSS through card Markdown | D44 renderer, `src` allowlist, CSP, test fixtures | Required |
-| T42 | Vandalism on an `all_users` board | Allowlist, audit, Bin restore, owner-only purge | Accepted |
-| T43 | Resource exhaustion or comment spoofing | Caps, server-computed positions, session author | Required |
+| T29 | A snippet leaks an unreadable note or draft | ACL applied before `LIMIT`; parity test | Required |
+| T30 | FTS injection or expensive queries | Quoted-term builder, caps, rate limit | Required |
+| T31 | The index outlives an unshare, edit, or purge | Live ACL, same-transaction writes, cascade test | Required |
+| T32 | Note text is duplicated in SQLite; bm25 statistics span all users | Same disk and backups; scores never returned | Accepted |
+| T33 | MCP scope escalation | Per-scope registration, handler checks, immutable scopes | Required |
+| T34 | MCP publishes or destroys content | Drafts on owned notes only, CAS, no destructive tools | Required |
+| T35 | Prompt injection via stored content | **Out of scope for the server.** Clients must treat tool output as data. Mitigated by opt-in write scopes, a human publishing, and audit. | Accepted (documented) |
+| T36 | A stolen key floods writes | Per-key limits, concurrency cap, bounded bodies, revocation | Required |
+| T37 | Binary exfiltration | Text only, up to 1 MiB | Required |
+| T38 | An MCP draft overwrites a human's autosave | Revision CAS | Required |
+| T39 | IDOR across boards | Path ids joined to their board; same-board move targets | Required |
+| T40 | An attachment stays reachable after a membership change | Live predicate, no copies, `no-store` | Required |
+| T41 | Linking someone else's document | Only the owner can link | Required |
+| T42 | XSS through card Markdown | D44 renderer, `src` allowlist, CSP, test fixtures | Required |
+| T43 | Vandalism on an `all_users` board | Allowlist, audit, Bin restore, owner-only purge | Accepted |
+| T44 | Resource exhaustion or comment spoofing | Caps, server-computed positions, session author | Required |
 
 ## 6. Out of scope
 
@@ -385,19 +385,19 @@ Tools run the HTTP services as the key owner. Errors come back as `isError` with
 
 Reviewed against DEVELOPMENT_PLAN.md rules, the threat model, and the current code. Verdict: adopt the plan with the changes below. Open decisions are marked **operator**.
 
-**Accepted as proposed:** order 7 → 9 → 8; FTS5 with stored text and same-transaction index writes (D30–D35); drafts-only MCP writes with CAS and per-key scopes (D36–D37); member/owner split for boards (D38–D39); server-computed REAL positions (D40); Bin parity for cards and boards (D41); notes renderer for card Markdown (D44); all Required threat rows T28–T43.
+**Accepted as proposed:** order 7 → 9 → 8; FTS5 with stored text and same-transaction index writes (D30–D35); drafts-only MCP writes with CAS and per-key scopes (D36–D37); member/owner split for boards (D38–D39); server-computed REAL positions (D40); Bin parity for cards and boards (D41); notes renderer for card Markdown (D44); all Required threat rows T29–T44.
 
 **Changes required before implementation:**
 
 1. **No system folder for attachments (revise D42, drop `folders.system_role`).** A hidden folder can be listed, shared, or deleted by its owner; sharing it would leak every attachment. Instead add `documents.purpose TEXT NOT NULL DEFAULT 'file' CHECK (purpose IN ('file','task_attachment'))` in migration 009, store attachments with `folder_id = NULL`, and exclude `purpose <> 'file'` from every Files list, folder count, and the Files Bin filter. Quota still counts them. The uploader sees attachments only on the card.
 2. **Attachment lifecycle (extend D42/D43).** When a card or board is purged, or an attachment is unlinked and no other card links it, the document is moved to the Bin (owner = uploader, `deleted_by` = actor) so it clears in 30 days instead of accumulating against quota with no UI. Bin rows for such documents show "Attachment of <card title>" while the card exists.
 3. **Search state on mobile (§2.5).** "Back returns to the results" needs a history entry; D18/D21 forbid entries for dialogs but this is a view. Keep the query in component state, push one `replaceState`-updated hint like the Files panel hint, and never put the query in the URL. Say so explicitly in the wave's commit 5.
-4. **Contract updates in the same commits:** API_CONTRACTS.md gains `GET /api/search`, the `/api/tasks` table, `BinItem.type` extended with `card | board`, and the MCP `scopes` field on keys; THREAT_MODEL.md gains T28–T43; TEST_PLAN.md gains the rows in §2.6, §3.5, §4.4. Migration ids stay 008/009/010 in the chosen order.
+4. **Contract updates in the same commits:** API_CONTRACTS.md gains `GET /api/search`, the `/api/tasks` table, `BinItem.type` extended with `card | board`, and the MCP `scopes` field on keys; THREAT_MODEL.md gains T29–T44; TEST_PLAN.md gains the rows in §2.6, §3.5, §4.4. Migration ids stay 008/009/010 in the chosen order.
 
 **Operator decisions (defaults apply if not overridden):**
 
 - **Order 7 → 9 → 8** — default: accept.
-- **Note text duplicated into SQLite for search (T31)** — default: accept; it stays on the same disk and in the same backups.
-- **Boards visible to `all_users` allow every allowlisted user to edit cards (D38/T42)** — default: accept, relying on the allowlist, audit, Bin restore, and owner-only purge.
+- **Note text duplicated into SQLite for search (T32)** — default: accept; it stays on the same disk and in the same backups.
+- **Boards visible to `all_users` allow every allowlisted user to edit cards (D38/T43)** — default: accept, relying on the allowlist, audit, Bin restore, and owner-only purge.
 
 **Effort and releases:** W7 medium (v0.5.0), W9 large in four runnable stages (v0.6.0, each stage may deploy as a patch release after review), W8 medium (v0.7.0). Every stage keeps the single-container, no-cloud stance.
