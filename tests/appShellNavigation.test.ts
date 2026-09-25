@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createAppHistoryState, readAppHistorySection, readHistoryDepth, resolveAppHistorySection, withHistoryDepth } from "../src/appShellNavigation";
+import { createAppHistoryState, readAppHistorySection, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth } from "../src/appShellNavigation";
 import { createHistoryState } from "../src/mobileNavigation";
 
 test("app shell history preserves existing panel state and round trips a section", () => {
@@ -43,4 +43,11 @@ test("history depth defaults to zero for legacy entries and round trips", () => 
   const state = withHistoryDepth(createAppHistoryState("user-1", "notes", null), 2);
   expect(readHistoryDepth(state)).toBe(2);
   expect(readAppHistorySection(state, "user-1")).toBe("notes");
+});
+
+test("route changes wait for the first load, and retry it after a failure", () => {
+  expect(startupRouteState("user-1", "user-1", null)).toBe("ready");
+  expect(startupRouteState("user-1", null, null)).toBe("loading");
+  expect(startupRouteState("user-1", null, "user-1")).toBe("retry");
+  expect(startupRouteState("user-1", "user-2", "user-2")).toBe("loading");
 });

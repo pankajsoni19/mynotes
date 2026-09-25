@@ -45,3 +45,12 @@ export function readHistoryDepth(state: unknown): number {
 export function withHistoryDepth<T extends object>(state: T, depth: number): T & { [depthKey]: number } {
   return { ...state, [depthKey]: Math.max(0, Math.floor(depth)) };
 }
+
+export type StartupRouteState = "ready" | "loading" | "retry";
+
+// Whether a route change can be applied yet: "loading" while the first data load for this user is
+// in flight, "retry" once that load failed (the caller reloads and applies the newest route).
+export function startupRouteState(userId: string, appliedUserId: string | null, failedUserId: string | null): StartupRouteState {
+  if (appliedUserId === userId) return "ready";
+  return failedUserId === userId ? "retry" : "loading";
+}

@@ -37,7 +37,7 @@ import { api, ApiError, setCsrfToken } from "./api";
 import { AppHome, AppPlaceholder } from "./AppShell";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
-import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, withHistoryDepth, type AppSection } from "./appShellNavigation";
+import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 import { finalizeOpenNote } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -622,6 +622,9 @@ export function App() {
   // The route requested before the workspace was ready (deep link, or the URL shown on the login page).
   const pendingRouteRef = useRef<Route | null>(parseRoute(window.location.pathname));
   const routeAppliedUserRef = useRef<string | null>(null);
+  // Set when the first data load for a user failed, so the next route change retries it.
+  const startupFailedUserRef = useRef<string | null>(null);
+  const [startupRetry, setStartupRetry] = useState(0);
   const newlyCreatedNoteIdRef = useRef<string | null>(null);
 
   const flash = useCallback((message: string) => {
@@ -671,6 +674,7 @@ export function App() {
         const route = pendingRouteRef.current ?? parseRoute(window.location.pathname);
         pendingRouteRef.current = null;
         routeAppliedUserRef.current = userId;
+        startupFailedUserRef.current = null;
         const snapshot = readHistorySnapshot(window.history.state, userId);
         let selection: { folder: FolderSelection; noteId: string | null };
         let panel: MobilePanel = "folders";
@@ -696,9 +700,12 @@ export function App() {
         setActiveApp(route.app);
         const target: Route = route.app === "notes" ? notesRoute(selection.folder, selection.noteId) : route;
         writeHistory(userId, target, panel, "replace");
-      }).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not open your notes"));
+      }).catch((reason) => {
+        if (applyRoute && sessionUserRef.current === userId && routeAppliedUserRef.current !== userId) startupFailedUserRef.current = userId;
+        flash(reason instanceof Error ? reason.message : "Could not open your notes");
+      });
     }
-  }, [flash, session, loadNavigation]);
+  }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
@@ -791,6 +798,14 @@ export function App() {
   function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel } = {}) {
     if (!session) return;
     writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push");
+    if (startupRouteState(session.user.id, routeAppliedUserRef.current, startupFailedUserRef.current) === "retry") retryStartup(route);
+  }
+
+  // The first load failed: reload the workspace data and apply this route once it arrives.
+  function retryStartup(route: Route) {
+    pendingRouteRef.current = route;
+    startupFailedUserRef.current = null;
+    setStartupRetry((attempt) => attempt + 1);
   }
 
   function currentNotesRoute(): NotesRoute {
@@ -1075,7 +1090,12 @@ export function App() {
     const onPopState = (event: PopStateEvent) => {
       const route = parseRoute(window.location.pathname);
       if (session.totp.setupRequired) return;
-      if (routeAppliedUserRef.current !== session.user.id) {
+      const startup = startupRouteState(session.user.id, routeAppliedUserRef.current, startupFailedUserRef.current);
+      if (startup === "retry") {
+        retryStartup(route);
+        return;
+      }
+      if (startup === "loading") {
         // The workspace is still loading; apply the newest URL once it is ready.
         pendingRouteRef.current = route;
         return;
@@ -1122,6 +1142,7 @@ export function App() {
     loadedRef.current = "";
     newlyCreatedNoteIdRef.current = null;
     routeAppliedUserRef.current = null;
+    startupFailedUserRef.current = null;
     pendingRouteRef.current = { app: "home" };
     window.history.replaceState(null, "", "/");
     setActiveApp("home");
