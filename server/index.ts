@@ -9,6 +9,8 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { listReadableFolders, ownedNote, readableNote } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
+import { startDispatcher } from "./calendar/reminders";
+import { initPush } from "./calendar/push";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
@@ -18,6 +20,7 @@ import { registerTaskRoutes } from "./tasks/routes";
 import { registerTodayRoutes } from "./today/routes";
 import { registerCollectionRoutes } from "./collections/routes";
 import { reconcileCollectionSearchIndex } from "./collections/search";
+import { registerCalendarRoutes } from "./calendar/routes";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -807,6 +810,7 @@ registerSearchRoutes(app);
 registerTaskRoutes(app);
 registerTodayRoutes(app);
 registerCollectionRoutes(app);
+registerCalendarRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
@@ -819,6 +823,12 @@ app.onError((error, c) => {
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
 app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
+
+// The service worker must be revalidated on every registration check (T69).
+app.use("/sw.js", async (c, next) => {
+  await next();
+  c.header("Cache-Control", "no-cache");
+});
 
 if (config.isProduction) {
   app.use("/*", serveStatic({ root: "./dist" }));
@@ -853,6 +863,12 @@ try {
   console.error("Collection search index reconcile failed", errorClass(error));
 }
 startSweeper();
+try {
+  await initPush();
+} catch (error) {
+  console.error("Web Push setup failed; reminders still appear in the app", errorClass(error));
+}
+startDispatcher();
 
 export default {
   port: config.port,

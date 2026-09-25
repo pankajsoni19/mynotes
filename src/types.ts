@@ -59,7 +59,7 @@ export type DocumentSummary = {
   updated_at: string;
 };
 export type BinItem = {
-  type: "note" | "document" | "card" | "board" | "collection" | "collection_row";
+  type: "note" | "document" | "card" | "board" | "collection" | "collection_row" | "calendar" | "event";
   id: string;
   title: string;
   folder_id: string | null;
@@ -75,7 +75,7 @@ export type BinItem = {
   attachment?: boolean;
   /** The live card it is still attached to, when there is one. */
   attachment_of?: string | null;
-  /** False for a card the caller deleted on someone else's board, or a row in someone else's collection: they may only restore it. */
+  /** False for a card, row, or event the caller deleted on someone else's board, collection, or calendar: they may only restore it. */
   can_purge?: boolean;
 };
 export type BinRestoreResult = {
@@ -89,4 +89,7 @@ export type BinRestoreResult = {
   boardName?: string;
   columnId?: string | null;
   columnName?: string | null;
+  /** Calendars and events. */
+  calendarId?: string;
+  calendarName?: string;
 };

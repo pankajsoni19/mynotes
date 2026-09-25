@@ -55,7 +55,7 @@ test("Today keeps the greeting and a launcher row of real links, without the Bin
   const markup = home();
   expect(markup).toContain("Good to see you, Ada.");
   const launcher = markup.match(/<nav class="today-launcher" aria-label="Apps">(.*?)<\/nav>/)?.[1] ?? "";
-  expect([...launcher.matchAll(/<a class="today-app today-app-(\w+)" href="([^"]+)"/g)].map((match) => [match[1], match[2]])).toEqual([["notes", "/notes"], ["files", "/files"], ["tasks", "/tasks"], ["collections", "/collections"]]);
+  expect([...launcher.matchAll(/<a class="today-app today-app-(\w+)" href="([^"]+)"/g)].map((match) => [match[1], match[2]])).toEqual([["notes", "/notes"], ["files", "/files"], ["tasks", "/tasks"], ["collections", "/collections"], ["calendar", "/calendar"]]);
   expect(launcher).not.toContain("Bin");
   expect(markup).not.toContain("app-card");
 });
@@ -64,11 +64,17 @@ test("Today starts with busy skeleton sections, each labelled by its heading", (
   const markup = home();
   expect(markup).toContain('<div class="today-grid" aria-busy="true">');
   const sections = [...markup.matchAll(/<section class="today-section today-section-(\w+)" aria-labelledby="today-(\w+)"/g)];
-  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "binSoon", "storage"]);
+  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "binSoon", "upcoming", "storage"]);
   for (const [, name] of sections) expect(markup).toContain(`<h2 id="today-${name}">${TODAY_SECTIONS[name!]!.title}</h2>`);
   expect(markup).toContain('class="today-skeleton" aria-hidden="true"');
   expect(markup).toContain('role="status" aria-live="polite"');
   expect(markup).toContain(">Refresh</button>");
+});
+
+test("Today's upcoming rows open the event and say when it starts", () => {
+  const row = TODAY_SECTIONS.upcoming!.row!({ eventId: "e1", calendarId: "k", title: "Picnic", start: "2026-09-26", end: "2026-09-27", allDay: true, date: "2026-09-26" }, "2026-09-25");
+  expect(row).toMatchObject({ label: "Picnic", meta: "Tomorrow · All day", route: { app: "calendar", view: "agenda", month: null, eventId: "e1" } });
+  expect(TODAY_SECTIONS.upcoming!.row!({ eventId: "e2", title: "", start: "2026-09-20", end: "2026-09-30", allDay: true, date: "2026-09-20" }, "2026-09-25")).toMatchObject({ label: "Untitled event", meta: "Today · All day", tone: "today" });
 });
 
 test("Today rows link to their app routes and show due and storage copy", () => {

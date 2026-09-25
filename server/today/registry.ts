@@ -41,6 +41,8 @@ export type TodayProvider = {
    * (D70, T74). Omitted: `today:read` alone is enough (Bin and storage).
    */
   mcpScope?: McpScope;
+  /** Signed-in sessions only: get_today leaves the section out (a module with no MCP read scope yet, like Calendar). */
+  sessionOnly?: boolean;
   load: (context: TodayContext) => TodayPage | Promise<TodayPage>;
   /** Whether the module is installed; omitted means it is. Uninstalled sections are absent. */
   available?: () => boolean;
@@ -67,8 +69,9 @@ export function todaySectionNames() {
 export function todaySectionsForScopes(scopes: readonly McpScope[]) {
   if (!hasScope(scopes, "today:read")) return [];
   return todaySectionNames().filter((name) => {
-    const needed = providers.get(name)!.mcpScope;
-    return !needed || hasScope(scopes, needed);
+    const provider = providers.get(name)!;
+    if (provider.sessionOnly) return false;
+    return !provider.mcpScope || hasScope(scopes, provider.mcpScope);
   });
 }
 

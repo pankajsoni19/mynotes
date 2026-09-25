@@ -1,10 +1,11 @@
 // Pure Bin display helpers. No DOM or network access, so they are unit tested directly.
 import type { BinItem, BinRestoreResult, Visibility } from "../types";
 
-export type BinFilter = "all" | "note" | "document" | "tasks" | "collections";
+export type BinFilter = "all" | "note" | "document" | "tasks" | "collections" | "calendar";
 
 export const isTaskBinItem = (item: Pick<BinItem, "type">) => item.type === "card" || item.type === "board";
 export const isCollectionItem = (item: Pick<BinItem, "type">) => item.type === "collection" || item.type === "collection_row";
+export const isCalendarItem = (item: Pick<BinItem, "type">) => item.type === "calendar" || item.type === "event";
 
 const DAY_MS = 86_400_000;
 
@@ -23,25 +24,29 @@ export function purgeCountdownLabel(purgeAfter: string, nowMs = Date.now()) {
 
 /**
  * Where a restore will put the item: its original folder (Default when that folder is gone), a
- * card's board, Collections for a collection, or a row's collection (Wave 11).
+ * card's board, Collections for a collection, a row's collection (Wave 11), Calendar for a
+ * calendar, or an event's calendar (Wave 12).
  */
 export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick<BinItem, "type" | "board_name">>) {
   if (item.type === "card") return item.board_name ?? "its board";
   if (item.type === "board") return "Tasks";
   if (item.type === "collection") return "Collections";
   if (item.type === "collection_row") return item.folder_name ?? "its collection";
+  if (item.type === "calendar") return "Calendar";
+  if (item.type === "event") return item.folder_name ?? "Calendar";
   return item.folder_name ?? "Default";
 }
 
-/** The Tasks filter shows cards and boards together; the Collections filter, collections and rows. */
+/** The Tasks filter shows cards and boards together; Collections, collections and rows; Calendar, calendars and events. */
 export function filterBinItems(items: BinItem[], filter: BinFilter) {
   if (filter === "all") return items;
   if (filter === "tasks") return items.filter(isTaskBinItem);
   if (filter === "collections") return items.filter(isCollectionItem);
+  if (filter === "calendar") return items.filter(isCalendarItem);
   return items.filter((item) => item.type === filter);
 }
 
-const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row" };
+const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event" };
 
 export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
   return item.title.trim() || untitled[item.type];
@@ -59,6 +64,8 @@ export function binKindLabel(item: Pick<BinItem, "type" | "attachment">) {
   if (item.type === "board") return "Board";
   if (item.type === "collection") return "Collection";
   if (item.type === "collection_row") return "Row";
+  if (item.type === "calendar") return "Calendar";
+  if (item.type === "event") return "Event";
   return item.attachment ? "Card attachment" : "File";
 }
 
@@ -72,6 +79,7 @@ export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<
     const where = [result.columnName, result.boardName].filter(Boolean).join(" on ");
     return result.alreadyRestored ? `Already restored${where ? ` to ${where}` : ""}` : `Restored${where ? ` to ${where}` : ""}`;
   }
+  if (item.type === "calendar" || item.type === "event") return restoredCalendarMessage({ type: item.type, title: "" }, result.calendarName, Boolean(result.alreadyRestored));
   if (item.type === "collection" || item.type === "collection_row") {
     const where = result.folderName ?? binFolderLabel({ type: item.type, folder_name: item.folder_name ?? null });
     return result.alreadyRestored ? `Already restored to ${where}` : restoredMessage(where, result.visibility);
@@ -79,6 +87,12 @@ export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<
   if (item.type === "document" && item.attachment && !result.folderName && !result.alreadyRestored) return "Restored to its card";
   const folderName = result.folderName ?? "Default";
   return result.alreadyRestored ? `Already restored to ${folderName}` : restoredMessage(folderName, result.visibility);
+}
+
+/** Toast after restoring a calendar or an event. */
+export function restoredCalendarMessage(item: Pick<BinItem, "type" | "title">, calendarName: string | undefined, alreadyRestored: boolean) {
+  if (item.type === "calendar") return alreadyRestored ? `“${calendarName ?? item.title}” was already restored` : `Restored “${calendarName ?? item.title}”`;
+  return alreadyRestored ? `Already restored to ${calendarName ?? "its calendar"}` : `Restored to ${calendarName ?? "its calendar"}`;
 }
 
 export function deleteForeverConfirm(title: string) {

@@ -1,4 +1,5 @@
 import { readableNotePredicate } from "../access";
+import { listUpcoming } from "../calendar/service";
 import { BIN_LIST_LIMIT, listBinPurgingSoon } from "../bin";
 import { db } from "../db";
 import { recentListableDocuments } from "../documentAccess";
@@ -16,6 +17,7 @@ import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
  * - notes: `readableNotePredicate` (the Notes list and search)
  * - files: `recentListableDocuments` (the Files list predicate, `purpose = 'file'`)
  * - Bin: `listBin`; storage: `storageUsage` (the upload quota's own sum)
+ * - upcoming: `listUpcoming` (Calendar's occurrence service, readable calendars only)
  */
 
 export const TASKS_DUE_DAYS = 7;
@@ -130,6 +132,25 @@ registerTodayProvider("binSoon", {
     return page(listBinPurgingSoon(userId, cutoff, scopes ? BIN_LIST_LIMIT : TODAY_FETCH)
       .filter((item) => binItemVisible(item.type, scopes))
       .slice(0, TODAY_FETCH));
+  }
+});
+
+export const UPCOMING_DAYS = 7;
+
+/**
+ * The caller's next event occurrences over seven local days (Calendar, W12). There is no
+ * calendar MCP scope yet, so get_today leaves the section out for MCP callers (T74).
+ */
+registerTodayProvider("upcoming", {
+  href: "/calendar",
+  available: () => true,
+  sessionOnly: true,
+  load: ({ userId, tz, now }) => {
+    const { items, more } = listUpcoming(userId, tz, UPCOMING_DAYS, now.getTime());
+    return {
+      items: items.map((item) => ({ eventId: item.eventId, calendarId: item.calendarId, title: item.title, start: item.start, end: item.end, allDay: item.allDay, date: item.date })),
+      more
+    };
   }
 });
 

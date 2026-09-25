@@ -4,9 +4,9 @@ import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop } from ".
 
 /**
  * D69 for Collections: dialogs, sheets, and pickers push no history entry. Collections nests them
- * (a picker inside the row panel, the option editor inside the field editor), and only one guard can
- * be registered at a time, so every open piece joins a stack and CollectionsApp registers one guard
- * that closes the top-most layer. Back with a picker open over the row panel closes the picker; the
+ * (a picker inside the row panel, the option editor inside the field editor), so every open piece
+ * joins a stack and CollectionsApp registers one guard (on historyDialogs.ts's guard stack) that
+ * closes the top-most layer. Back with a picker open over the row panel closes the picker; the
  * next Back leaves the row.
  */
 type Layer = { close: () => void; depth: number };

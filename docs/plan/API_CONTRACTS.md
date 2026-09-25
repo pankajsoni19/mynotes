@@ -1,4 +1,4 @@
-# API contracts: Files, content, Bin, Search, Tasks, Today, and MCP
+# API contracts: Files, content, Bin, Search, Tasks, Today, MCP, Collections, and Calendar
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every endpoint lives under `/api` and inherits the existing middleware:
 
@@ -44,7 +44,7 @@ type DocumentSummary = {
 };
 
 type BinItem = {
-  type: "note" | "document" | "card" | "board";
+  type: "note" | "document" | "card" | "board" | "collection" | "collection_row" | "calendar" | "event";   // collection types: Wave 11; calendar types: Wave 12
   id: string;
   title: string;                 // note title, document name, card title, or board name
   folder_id: string | null;      // original folder, null if it no longer exists
@@ -56,7 +56,7 @@ type BinItem = {
   board_id: string | null;       // cards: their board; boards: themselves; else null
   board_name: string | null;
   attachment: boolean;           // a document that was a card attachment (restores into Files)
-  can_purge: boolean;            // false for a card the caller deleted on someone else's board
+  can_purge: boolean;            // false for a card, row, or event the caller deleted on someone else's board, collection, or calendar
 };
 ```
 
@@ -185,7 +185,7 @@ Streaming: open the object with `O_NOFOLLOW` and verify it with `fstat`, then st
 <a id="bin"></a>
 ## Bin
 
-Every Bin endpoint is scoped to the caller's own items, plus binned cards they deleted (below). `:type` is `note`, `document`, `card`, or `board`; any other value returns 400.
+Every Bin endpoint is scoped to the caller's own items, plus binned cards they deleted (below). `:type` is `note`, `document`, `card`, `board`, `collection`, `collection_row`, `calendar`, or `event` (see [Calendar § Bin](#calendar-items-in-the-bin)); any other value returns 400.
 
 **Cards and boards (Wave 9, D41).** A binned board is listed for its owner. A binned card is listed for the board owner and for the member who deleted it, while that member can still open the board. Either can restore the card; only the board owner deletes it forever (403 `OWNER_ONLY` for the deleter). Cards and boards have no bytes, so a purge never returns 202. Purging a card or board deletes its comments and links; a document that loses its last link moves to its uploader's Bin. A restored attachment document with no links becomes an ordinary Files item (`purpose = 'file'`) in its folder or Default.
 
@@ -424,6 +424,7 @@ type CardAttachment = {
 | `agentDrafts` | `{ id, title, keyName, updated_at }`: the caller's drafts written by an MCP key |
 | `files` | `{ id, name, mime_type, preview_kind, size_bytes, owner_name, is_owner, updated_at }`: the Files list, newest first |
 | `binSoon` | `{ type, id, title, purge_after }`: the caller's Bin items purged within three days |
+| `upcoming` | `{ eventId, calendarId, title, start, end, allDay, date }`: occurrences on readable calendars over the next seven local days, not yet ended (Calendar, Wave 12; see § Calendar) |
 | `storage` | one item `{ usedBytes, binnedBytes, quotaBytes }`: bytes counted against the quota (live and binned), the binned part, and the quota (`null` = unlimited) |
 
 Errors: 400 when `tz` is not an IANA zone `Intl` accepts (list entries and the aliases browsers still report) or `sections` names an unknown section; 429 `RATE_LIMITED` with `Retry-After` above 30 requests a minute per user.
@@ -470,7 +471,7 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `create_card` | tasks:write | `{ boardId, columnId, title, description?, dueOn?, afterCardId? }` | `{ card: { id, board_id, column_id, title, due_on, revision } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards` |
 | `move_card` | tasks:write | `{ cardId, columnId, afterCardId? }` | `{ card: { id, column_id, position } }`. Same board only; `afterCardId` omitted = bottom, `null` = top |
 | `comment_on_card` | tasks:write | `{ cardId, body }` | `{ comment: { id, card_id, created_at } }`, authored by the key's owner |
-| `get_today` | today:read | `{ tz? }` (IANA, default UTC) | The `GET /api/today` body, titles and ids only, with only the sections the key may read: task sections need `tasks:read`, `notesRecent`/`drafts`/`agentDrafts` need `notes:read`, `files` needs `files:read`; `binSoon` and `storage` need `today:read` alone, and `binSoon` keeps only item types the key may read (notes: `notes:read`, documents: `files:read`, cards and boards: `tasks:read`; collection items are left out). It shares the 30-a-minute per-user Today limit (`RATE_LIMITED` with `retryAfterSeconds`). `list_cards` and `get_card` also return `due_on` and `assignee_name` |
+| `get_today` | today:read | `{ tz? }` (IANA, default UTC) | The `GET /api/today` body, titles and ids only, with only the sections the key may read: task sections need `tasks:read`, `notesRecent`/`drafts`/`agentDrafts` need `notes:read`, `files` needs `files:read`; `binSoon` and `storage` need `today:read` alone, and `binSoon` keeps only item types the key may read (notes: `notes:read`, documents: `files:read`, cards and boards: `tasks:read`; collection, calendar, and event items are left out; `upcoming` is left out too, as there is no calendar scope yet). It shares the 30-a-minute per-user Today limit (`RATE_LIMITED` with `retryAfterSeconds`). `list_cards` and `get_card` also return `due_on` and `assignee_name` |
 
 Task tools call the `/api/tasks` services as the key's owner, so the W9 rules apply unchanged: any board reader (owner, member, everyone on an `all_users` board) may create, move, and comment; a board the user cannot read, and every id on it, is `NOT_FOUND`, identical to a missing id. There are no tools that edit, delete, or bin cards, or that change columns, sharing, or boards. A stale `afterCardId` returns `STALE_POSITION` with `columnId` and the column's current `order`; `LIMIT_REACHED` passes through the board caps. Task writes are audited through the usual `task.card_create`, `task.card_move`, and `task.comment_create` events with `{ via: "mcp", keyId }` added.
 
@@ -651,6 +652,140 @@ Same rules as board sharing: the owner cannot be a recipient (400), `selected` n
 `nextCursor` is opaque: an offset bound to the spec and to `schema_version`. A cursor from another spec is 400 `INVALID_CURSOR`; after a schema change it is 409 `SCHEMA_CHANGED`. Offsets stop at 10,000.
 
 **Audit** (ids and counts only, never values or names): `collection.create { collectionId, fieldCount, templateId? }`, `collection.update`, `collection.delete`, `collection.schema_update { collectionId, fieldCount }`, `collection.row_create`, `collection.row_update { collectionId, rowId, fieldCount }`, `collection.row_undo`, `collection.row_delete`.
+## Calendar (Wave 12)
+
+Calendars, events, links, reminders, notifications, and Web Push ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D65). JSON only. Feeds arrive in stage D.
+
+**Roles (D54).** The owner does everything. Everyone the calendar is shared with (`visibility` `selected` with a member row, or `all_users`) gets the calendar's single audience role `share_role`: `viewer` reads, `editor` also creates, edits, undoes, skips dates on, links, and bins events. Only the owner renames, recolours, shares, or bins the calendar.
+
+| Caller | Response |
+| --- | --- |
+| Cannot read the calendar (stranger, removed member, binned calendar) | **404** |
+| Viewer calling an event write | 403 `{ code: "READ_ONLY" }` |
+| Viewer or editor calling an owner-only action | 403 `{ code: "OWNER_ONLY" }` |
+
+```ts
+type CalendarColor = "blue" | "green" | "amber" | "red" | "violet" | "slate";
+type CalendarSummary = {
+  id: string; owner_id: string; owner_name: string; is_owner: 0 | 1;
+  role: "owner" | "editor" | "viewer";
+  name: string; color: CalendarColor; visibility: Visibility; share_role: "viewer" | "editor";
+  created_at: string; updated_at: string;
+};
+type RepeatRule = {
+  freq: "daily" | "weekly" | "monthly" | "yearly";
+  interval: number;                 // 1–99, default 1
+  byDay?: ("MO"|"TU"|"WE"|"TH"|"FR"|"SA"|"SU")[];  // weekly only; must include the start's weekday
+  until?: string;                   // yyyy-mm-dd, inclusive, local to the event
+  count?: number;                   // 1–730; not with until
+};
+type EventDetail = {
+  id: string; calendar_id: string; title: string; description: string; location: string;
+  all_day: boolean;
+  start_date: string | null; end_date: string | null;          // all-day: yyyy-mm-dd, end exclusive
+  start_local: string | null; tz: string | null; duration_minutes: number | null;  // timed: yyyy-mm-ddTHH:MM, IANA zone, 1–10080
+  repeat: RepeatRule | null; exdates: string[];                // skipped local start dates, ≤ 200
+  revision: number; canUndo: boolean; changedByKey: boolean;
+  created_by_name: string | null; updated_by_name: string | null; created_at: string; updated_at: string;
+};
+type EventLink = { targetType: "note" | "card" | "collection_row"; targetId: string; title: string | null; restricted: boolean };
+type EventResponse = { event: EventDetail; calendar: CalendarSummary; role: CalendarSummary["role"]; links: EventLink[] };
+type Occurrence = {
+  eventId: string; calendarId: string; title: string; location: string; color: CalendarColor;
+  allDay: boolean;
+  date: string;                     // local start date of the occurrence (what an exdate names)
+  start: string; end: string;       // timed: UTC ISO instants; all-day: yyyy-mm-dd, end exclusive
+  recurring: boolean;
+};
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/calendars` | any | 200 `{ calendars: CalendarSummary[] }`, owned first. A user who has never had a calendar gets "Personal" (blue) on this call. | — |
+| `POST /api/calendars {name, color?}` | any | 201 `{ calendar }` | 400; 409 `LIMIT_REACHED` (20 live calendars per owner) |
+| `PATCH /api/calendars/:k {name?, color?}` | owner | 200 `{ calendar }` | 400, 403, 404 |
+| `DELETE /api/calendars/:k` (to the Bin) | owner | 200 `{ ok, purgeAfter }` | 403, 404 |
+| `GET /api/calendars/:k/sharing` | owner | 200 `{ visibility, shareRole, users: [{ id, display_name }] }` | 403, 404 |
+| `PUT /api/calendars/:k/sharing {visibility, shareRole?, userIds≤100}` | owner | 200 `{ ok }`. Same rules as folder sharing: the owner is never a recipient, `selected` needs at least one enabled user. | 400, 403, 404 |
+| `POST /api/calendars/:k/events` | editor | 201 `EventResponse` | 400, 403, 404; 409 `LIMIT_REACHED` (20k live events per calendar) |
+| `GET /api/events?from&to&tz&calendars&include=tasks` | reader | 200 `{ occurrences: Occurrence[], truncated, tasks? }` | 400 |
+| `GET /api/events/:e` | reader | 200 `EventResponse` | 404 |
+| `PATCH /api/events/:e {…fields, revision}` | editor | 200 `EventResponse` | 400, 403, 404, 409 `EVENT_CHANGED` |
+| `POST /api/events/:e/undo {revision}` | editor | 200 `EventResponse` | 403, 404, 409 `EVENT_CHANGED` or `NOTHING_TO_UNDO` |
+| `POST /api/events/:e/exdates {date, revision?}` | editor | 200 `EventResponse` (idempotent) | 400 (not a repeating event, or not an occurrence date), 403, 404, 409 |
+| `DELETE /api/events/:e` (to the Bin) | editor | 200 `{ ok, purgeAfter }` | 403, 404 |
+| `POST /api/events/:e/links {targetType, targetId}` | editor | 201 `{ link }`, or 200 if already linked | 400, 403, 404 (target not readable by the linker); 409 `LIMIT_REACHED` (50 links) |
+| `DELETE /api/events/:e/links {targetType, targetId}` | editor | 200 `{ ok }` | 403, 404 |
+
+**Event bodies.** Create takes `{ title (1–200), description? (≤ 8 KiB, line breaks kept), location? (≤ 200), allDay, startDate+endDate | startLocal+tz+durationMinutes, repeat? }`. Titles, names, and locations reject control and bidi-override characters. Dates must be real (no 2026-02-30) and zones must be accepted by `Intl` (T71). PATCH takes any subset plus `revision`; timing fields are merged with the stored ones and validated together, and switching `allDay` needs the other mode's fields. Every successful change (PATCH, exdate) keeps the previous values for **one-step undo** (D61); undo itself cannot be undone. A stale `revision` returns 409 `{ code: "EVENT_CHANGED", revision, event }` with the current event.
+
+**Range listing.** `from` and `to` are whole local days (`yyyy-mm-dd`, `to` exclusive) in the viewer's zone `tz` (default `UTC`), at most **100 days** apart (400 otherwise). Occurrences are expanded server-side: timed occurrences keep their wall time in the event's zone across DST (a gap shifts forward, an overlap takes the earlier instant); monthly repeats use the start's day of the month and skip months without it. An occurrence that started before `from` but overlaps the range is included. At most **1000** occurrences are returned per request; `truncated` is true when more existed (T66). `calendars` is an optional comma-separated list of up to 50 calendar ids; ids the caller cannot read are ignored.
+
+**Tasks due (D67).** `include=tasks` (the only accepted value; anything else is 400) adds `tasks: [{ cardId, boardId, boardName, title, dueOn }]`: live cards whose `due_on` falls in `[from, to)`, on boards the caller can read (the Task Boards predicate), in columns not marked done, at most 200, ordered by date. The overlay is read-only and filters boards with `readableBoardPredicate` from `server/tasks/access.ts`. `cards.due_on` and `board_columns.is_done` come from migration 011, which always runs before 013. Without `include`, the key is absent.
+
+**Links.** The linker must be able to read the target, and an unreadable target returns the same 404 as a missing one. Links are resolved per viewer on every read: the title when the viewer can read the target, otherwise `{ title: null, restricted: true }` (T59). Links never grant access. `note` targets use the live note ACL, `card` targets the Tasks board ACL (`readableCard`; the card's title), and `collection_row` targets the Collections ACL (`readableRow`; the row's primary field), each registered in `server/calendar/links.ts`.
+
+**Audit.** `calendar.create`, `calendar.update`, `calendar.delete`, `calendar.sharing_changed { calendarId, visibility, shareRole, recipientCount }`, `event.create { eventId, calendarId }`, `event.update`, `event.undo`, `event.exdate`, `event.delete { eventId }`, `event.link` / `event.unlink { eventId, targetType, targetId }`. Ids only: titles, descriptions, and locations are never audited.
+
+### Reminders and notifications (Wave 12 stage B)
+
+Reminders are private to whoever set them (D64): every endpoint is scoped to the caller, and anyone who can read an event (viewers included) may set their own reminders on it.
+
+```ts
+type Reminder = { id: string; eventId: string | null; offsetMinutes: number | null; title: string | null; tz: string; nextFireAt: string | null; lastFiredAt: string | null; createdAt: string };
+type NotificationItem = { id: string; title: string; href: string; late: boolean; read: boolean; createdAt: string; occurrenceStart: string | null };
+```
+
+| Endpoint | Success | Errors |
+| --- | --- | --- |
+| `GET /api/reminders?eventId` | 200 `{ reminders: Reminder[] }`: the caller's event reminders and upcoming standalone ones | 400 (malformed `eventId`) |
+| `POST /api/reminders {eventId, offsetMinutes, tz}` | 201 `{ reminder }` | 400; 404 (event not readable); 409 `REMINDER_EXISTS` (same offset) or `LIMIT_REACHED` (10 per event per user) |
+| `POST /api/reminders {title, fireAt, tz}` | 201 `{ reminder }` | 400 (`fireAt` is a real local `yyyy-mm-ddTHH:MM` in `tz`, in the future); 409 `LIMIT_REACHED` (500 upcoming standalone per user) |
+| `DELETE /api/reminders/:id` | 200 `{ ok }` | 404 (missing or someone else's) |
+| `GET /api/notifications?unread=1&limit` | 200 `{ items: NotificationItem[], unreadCount }`, newest first, `limit` 1–50 (default 20) | 400 |
+| `POST /api/notifications/read {ids: uuid[1..100]} \| {all: true}` | 200 `{ ok, updated }`; ids that are not the caller's are ignored | 400 |
+
+- `offsetMinutes` is how long before each occurrence starts the reminder fires (−1440 to 40320; negative is after the start). Timed events use their own zone; all-day events start at midnight in the reminder's `tz`, so 09:00 on the day is −540. A single event in the past has no upcoming time (400).
+- **Dispatcher.** Every 30 s (an `unref` timer, one tick at a time, at most 200 reminders per tick) each due reminder is claimed, re-checked, written as a durable `notifications` row, and advanced to its next occurrence in one transaction. A reminder missed while the server was down fires once, `late: true`, when under 24 h late, and is skipped when later; either way it advances past now, so misses never pile up. At most 60 notifications per user per hour are written; the rest are dropped.
+- **Access (T67).** At fire time the dispatcher re-checks that the user is still in the calendar's audience and deletes the reminder otherwise (audited `reminder.removed_access_lost`). A binned event or calendar pauses its reminders (`nextFireAt: null`); restoring it, editing the event's timing, undo, or skipping a date reschedules them.
+- **Titles and links.** Titles are resolved when listed: the event's current title while the caller can read it, otherwise "An event you can no longer open"; a standalone reminder's own title. `href` is `/calendar/event/<id>` built from a validated event id, or `/notifications` (T68).
+- **Retention.** The hourly sweeper deletes notifications after 30 days, and fired standalone reminders 30 days after they fired.
+- **Audit.** `reminder.create { reminderId, eventId? }`, `reminder.delete { reminderId }`: ids only.
+- **Today.** `listUpcoming(userId, tz, days)` in `server/calendar/service.ts` backs the `upcoming` section (registered in `server/today/providers.ts`, between `binSoon` and `storage`): unfinished occurrences through the next 7 local days, at most 10 with `more`, as `{ eventId, calendarId, title, start, end, allDay, date }`. There is no calendar MCP scope yet, so `get_today` leaves the section out, and `binSoon` drops calendar and event items for MCP callers.
+
+### Web Push (Wave 12 stage C)
+
+Payload-less Web Push (D65, T62, T63). A push has an empty body: it only wakes the device, and the service worker fetches `GET /api/notifications?unread=1` with the session cookie, so push services see timing only.
+
+| Endpoint | Success | Errors |
+| --- | --- | --- |
+| `GET /api/push/config` | 200 `{ enabled: true, publicKey }` (base64url P-256 point) or `{ enabled: false, reason: "insecure_origin" \| "disabled" }` | — |
+| `GET /api/push/subscriptions` | 200 `{ subscriptions: [{ id, label, createdAt, lastSuccessAt, disabled }] }` (endpoints are never returned) | — |
+| `POST /api/push/subscriptions {endpoint, expirationTime?, keys: {p256dh, auth}, label?}` | 201 `{ subscription }`; 200 when the caller already has this endpoint (keys refreshed, failures cleared) | 400 `ENDPOINT_NOT_ALLOWED`; 409 `PUSH_DISABLED` or `LIMIT_REACHED` (10 per user) |
+| `DELETE /api/push/subscriptions {id} \| {endpoint}` | 200 `{ ok }` | 404 (missing or someone else's) |
+| `POST /api/push/test` | 200 `{ ok, sent, failed }` | 409 `PUSH_DISABLED`; 429 `RATE_LIMITED` with `Retry-After` (5 per hour per user) |
+
+- **Enabled.** `PUSH_ENABLED=auto` turns push on only when `APP_ORIGIN` is `https:`; `true` forces it on and `false` off. When on, a VAPID ES256 key pair is created at first boot in `DATA_DIR/push/vapid.json` (0600, written atomically).
+- **Endpoints.** `https:` on port 443, no credentials, not an IP literal, and a host on the allowlist (`*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`, plus `PUSH_ENDPOINT_HOSTS`). Every address the host resolves to must be public (no private, loopback, link-local, CGNAT, or multicast ranges); this is checked when subscribing and again before each delivery. An endpoint is owned by one account: subscribing it from another account moves it.
+- **Delivery.** After each dispatcher tick commits, every user who got a notification gets one push per device: `POST` with no body, `TTL: 3600`, `Urgency: normal`, and `Authorization: vapid t=<JWT>, k=<publicKey>` (claims `aud` = the endpoint's origin, `exp` = 12 h, `sub` = `PUSH_SUBJECT`). Redirects are not followed and requests time out after 5 s. 404 or 410 deletes the subscription; any other failure (including a redirect) counts, and 5 consecutive failures disable it until the device subscribes again.
+- **Audit.** `push.subscribe { subscriptionId }`, `push.unsubscribe`. Endpoints and keys are never logged or audited.
+
+<a id="calendar-items-in-the-bin"></a>
+### Calendar items in the Bin (D68)
+
+`DELETE /api/calendars/:k` and `DELETE /api/events/:e` move items to the shared Bin through Bin providers registered by `server/calendar/calendarBin.ts` (like Collections), with the same columns (`board_*` and `attachment*` null/false), 30-day retention, tombstone, and compare-and-swap restore as notes and documents (no bytes to remove).
+
+| Item | Listed for | Restore | Delete forever |
+| --- | --- | --- | --- |
+| `calendar` (`folder_id`/`folder_name` null) | its owner | owner | owner; cascades to its events, members, links, reminders, and feeds |
+| `event` (`folder_id`/`folder_name` = its calendar) | the calendar's owner, and whoever deleted it while they can still edit the calendar (`can_purge: false` for them) | the same two | the calendar's owner only (404 for anyone else) |
+
+- A binned calendar hides all of its events; they are not listed one by one and come back with it.
+- Restore responses for these types are `{ ok: true, calendarId, calendarName }` (plus `alreadyRestored: true` for a live item). Restoring an event whose calendar is in the Bin returns 409 `{ code: "PARENT_IN_BIN" }`; restoring a calendar when the owner already has 20 live ones returns 409 `{ code: "LIMIT_REACHED" }`. A purge in progress returns 409 `PURGING`, as for other types.
+- `GET /api/bin?type=calendar|event` filters; the Bin app's Calendar chip shows both.
+- Empty Bin purges the caller's binned calendars and the binned events on calendars they own; events they deleted on someone else's calendar stay for that owner.
+- The hourly sweeper resumes tombstones and purges expired calendars and events with the same per-table budgets (events first).
+- Audit: `calendar.restore { calendarId }`, `event.restore { eventId, calendarId }`, `calendar.purge { calendarId, reason }`, `event.purge { eventId, reason }` with `reason` `user`, `retention`, or `resumed`.
 
 ## Changes to existing note endpoints (Wave 4)
 

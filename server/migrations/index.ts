@@ -11,8 +11,9 @@ import { taskBoardsMigration } from "./009_task_boards";
 import { mcpKeyScopesMigration } from "./010_mcp_key_scopes";
 import { taskDatesMigration } from "./011_task_dates";
 import { collectionsMigration } from "./012_collections";
+import { calendarMigration } from "./013_calendar";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration];
 
 /** Ids of every registered migration, in order. Tests assert against this list. */
 export const registeredMigrationIds: readonly number[] = migrations.map((migration) => migration.id);

@@ -9,11 +9,11 @@ export const BIN_RETENTION_MS = 30 * 86_400_000;
 
 /** Types stored in the core tables below. */
 export type CoreBinType = "note" | "document";
-/** Types whose module registers a BinProvider (Collections, WAVES_10-12.md D68). */
-export type ProvidedBinType = "collection" | "collection_row";
+/** Types whose module registers a BinProvider (Collections and Calendar, WAVES_10-12.md D68). */
+export type ProvidedBinType = "collection" | "collection_row" | "calendar" | "event";
 export type BinType = CoreBinType | ProvidedBinType;
 const CORE_BIN_TYPES: readonly CoreBinType[] = ["note", "document"];
-const PROVIDED_BIN_TYPES: readonly ProvidedBinType[] = ["collection", "collection_row"];
+const PROVIDED_BIN_TYPES: readonly ProvidedBinType[] = ["collection", "collection_row", "calendar", "event"];
 /**
  * Why an item was purged, as recorded in the audit metadata. "resumed" marks a
  * purge the sweeper finished after it was interrupted: the original reason
@@ -92,10 +92,12 @@ export type Visibility = "private" | "selected" | "all_users";
 export type RestoreOutcome =
   | { status: "restored"; folderId: string | null; folderName: string | null; visibility: Visibility }
   | { status: "already_restored"; folderId: string | null; folderName: string | null }
+  /** A calendar or event (server/calendar/calendarBin.ts): the response names the calendar instead of a folder. */
+  | { status: "calendar_restored"; alreadyRestored: boolean; calendarId: string; calendarName: string }
   | { status: "purging" }
   | { status: "not_found" }
-  /** A child (a row) whose parent (its collection) is itself in the Bin: restore the parent first. */
-  | { status: "parent_in_bin" }
+  /** A child (a row, an event) whose parent (its collection, calendar) is itself in the Bin: restore the parent first. */
+  | { status: "parent_in_bin"; message?: string }
   | { status: "limit_reached"; message: string };
 
 /**
@@ -114,7 +116,7 @@ export type BinProvider = {
 export const binProviders = new Map<ProvidedBinType, BinProvider>();
 const providers = binProviders;
 
-/** Registered by server/collections/bin.ts when the module loads. */
+/** Registered by server/collections/bin.ts and server/calendar/calendarBin.ts when their module loads. */
 export function registerBinProvider(type: ProvidedBinType, provider: BinProvider) {
   providers.set(type, provider);
 }

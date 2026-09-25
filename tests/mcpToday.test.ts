@@ -115,7 +115,10 @@ describe("get_today Bin items follow the key's module scopes (T74)", () => {
     const row = await addRow(user, keep.id, { [keep.fields[0]!.id]: "Binned row" });
     expect((await collections(user, "DELETE", `/rows/${row.id}`)).status).toBe(200);
     expect((await collections(user, "DELETE", `/${collection.id}`)).status).toBe(200);
-    for (const table of ["notes", "documents", "cards", "boards", "collections", "collection_rows"]) db.query(`UPDATE ${table} SET purge_after = ? WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after > ?`).run(soon, soon);
+    // Calendar items: there is no calendar scope yet, so MCP callers never see them.
+    const calendarId = ((await (await request("/calendars", { method: "POST", body: JSON.stringify({ name: "Binned calendar" }) }, user)).json()) as { calendar: { id: string } }).calendar.id;
+    expect((await request(`/calendars/${calendarId}`, { method: "DELETE", body: "{}" }, user)).status).toBe(200);
+    for (const table of ["notes", "documents", "cards", "boards", "collections", "collection_rows", "calendars"]) db.query(`UPDATE ${table} SET purge_after = ? WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after > ?`).run(soon, soon);
 
     const types = (value: Record<string, any>) => (value.sections.binSoon.items as Array<{ type: string }>).map((item) => item.type).sort();
     expect(types((await getToday(user, ["today:read"])).value)).toEqual([]);
@@ -126,10 +129,11 @@ describe("get_today Bin items follow the key's module scopes (T74)", () => {
     expect(types(all)).toEqual(["board", "card", "document", "note"]);
     expect(JSON.stringify(all)).not.toContain("Binned collection");
     expect(JSON.stringify(all)).not.toContain("Binned row");
+    expect(JSON.stringify(all)).not.toContain("Binned calendar");
     // The web (a session) sees every type, as the Bin does.
     const { resetTodayRateLimit } = await import("../server/today/routes");
     resetTodayRateLimit();
     const web = (await (await request("/today?tz=UTC", {}, user)).json()) as Record<string, any>;
-    expect(types(web)).toEqual(["board", "card", "collection", "collection_row", "document", "note"]);
+    expect(types(web)).toEqual(["board", "calendar", "card", "collection", "collection_row", "document", "note"]);
   });
 });

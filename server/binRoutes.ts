@@ -9,7 +9,7 @@ import { readBoundedBody, uuid } from "./validation";
 const cardRestoreSchema = z.object({ columnId: uuid.optional(), afterCardId: uuid.nullable().optional() }).strict();
 
 const TASK_BIN_TYPES: readonly TaskBinType[] = ["card", "board"];
-// Provided types (collections, rows) count only while their module is registered (fail closed).
+// Provided types (collections, rows, calendars, events) count only while their module is registered (fail closed).
 const isBinType = (value: string | undefined): value is BinListType => value !== undefined && (isTaskBinType(value) || binTypeAvailable(value));
 const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: [`type must be one of ${[...availableBinTypes(), ...TASK_BIN_TYPES].join(", ")}`] }, 400);
 const notFound = (c: Context<AppEnv>) => c.json({ error: "Item not found" }, 404);
@@ -50,8 +50,10 @@ export function registerBinRoutes(app: Hono<AppEnv>) {
         return c.json({ ok: true, folderId: outcome.folderId, folderName: outcome.folderName, visibility: outcome.visibility });
       case "already_restored":
         return c.json({ ok: true, alreadyRestored: true, folderId: outcome.folderId, folderName: outcome.folderName });
+      case "calendar_restored":
+        return c.json({ ok: true, ...(outcome.alreadyRestored ? { alreadyRestored: true } : {}), calendarId: outcome.calendarId, calendarName: outcome.calendarName });
       case "parent_in_bin":
-        return c.json({ error: "Restore its collection from the Bin first", code: "PARENT_IN_BIN" }, 409);
+        return c.json({ error: outcome.message ?? "Restore its collection from the Bin first", code: "PARENT_IN_BIN" }, 409);
       case "limit_reached":
         return c.json({ error: outcome.message, code: "LIMIT_REACHED" }, 409);
       case "purging":

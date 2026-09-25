@@ -4,17 +4,9 @@ import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop } from ".
 
 type Guard = (poppedState: unknown) => boolean;
 
-// historyDialogs.ts holds one guard at a time. Tasks can nest them (the board's dialogs, the card
-// view's unsaved-description prompt, a confirm inside the card), so active guards form a stack and
-// the newest one is registered; when it goes away the one below it is registered again.
-const stack: Guard[] = [];
-let unregister: (() => void) | null = null;
-
-function registerTop() {
-  unregister?.();
-  const top = stack[stack.length - 1];
-  unregister = top ? registerHistoryDialogGuard(top) : null;
-}
+// Tasks nests guards (the board's dialogs, the card view's unsaved-description prompt, a confirm
+// inside the card). historyDialogs.ts keeps registered guards as a stack and asks the newest first,
+// so each open piece registers its own guard and the innermost one closes first.
 
 /**
  * D18 for the Tasks views: browser Back or Forward while `open` only runs `close` (closing a
@@ -43,12 +35,6 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
       undoDialogPop(direction);
       return true;
     };
-    stack.push(guard);
-    registerTop();
-    return () => {
-      const index = stack.lastIndexOf(guard);
-      if (index >= 0) stack.splice(index, 1);
-      registerTop();
-    };
+    return registerHistoryDialogGuard(guard);
   }, [open]);
 }

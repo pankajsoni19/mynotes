@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { LogOut, Settings, Trash2 } from "lucide-react";
 import "./appShell.css";
 import { listBin } from "./bin/binApi";
+import { NotificationBell } from "./notifications/NotificationBell";
 
 type AccountProps = {
   displayName: string;
@@ -14,12 +15,13 @@ type AccountProps = {
 
 export function AccountActions({ displayName, onSettings, onSignOut, onBin, binCount = 0 }: AccountProps) {
   const binLabel = binCount > 0 ? `Bin, ${binCount} item${binCount === 1 ? "" : "s"}` : "Bin";
-  return <div className="app-account" role="group" aria-label="Account">
+  // The bell sits beside the group (it renders only inside the signed-in shell).
+  return <><div className="app-account" role="group" aria-label="Account">
     <span className="app-home-user">{displayName}</span>
     <button className="app-account-button" onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>
     {onBin && <button className="app-account-button app-account-bin" onClick={onBin} aria-label={binLabel} title="Bin"><Trash2 /><span className="app-account-label">Bin</span>{binCount > 0 && <span className="app-account-badge" aria-hidden="true">{binCount > 99 ? "99+" : binCount}</span>}</button>}
     <button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button>
-  </div>;
+  </div><NotificationBell /></>;
 }
 
 /**

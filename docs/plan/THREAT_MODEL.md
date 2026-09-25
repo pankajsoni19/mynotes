@@ -109,7 +109,7 @@ Rows T50, T51, and T74 of [WAVES_10-12.md](WAVES_10-12.md) §5.
 | --- | --- | --- | --- |
 | T50 | **Today leaks through a new aggregation path** | Every section is a provider that calls its module's own predicate or list function (`readableBoardPredicate`, `readableNotePredicate`, the Files list predicate, `listBin`, the quota sum). Recipients see a note only once it is published, with its published title. `tests/today.test.ts` checks every item against the owning app's list across sharing, unsharing, the Bin, member removal, and drafts | Done (Wave 10) |
 | T51 | **Today cost amplification** | Each provider fetches at most 11 rows (ten plus `more`) using the 011 indexes; titles and ids only, no bodies or counts; 30 requests a minute per user, shared by the web and `get_today`; `binSoon` queries by `purge_after` with its own limit; no caching or polling (a refetch on tab focus only after 60 s) | Done (Wave 10) |
-| T74 | **`get_today` bypasses module scopes** | `get_today` needs `today:read` and returns only sections whose module read scope the key also holds (notes, files, tasks); Bin and storage need `today:read` alone, and Bin items are filtered by type to the same module scopes (collection items never reach MCP until a collections scope exists). Registered per scope and re-checked in the handler; `tests/mcpToday.test.ts` | Done (Wave 10) |
+| T74 | **`get_today` bypasses module scopes** | `get_today` needs `today:read` and returns only sections whose module read scope the key also holds (notes, files, tasks); Bin and storage need `today:read` alone, and Bin items are filtered by type to the same module scopes (collection and calendar items never reach MCP until those scopes exist; the `upcoming` section is session-only for the same reason). Registered per scope and re-checked in the handler; `tests/mcpToday.test.ts` | Done (Wave 10) |
 
 ### Collections (Wave 11)
 
@@ -126,6 +126,22 @@ Rows T52–T60 of [WAVES_10-12.md](WAVES_10-12.md) §5. The MCP rows (T72–T75)
 | T58 | **An attachment stays reachable after unshare or bin** | Attachment access is a live predicate on a live row in a live, readable collection, OR-ed into `readableDocument*` only (never lists); content is `no-store`. Files routes refuse attachments, and folder or sharing access never applies to them. Tests cover unshare, row bin, collection bin, and unlink. | Required |
 | T59 | **Links disclose unreadable titles** | Note links resolve per viewer to `{ id, restricted: true }`, only readable notes can be linked, note titles are never indexed, and export writes titles only for readers who can read the note. | Required |
 | T60 | **Row search leaks** | The collection access rule is inside the search query, before `LIMIT`; binned rows and collections never match; parity and unshare tests. | Required |
+
+### Calendar (Wave 12)
+
+Rows T61–T71 of [WAVES_10-12.md](WAVES_10-12.md) §5. Feeds (T64, T65, T70) arrive with stage D; the calendar MCP tools (T72, T73) with Stage E.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T61 | **IDOR across calendars, events, reminders, subscriptions** | Every path id is joined to its calendar and checked against the live readable or editable predicate in `server/calendar/access.ts`; reminders, notifications, and push subscriptions are scoped to their owner; strangers get 404. `tests/calendarApi.test.ts`, `tests/calendarReminders.test.ts`, `tests/push.test.ts` | Required |
+| T62 | **Push endpoint SSRF or abuse** | Endpoints must be https:443 on the built-in push hosts or `PUSH_ENDPOINT_HOSTS`, resolve to public addresses after DNS, and are sent without redirects with a 5 s timeout; 10 subscriptions per user; repeated failures disable one | Required |
+| T63 | **Push services learn content** | Pushes are payload-less; the service worker fetches unread notifications with the session cookie | Accepted (documented) |
+| T66 | **Recurrence or reminder exhaustion** | 1000 instances per request, 100-day ranges, 20k live events per calendar, reminder caps, 200 reminders per dispatcher tick, 60 notifications per user per hour | Required |
+| T67 | **A reminder fires after access is lost** | Access is re-checked at dispatch; titles are read live; a reminder whose event is no longer readable is deleted | Required |
+| T68 | **Open redirect from a notification click** | Notification hrefs are same-origin id paths built from ids (`safeNotificationPath` in the app, the same check in `public/sw.js`) | Required |
+| T69 | **Service worker persistence or hijack** | Same-origin, served `no-cache`, no fetch handler; sign-out forgets this device's subscription | Required |
+| T71 | **Timezone or date abuse** | Zones from the `Intl` list (and browser aliases), real-date checks for every date and wall time | Required |
+| T59 | **Event links disclose unreadable titles** | Links resolve per viewer through each module's own check (`readableNote`, `readableCard`, `readableRow`); only readable targets can be linked; restricted links show no title | Required |
 
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 

@@ -32,6 +32,7 @@ Database changes live in ordered files under `server/migrations`. Startup runs e
 | 010 | `mcp_key_scopes` | `mcp_api_keys.scopes` (JSON; existing keys read `["notes:read"]`) and `notes.draft_mcp_key_id` |
 | 011 | `task_dates` | `cards.due_on`, `cards.assignee_id`, and `board_columns.is_done` (backfilled for Done columns), with their indexes |
 | 012 | `collections` | collections, members, rows (values JSON, revision, one-step undo), saved views, row attachment links, and the row search mapping and FTS tables (see [Collections](#collections)) |
+| 013 | `calendar` | calendars, members, events (local time plus IANA zone, or dates; JSON recurrence), event links, reminders, notifications, push subscriptions, and feed tokens (see [Calendar](#calendar)) |
 
 Notes and documents share one folder tree and one access rule. An item is readable when it is live (`deleted_at IS NULL`) and one of these holds:
 
@@ -130,6 +131,7 @@ Every step runs under the item's resource lock and is idempotent. Restore is a c
 
 Bin purges run even when the file sweep fails. Logs carry counts only.
 
+- **Notifications (Wave 12):** calendar notifications and fired standalone reminders older than 30 days are removed (`sweepNotifications`).
 - **Task attachments never linked (Wave 9 review fix):** uploads with `purpose = 'task_attachment'` that have no `card_attachments` row after 24 hours are moved to the uploader's Bin, 100 per run, audited with reason `attachment_never_linked` and no actor.
 
 ## Search
@@ -193,7 +195,10 @@ All `/api` routes except health, about, login, and register need a session. Muta
 - **Files:** `POST /api/files?folderId=` (multipart upload), `GET /api/files?folderId=`, `GET/PATCH/DELETE /api/files/:id`, `GET/HEAD /api/files/:id/content`, `GET/PUT /api/files/:id/sharing`
 - **Files** also accept `?purpose=task_attachment` on upload (no folder; readable to a board only once linked to a card).
 - **Tasks:** `GET/POST /api/tasks/boards`, `GET/PATCH/DELETE /api/tasks/boards/:id`, `GET/PUT /api/tasks/boards/:id/sharing`, `POST /api/tasks/boards/:id/columns`, `PATCH/DELETE /api/tasks/columns/:id`, `POST /api/tasks/boards/:id/cards`, `GET/PATCH/DELETE /api/tasks/cards/:id`, `POST /api/tasks/cards/:id/move`, `GET/POST /api/tasks/cards/:id/comments`, `PATCH/DELETE /api/tasks/comments/:id`, `POST /api/tasks/cards/:id/attachments`, `DELETE /api/tasks/cards/:id/attachments/:documentId`
-- **Bin:** `GET /api/bin?type=note|document|card|board`, `POST /api/bin/:type/:id/restore`, `DELETE /api/bin/:type/:id`, `DELETE /api/bin`
+- **Calendar:** `GET/POST /api/calendars`, `PATCH/DELETE /api/calendars/:id`, `GET/PUT /api/calendars/:id/sharing`, `POST /api/calendars/:id/events`, `GET /api/events?from&to&tz&calendars&include=tasks`, `GET/PATCH/DELETE /api/events/:id`, `POST /api/events/:id/undo`, `POST /api/events/:id/exdates`, `POST/DELETE /api/events/:id/links`
+- **Reminders and notifications:** `GET/POST /api/reminders`, `DELETE /api/reminders/:id`, `GET /api/notifications`, `POST /api/notifications/read`
+- **Web Push:** `GET /api/push/config`, `GET/POST/DELETE /api/push/subscriptions`, `POST /api/push/test`
+- **Bin:** `GET /api/bin?type=note|document|card|board|collection|collection_row|calendar|event`, `POST /api/bin/:type/:id/restore`, `DELETE /api/bin/:type/:id`, `DELETE /api/bin`
 - **Search:** `GET /api/search?q=&scope=notes&folder=all|shared|<uuid>&limit=20`
 - **MCP:** `/mcp` (outside `/api`): Streamable HTTP with a `Bearer` API key, `Host` and `Origin` checks, a failed-auth rate limit, and bounded bodies. Tools are registered per key scope; see [MCP](#mcp).
 
@@ -243,17 +248,25 @@ Typed tables (WAVES_10-12.md §3), in `server/collections/` with routes under `/
 
 **Bin.** Collections are listed for their owner; rows for the collection owner and their deleter, who may restore while they can still edit (a row in a binned collection returns `PARENT_IN_BIN`). Only the owner purges. A purge is one SQLite transaction; the sweeper and Empty Bin include both types.
 
+## Calendar
+
+Calendars, events, reminders, notifications, and Web Push (WAVES_10-12.md §4), in `server/calendar/` with routes under `/api/calendars`, `/api/events`, `/api/reminders`, `/api/notifications`, and `/api/push` (API_CONTRACTS.md § Calendar). Migration 013 adds `calendars` and `calendar_members` (one audience `share_role`), `events` (Bin columns, revision, one-step undo), `event_links`, `reminders`, `notifications`, `push_subscriptions`, and `calendar_feeds`.
+
+**Modules.** `recurrence.ts` is the pure zoned-time and recurrence expander. `access.ts` holds the readable, editable, and writer predicates. `service.ts` holds calendars, events, occurrence ranges, and `listUpcoming` (Today's `upcoming` section, registered in `server/today/providers.ts` as a session-only section, since there is no calendar MCP scope yet). `links.ts` resolves link targets per viewer through each module's own check (`readableNote`, `readableCard`, `readableRow`). `tasksOverlay.ts` lists due cards for `include=tasks` with `readableBoardPredicate`. `calendarBin.ts` registers calendars and events as Bin providers (`registerBinProvider`, like Collections). `reminders.ts` schedules reminders and runs the dispatcher (a 30 s `unref` single-flight tick started after the sweeper) that writes notifications; `push.ts` keeps VAPID keys under the data directory (created by `initPush()` at boot; a failure leaves reminders in-app only) and sends payload-less pushes to allowed push-service hosts.
+
+**Client.** `src/calendar/` (agenda, month, event sheet and view, calendars dialog), `src/calendarRoute.ts` and `src/calendarNavigation.ts` (routes and history hints), and `src/notifications/` (the bell rendered by `AccountActions` inside `NotificationsContext`, `/notifications`, and the Settings → Notifications device switch). `public/sw.js` is the service worker, served with `Cache-Control: no-cache`; sign-out calls `forgetThisDevice()` to drop this browser's subscription.
+
 ## UI
 
 ### Apps
 
-After sign-in, Home (`src/AppShell.tsx`) offers Notes, Files, Tasks, and Bin. Notes uses a collapsible folder rail, note list, and editor; Files a folder rail, file list, upload queue, and preview/details pane; Tasks (`src/tasks/`) a board list and a board of 280 px columns with drag and drop (`application/x-mynotes-card`, a UUID only), Alt+Arrow moves, and a card dialog; the Bin a single list. At 760 px and below each app becomes a sequence of full-width panels (Notes: folders → list → editor; Files: folders → files → preview); a board shows one column at a time on an x-mandatory scroll-snap track synced to a sticky tab strip.
+After sign-in, Today (`src/today/TodayHome.tsx`) launches Notes, Files, Tasks, Collections, and Calendar, with the Bin and the notification bell in its account row. Notes uses a collapsible folder rail, note list, and editor; Files a folder rail, file list, upload queue, and preview/details pane; Tasks (`src/tasks/`) a board list and a board of 280 px columns with drag and drop (`application/x-mynotes-card`, a UUID only), Alt+Arrow moves, and a card dialog; the Bin a single list. At 760 px and below each app becomes a sequence of full-width panels (Notes: folders → list → editor; Files: folders → files → preview); a board shows one column at a time on an x-mandatory scroll-snap track synced to a sticky tab strip.
 
 Tiptap provides an Outline-like block editor with Markdown serialization, keyboard shortcuts, a bubble toolbar, and `/` commands. `/image` and paste/drop upload PNG, JPEG, GIF, or WebP through `POST /api/files` into the note's folder and embed `/api/files/<id>/content?disposition=inline`; the image is kept only if the server's sniffed kind agrees, and image sources other than this app's content URLs are dropped. Images therefore follow the folder's sharing, not a note-level override. `/table` uses the Tiptap table extensions and round-trips GitHub-flavoured pipe tables. Download as PDF uses print CSS and `window.print()`.
 
 ### URL routing and history
 
-`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, `/tasks`, `/tasks/:boardId`, `/tasks/:boardId/card/:cardId`, `/collections`, `/collections/:c`, `/collections/:c/view/:v`, `/collections/:c/row/:r`, and `/bin`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
+`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, `/tasks`, `/tasks/:boardId`, `/tasks/:boardId/card/:cardId`, `/collections`, `/collections/:c`, `/collections/:c/view/:v`, `/collections/:c/row/:r`, `/calendar`, `/calendar/month/:yyyy-mm`, `/calendar/event/:eventId`, `/notifications`, and `/bin`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
 
 History state layers hints over the URL:
 
@@ -266,4 +279,4 @@ History state layers hints over the URL:
 
 Leaving a note by any route change runs `finalizeOpenNote` (remove a blank never-published note, or save and publish a changed draft) with the editor locked; on failure the URL stays on the note. Deep links resume the named note or file; unreadable ids fall back to the list with a toast. A signed-out deep link is kept in memory through login. A failed first workspace load retries on the next route change.
 
-Dialogs and sheets push no history. While one is open, the app registers a guard (`src/historyDialogs.ts`): the first `popstate` handler to see a Back or Forward closes the dialog and undoes the move with `history.go(±1)`, chosen by comparing `mynotes.depth` of the two entries, and the popstate that causes is ignored once.
+Dialogs and sheets push no history. While one is open, the app registers a guard (`src/historyDialogs.ts`; guards form a stack, newest asked first, so shared chrome such as the notification bell and nested Tasks dialogs each register their own): the first `popstate` handler to see a Back or Forward closes the dialog and undoes the move with `history.go(±1)`, chosen by comparing `mynotes.depth` of the two entries, and the popstate that causes is ignored once.

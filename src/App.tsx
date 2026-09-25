@@ -3,6 +3,7 @@ import {
   Archive,
   Bot,
   ArrowUpDown,
+  Bell,
   Check,
   Copy,
   ChevronLeft,
@@ -44,6 +45,13 @@ import { TasksApp } from "./tasks/TasksApp";
 import { CollectionsApp } from "./collections/CollectionsApp";
 import { carriedCollectionsState } from "./collectionsRoute";
 import { carriedTasksState } from "./tasksNavigation";
+import { CalendarApp } from "./calendar/CalendarApp";
+import { NotificationsApp } from "./notifications/NotificationsApp";
+import { NotificationsContext } from "./notifications/notificationsApi";
+import { NotificationSettings } from "./notifications/NotificationSettings";
+import { forgetThisDevice } from "./notifications/pushClient";
+import { carriedCalendarState } from "./calendarNavigation";
+import { calendarHomeRoute, localDate } from "./calendarRoute";
 import { popStateClosedDialog } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
@@ -255,7 +263,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
 }
 
 function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
-  const [section, setSection] = useState<"security" | "mcp" | "about">("security");
+  const [section, setSection] = useState<"security" | "mcp" | "notifications" | "about">("security");
   const [appInfo, setAppInfo] = useState({ version: "0.6.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
@@ -271,7 +279,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
     onClose();
   }, [mcpKeyPending, onClose]);
 
-  function selectSection(next: "security" | "mcp" | "about") {
+  function selectSection(next: "security" | "mcp" | "notifications" | "about") {
     if (next !== "mcp" && mcpKeyPending && !window.confirm("This API key is shown only once. Leave this section without saving it?")) return;
     setSection(next);
   }
@@ -392,7 +400,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
+        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -417,7 +425,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );
@@ -602,7 +610,8 @@ function historyStateFor(userId: string, route: Route, panel: MobilePanel, files
   const appState = route.app === "notes" ? withSearchHint(userId, search, createHistoryState(userId, { panel, folder: route.folder, noteId: route.noteId }, null))
     : route.app === "files" ? createFilesHistoryState(userId, filesSnapshotFor(userId, route, filesPanel), null)
     : route.app === "tasks" ? carriedTasksState(userId, route.boardId, window.history.state)
-    : route.app === "collections" ? carriedCollectionsState(userId, route, window.history.state) : null;
+    : route.app === "collections" ? carriedCollectionsState(userId, route, window.history.state)
+    : route.app === "calendar" ? carriedCalendarState(userId, route, window.history.state) : null;
   return createAppHistoryState(userId, route.app, appState);
 }
 
@@ -648,6 +657,8 @@ export function App() {
   const searchHintRef = useRef<SearchHint | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("folders");
+  // Bumped to remount Calendar when a notification opens a Calendar URL while it is on screen.
+  const [calendarKey, setCalendarKey] = useState(0);
   const [panel, setPanel] = useState<"history" | "share" | null>(null);
   const [mobileActions, setMobileActions] = useState(false);
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
@@ -769,7 +780,7 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", bin: "Bin" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session]);
@@ -1191,6 +1202,7 @@ export function App() {
     if (section === "files") return { app: "files", folder: "all", documentId: null };
     if (section === "tasks") return { app: "tasks", boardId: null, cardId: null };
     if (section === "collections") return { app: "collections", collectionId: null, viewId: null, rowId: null };
+    if (section === "calendar") return calendarHomeRoute(isMobileViewport(), localDate(new Date()));
     return { app: section };
   }
 
@@ -1254,6 +1266,24 @@ export function App() {
       // Step back to the Today entry this link pushed.
       window.history.back();
     }
+  }
+
+  // A notification opens its in-app path as a new entry (paths are checked by safeNotificationPath).
+  // Opening a Calendar path while Calendar is on screen remounts it on the new URL.
+  function openNotificationPath(path: string) {
+    const route = parseRoute(path);
+    if (route.app === "calendar") setCalendarKey((value) => value + 1);
+    navigate(route);
+    setActiveApp(route.app);
+  }
+
+  // A note linked from a calendar event opens in Notes as a new entry, so Back returns to the event.
+  function openLinkedNote(noteId: string) {
+    setSelectedFolder("all");
+    setSelectedNoteId(noteId);
+    setMobilePanel("editor");
+    navigate(notesRoute("all", noteId), { panel: "editor" });
+    setActiveApp("notes");
   }
 
   async function leaveNotesFromHistory(route: Route) {
@@ -1409,6 +1439,8 @@ export function App() {
   }
 
   async function logout() {
+    // T69: forget this device's push subscription and service worker while the session still works.
+    await forgetThisDevice();
     await api("/auth/logout", { method: "POST", body: "{}" });
     sessionUserRef.current = null;
     noteLoadGenerationRef.current += 1;
@@ -1466,16 +1498,18 @@ export function App() {
   const toastStatus = toast && <div className="toast" role="status">{toast}</div>;
   const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
 
-  if (activeApp !== "notes" && !session.totp.setupRequired) return <>
+  if (activeApp !== "notes" && !session.totp.setupRequired) return <NotificationsContext.Provider value={{ openList: () => { void openApp("notifications"); }, openPath: openNotificationPath }}>
     {activeApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : activeApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
+      : activeApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
+      : activeApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}
-  </>;
+  </NotificationsContext.Provider>;
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>

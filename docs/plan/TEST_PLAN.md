@@ -262,9 +262,9 @@ Manual QA:
 - [x] `tests/migrations.test.ts`: 011 on a v0.6.0-shaped database adds `due_on` (GLOB CHECK), `assignee_id` (SET NULL when the user goes), and `is_done` (backfilled for Done, done, and DONE, not "Done soon"), plus the three indexes; ids 1–11 present whether or not 012/013 are registered
 - [x] `tests/tasksDates.test.ts`: new boards mark Done as done; readers set and clear `dueOn` and `assigneeId` under revision CAS; real-date validation (Feb 29, month 13, shapes, range); `ASSIGNEE_NOT_MEMBER` for strangers, unknown and disabled users, and anyone once the board is `all_users`; the readers list; `isDone` owner only; the due chip helper
 - [x] `tests/mcpTasks.test.ts`: `create_card` takes and validates `dueOn`; `get_card` returns `due_on`
-- [x] `tests/today.test.ts`: section shape and order, no `upcoming`; tz validation (including a browser alias), `sections=`, 401, and 30/min per user; UTC+14 and UTC−12 midnights for the date and overdue flags; a failing provider errors only its section, an unavailable module is absent, and a long page is cut to ten; parity with the Notes, Files, Tasks, and Bin lists across sharing, unsharing, Bin, member removal, done columns, and drafts (draft titles never reach recipients); agent drafts; storage and `binSoon`; 10 + `more`
+- [x] `tests/today.test.ts`: section shape and order (`upcoming` between `binSoon` and `storage` once Calendar is installed, listing readable occurrences without descriptions); tz validation (including a browser alias), `sections=`, 401, and 30/min per user; UTC+14 and UTC−12 midnights for the date and overdue flags; a failing provider errors only its section, an unavailable module is absent, and a long page is cut to ten; parity with the Notes, Files, Tasks, and Bin lists across sharing, unsharing, Bin, member removal, done columns, and drafts (draft titles never reach recipients); agent drafts; storage and `binSoon`; 10 + `more`
 - [x] `tests/mcpToday.test.ts`: `get_today` only with `today:read` (handler re-check); sections filtered per module scope, write implies read (T74); titles only; tz validation; not audited
-- [x] `tests/appShell.test.tsx`: Today keeps the account row and greeting; launcher links Notes, Files, Tasks without the Bin; busy skeletons labelled by headings; row copy and routes; storage text; hidden sections per user survive bad storage; one column with 44 px targets at phone widths
+- [x] `tests/appShell.test.tsx`: Today keeps the account row and greeting; launcher links Notes, Files, Tasks, Collections, and Calendar without the Bin; busy skeletons labelled by headings; row copy and routes; storage text; hidden sections per user survive bad storage; one column with 44 px targets at phone widths
 - [x] `tests/tasksApp.test.tsx`: due chip and assignee on cards, none in a done column
 
 Manual QA (desktop and 390×844):
@@ -277,7 +277,7 @@ Manual QA (desktop and 390×844):
 
 ## Wave 11: Collections
 
-Migration ids are asserted against the registered list and pin 1–12.
+Migration ids are asserted against the registered list and pin 1–13.
 
 `tests/collectionsSchema.test.ts` (no server):
 
@@ -357,6 +357,26 @@ Manual QA (desktop and 390×844, two users; the scratch click-through for commit
 `tests/migrations.test.ts`:
 
 - [x] Migration 012 adds `collections`, `collection_members`, `collection_rows`, `collection_views`, `collection_row_attachments`, `collection_row_search`, and `collection_row_fts`; name, JSON, share-role, and Bin CHECKs hold; `values_json` is capped at 16,384 bytes; purging a collection cascades to rows, search rows, and (through the trigger) FTS rows.
+
+## Wave 12: Calendar
+
+Migration ids pin 1–13; `tests/calendarMigration.test.ts` applies 013 on a fresh database and on one at migration 9 and checks its CHECKs and cascades.
+
+- [x] `tests/calendarRecurrence.test.ts`: zoned wall times across DST gaps and overlaps (New York, Berlin); daily, weekly, monthly on the 31st, yearly on Feb 29; until, count, exdates; the instance cap and 100-day ranges; rule and timing validation (T66, T71).
+- [x] `tests/calendarApi.test.ts`: the Personal calendar, caps, owner-only actions, sharing, the viewer/editor role matrix, IDOR through every path (T61), revision CAS with one-step undo, range expansion, and links: note, card, and collection-row targets need a readable target to link and resolve per viewer (T59).
+- [x] `tests/calendarTasks.test.ts`: `include=tasks` lists readable, open, live due cards through `readableBoardPredicate`.
+- [x] `tests/calendarBin.test.ts` and `tests/calendarBinUi.test.tsx`: calendars and events as Bin providers; owner and deleter rules, `PARENT_IN_BIN`, `LIMIT_REACHED`, tombstones and the sweeper, Empty Bin; the Calendar filter chip and labels.
+- [x] `tests/calendarReminders.test.ts`: reminder validation and privacy, caps, exactly-once dispatch, late and skipped fires, access loss at fire time (T67), rescheduling, 60 notifications per user per hour, same-origin hrefs (T68), the 30-day sweep, `listUpcoming`.
+- [x] `tests/push.test.ts`: `PUSH_ENABLED=auto` on http, VAPID keys (0600, reused) and ES256 JWTs, the push-host allowlist and post-DNS private-address block (T62), subscription caps and IDOR, payload-less pushes (T63), 404/410 cleanup, the Send test limit.
+- [x] `tests/serviceWorker.test.ts`: no fetch handler, generic notices, same-origin clicks only, and the manifest (T69).
+- [x] `tests/notificationsUi.test.tsx` and `tests/calendarRoute.test.tsx`: routes, history hints, the stacked dialog guards, the bell inside the signed-in shell, and the Today launcher entry.
+- [x] `tests/today.test.ts` and `tests/mcpToday.test.ts`: `upcoming` for sessions only; `get_today` leaves it out and drops calendar items from `binSoon` (T74).
+
+Manual QA (desktop and 390×844):
+
+- [ ] Calendar opens on the agenda on a phone and the current month on desktop; Back from an event returns to where it was opened.
+- [ ] A reminder shows in the bell on Today, Tasks, Collections, Files, and Calendar; on an https origin with push enabled it also arrives as a system notification, and clicking it opens the event.
+- [ ] Sign-out removes this device's push subscription.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

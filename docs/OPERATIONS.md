@@ -62,6 +62,9 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAX_UPLOAD_BYTES` | `104857600` (100 MiB) | Largest single file. Integer from `1048576` (1 MiB) to `2147483648` (2 GiB). Bun's request body cap is this (or 2.1 MB, whichever is larger) plus 1 MiB; JSON bodies stay limited to 2.1 MB. |
 | `USER_STORAGE_QUOTA_BYTES` | `10737418240` (10 GiB) | Document bytes per user, including documents in the Bin. Integer ≥ 0; `0` means unlimited. |
 | `MIN_FREE_DISK_BYTES` | `1073741824` (1 GiB) | Uploads are refused when they would leave less free space than this on the data volume. Integer ≥ 0. |
+| `PUSH_ENABLED` | `auto` | Web Push for calendar reminders: `auto` (on only when `APP_ORIGIN` is `https:`), `true`, or `false`. Browsers allow push only on a secure origin, so on `http://localhost` or a LAN address reminders appear in the bell and the notifications list only. |
+| `PUSH_SUBJECT` | `APP_ORIGIN` | The VAPID contact push services may use: an `http(s)` URL or a `mailto:` address. |
+| `PUSH_ENDPOINT_HOSTS` | empty | Extra push-service hosts, comma-separated (`push.example.com` or `*.push.example.com`), besides the built-in `*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, and `*.notify.windows.com`. |
 | `APP_VERSION` | `0.6.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
@@ -81,6 +84,7 @@ The container reads and writes `/data`, mapped by Compose to:
 ├── documents/
 │   ├── objects/<document-id>       uploaded file bytes, no extension
 │   └── .staging/<document-id>.part uploads in progress (not backed up)
+├── push/vapid.json                 Web Push signing keys (0600), created at first boot when push is on
 └── backup/                         weekly archives (host backup script only)
 ```
 
@@ -89,6 +93,8 @@ Markdown files and documents are never exposed as static files; authenticated AP
 The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files use `0600`. The service refuses symlinked note directories and files.
 
 **Single instance.** Only one Nook instance may use a data directory at a time: upload slots, per-document locks, rate limits, and the sweeper live in the process. Do not run a second container or a development server against the same directory.
+
+**Web Push.** Pushes carry no content: a push only wakes the device, whose service worker then fetches unread notifications from Nook with the user's session, so push services see timing only. Outbound requests go only to allowlisted push-service hosts over https on port 443, never to IP literals or private addresses, with no redirects and a 5-second timeout. Each user may register 10 devices; a device is removed when the push service reports it gone (404 or 410) and paused after 5 failed deliveries. `push/vapid.json` is included in backups. If it is lost, a new key pair is created at the next boot and each device must enable push again in Settings → Notifications.
 
 **EXIF and embedded metadata.** Nook stores uploaded files byte for byte and does not strip EXIF or other embedded metadata (for example GPS location or author) from images or PDFs. Tell users to remove it before uploading files they plan to share.
 

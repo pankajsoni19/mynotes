@@ -105,14 +105,31 @@ describe("GET /api/today", () => {
   test("returns every installed section, bounded, with hrefs and no bodies", async () => {
     const user = await createUser("Today shape");
     const view = await today(user, "Europe/Berlin");
-    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "binSoon", "storage"]);
-    // Calendar (W12) is not installed: its section is absent, not empty.
-    expect(view.sections.upcoming).toBeUndefined();
+    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "binSoon", "upcoming", "storage"]);
+    // Calendar (W12) is installed: a user with no calendars gets an empty section linking to /calendar.
+    expect(view.sections.upcoming).toEqual({ items: [], more: false, href: "/calendar" });
     expect(view.date).toBe(dateInZone(new Date(view.generatedAt), "Europe/Berlin"));
     expect(view.sections.notesRecent).toMatchObject({ href: "/notes", more: expect.any(Boolean) });
     expect(view.sections.drafts).toEqual({ items: [], more: false, href: "/notes" });
     expect(view.sections.storage!.items).toEqual([{ usedBytes: 0, binnedBytes: 0, quotaBytes: 12582912 }]);
     expect(view.sections.binSoon!.href).toBe("/bin");
+  });
+
+  test("upcoming lists the next occurrences on readable calendars, ids and times only", async () => {
+    const user = await createUser("Today upcoming");
+    const stranger = await createUser("Today upcoming stranger");
+    const calendar = ((await (await request("/calendars", { method: "POST", body: JSON.stringify({ name: "Family" }) }, user)).json()) as { calendar: { id: string } }).calendar;
+    const tomorrow = addDays(dateInZone(new Date(), "UTC"), 1);
+    const created = await request(`/calendars/${calendar.id}/events`, { method: "POST", body: JSON.stringify({ title: "Dentist", description: "Bring the form", allDay: false, startLocal: `${tomorrow}T09:00`, tz: "UTC", durationMinutes: 30 }) }, user);
+    expect(created.status).toBe(201);
+    const eventId = ((await created.json()) as { event: { id: string } }).event.id;
+    const view = await today(user, "UTC");
+    expect(view.sections.upcoming).toEqual({
+      items: [{ eventId, calendarId: calendar.id, title: "Dentist", start: `${tomorrow}T09:00:00.000Z`, end: `${tomorrow}T09:30:00.000Z`, allDay: false, date: tomorrow }],
+      more: false, href: "/calendar"
+    });
+    expect(JSON.stringify(view)).not.toContain("Bring the form");
+    expect((await today(stranger, "UTC")).sections.upcoming!.items).toEqual([]);
   });
 
   test("validates tz, limits sections, and rate-limits at 30 a minute per user", async () => {

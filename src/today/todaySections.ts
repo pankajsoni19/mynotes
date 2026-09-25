@@ -1,3 +1,5 @@
+import { dayHeading, zonedParts } from "../calendar/calendarFormat";
+import { eventRoute } from "../calendarRoute";
 import { formatBytes } from "../files/filesApi";
 import { relativeTime } from "../files/format";
 import { parseRoute, type Route } from "../router";
@@ -17,6 +19,14 @@ export type TodaySectionDef = {
 
 const noteRoute = (id: string): Route => ({ app: "notes", folder: "all", noteId: id });
 
+/** An upcoming occurrence: "Today · 09:30" in the browser's zone, or "Tomorrow · All day". */
+function upcomingRow(item: Record<string, any>, date: string): TodayRow {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const start = item.allDay ? { date: String(item.date ?? item.start), time: "All day" } : zonedParts(item.start, zone);
+  const day = start.date < date ? date : start.date;
+  return { key: `${item.eventId}:${item.start}`, label: item.title || "Untitled event", meta: `${dayHeading(day, date)} · ${start.time}`, route: eventRoute(item.eventId), ...(day === date ? { tone: "today" as const } : {}) };
+}
+
 function taskRow(item: Record<string, any>, date: string): TodayRow {
   const due = dueStatus(item.dueOn ?? null, date);
   const reason = item.reason === "assigned" ? "Assigned to you" : item.reason === "created" ? "Added by you" : null;
@@ -29,7 +39,7 @@ function taskRow(item: Record<string, any>, date: string): TodayRow {
   };
 }
 
-const binTypeLabel: Record<string, string> = { note: "Note", document: "File", card: "Card", board: "Board", collection: "Collection", collection_row: "Row" };
+const binTypeLabel: Record<string, string> = { note: "Note", document: "File", card: "Card", board: "Board", collection: "Collection", collection_row: "Row", calendar: "Calendar", event: "Event" };
 
 /**
  * Client copy for each Today section, in the default order. A section the
@@ -59,6 +69,7 @@ export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
     title: "Leaving the Bin soon", empty: "Nothing in your Bin is deleted forever in the next three days.", app: "Bin",
     row: (item) => ({ key: `${item.type}:${item.id}`, label: item.title || "Untitled", meta: `${binTypeLabel[item.type] ?? "Item"} · deleted forever ${relativeTime(item.purge_after)}`, route: { app: "bin" } })
   },
+  upcoming: { title: "Upcoming", empty: "Nothing on your calendars in the next seven days.", app: "Calendar", row: upcomingRow },
   storage: { title: "Storage", empty: "", app: "Files" }
 };
 
