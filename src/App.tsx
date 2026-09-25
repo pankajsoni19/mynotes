@@ -595,6 +595,8 @@ export function App() {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<FolderSelection>("all");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const selectedNoteIdRef = useRef(selectedNoteId);
+  selectedNoteIdRef.current = selectedNoteId;
   const [note, setNote] = useState<NoteDetail | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [query, setQuery] = useState("");
@@ -713,11 +715,19 @@ export function App() {
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
   }, [activeApp, selectedFolder, selectedNoteId, selectionOwner, session]);
   useEffect(() => {
-    if (selectedNoteId) loadNote(selectedNoteId);
-    else {
+    if (!selectedNoteId) {
       noteLoadGenerationRef.current += 1;
       setNote(null);
+      return;
     }
+    const noteId = selectedNoteId;
+    loadNote(noteId).catch((reason) => {
+      // Give the user a way out: keep the last loaded note readable instead of leaving it locked.
+      if (selectedNoteIdRef.current !== noteId) return;
+      flash(reason instanceof Error && reason.message !== "Not found" ? reason.message : "Could not open this note");
+      setSelectedNoteId(null);
+      navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
+    });
   }, [selectedNoteId, loadNote]);
   useEffect(() => {
     if (!sortOpen) return;
