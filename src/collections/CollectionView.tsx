@@ -24,6 +24,7 @@ import {
   type FieldValue,
   type ViewConfig
 } from "./collectionsApi";
+import { Attachments } from "./Attachments";
 import { CollectionCards, useIsPhone } from "./CollectionCards";
 import { CollectionSharePanel } from "./CollectionSharePanel";
 import { CollectionTable } from "./CollectionTable";
@@ -307,6 +308,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         }}
         onClose={closeRow}
         onMissing={rowMissing}
+        renderFiles={(row, field, replace) => <Attachments row={row} field={field} editable={editable} notify={notify} onChanged={(saved) => { replace(saved); rows.replaceRow(saved); }} />}
       />}
     </div>
 

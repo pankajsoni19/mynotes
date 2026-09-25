@@ -228,6 +228,13 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] Configs are checked against the schema (unknown fields, mismatched operators, injected ids, the primary field hidden, stored `q`, prototype keys, 61-character names); 20-view cap; owner-only for editors (403) and strangers (404); editors still query through views.
 - [x] IDOR: a view id never works through another collection, and another owner's view cannot be renamed or deleted.
 
+`tests/collectionsAttachments.test.ts` (and `tests/documents.test.ts` for the upload purpose):
+
+- [x] A `collection_attachment` upload has `folder_id = NULL`; linked, it is readable (metadata and content, `no-store`) by collection readers only, never listed in `GET /api/files`, and 404 after unshare, row bin, collection bin, and unlink; the last unlink bins it for the uploader; a Bin restore keeps it out of every folder.
+- [x] A Files item the linker owns can be linked, stays in the owner's Files, and is never binned on unlink.
+- [x] Rules: viewers 403 `READ_ONLY`; strangers 404; only the caller's own live `file`/`collection_attachment` documents and only file fields; `ALREADY_ATTACHED`; `NOT_LINKER` for editors removing someone else's link, the owner may; 20 per row.
+- [x] IDOR across rows and collections; `restricted` note links never disclose titles or grant access.
+
 `tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
 
 - [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.

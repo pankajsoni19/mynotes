@@ -16,7 +16,7 @@ describe("collections API", () => {
     expect((await call(owner, "POST", "", { name: "X", templateId: "nope" })).status).toBe(400);
     expect((await call(owner, "POST", "", { name: "X", templateId: "inventory", fields: [{ name: "A", type: "text" }] })).status).toBe(400);
     const listed = await call(owner, "GET", "");
-    expect(listed.body.collections.map((collection: Collection) => collection.name)).toEqual(["Blank", "Stuff"]);
+    expect(listed.body.collections.filter((collection: Collection) => collection.is_owner === 1).map((collection: Collection) => collection.name)).toEqual(["Blank", "Stuff"]);
     expect(listed.body.collections[0].fields).toBeUndefined();
   });
 

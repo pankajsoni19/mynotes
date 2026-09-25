@@ -438,6 +438,20 @@ type CollectionView = { id: string; collection_id: string; name: string /* 1–6
 
 Views are listed by `GET /:c` for every reader and used through `POST /:c/query { viewId }`; a view id from another collection is 404. `q` is never stored. `kind: "board"` is reserved. Audit: `collection.view_create`, `collection.view_update`, `collection.view_delete` with `{ collectionId, viewId }`.
 
+### Row attachments
+
+`file` values are derived from links (D58): `RowSummary.files` is `{ [fieldId]: AttachmentSummary[] }` with `AttachmentSummary = { id, name, mime_type, preview_kind, size_bytes, linked_by, created_at }`, live documents only. Uploads for rows use `POST /api/files?purpose=collection_attachment` (no `folderId`, 400 otherwise): the document is stored with `folder_id = NULL`, counts against the uploader's quota, and never appears in `GET /api/files`, folder counts, or the Files Bin filter.
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /rows/:r/attachments { documentId, fieldId }` | editor that owns the document | 201 `{ row }` | 400 (not a file field), 403 `READ_ONLY`, 404 (row, or a document that is not the caller's live `file` or `collection_attachment` document), 409 `ALREADY_ATTACHED` / `LIMIT_REACHED` (20 per row) |
+| `DELETE /rows/:r/attachments/:d` | editor who linked it, or the owner | 200 `{ row, documentBinned }` | 403 `READ_ONLY` / `NOT_LINKER`, 404 |
+
+- **Access.** A linked document is readable (`GET /api/files/:id`, `/content`) by anyone who can read a live row that links it in a live collection; the check is live, so unsharing, binning the row or collection, or unlinking ends access at once (T58). This path is OR-ed into `readableDocument*` only, never into lists.
+- **Lifecycle.** When the last link to a `collection_attachment` document is removed (unlink, or a row or collection purge), the document moves to the uploader's Bin (`deleted_by` = actor). Files items that were linked are never binned. Restoring an attachment from the Bin keeps `folder_id = NULL`.
+- **Notes** in `note` fields never grant access: a note the caller cannot read resolves as `{ id, restricted: true }` (T59).
+- Audit: `collection.row_attach` and `collection.row_detach` with `{ collectionId, rowId, documentId }`; a binned upload adds `document.delete { documentId, reason: "attachment_unlinked" }`.
+
 ### Collection sharing
 
 | Endpoint | Who | Success | Errors |

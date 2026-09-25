@@ -1134,18 +1134,24 @@ describe("document purpose", () => {
     expect(binFiles.items.map((item) => item.id)).not.toContain(binned);
   });
 
-  test("uploads reject any purpose other than file for now", async () => {
+  test("uploads accept file and collection_attachment purposes only", async () => {
     const owner = await createUser("Purpose uploader");
     const form = () => {
       const body = new FormData();
       body.append("file", new Blob(["x"]), "x.txt");
       return body;
     };
-    for (const purpose of ["task_attachment", "collection_attachment", "system", ""]) {
+    for (const purpose of ["task_attachment", "system", ""]) {
       const response = await request(`/files?purpose=${purpose}`, { method: "POST", body: form() }, owner);
       expect(response.status).toBe(400);
     }
     expect((await request("/files?purpose=file", { method: "POST", body: form() }, owner)).status).toBe(201);
-    expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?").get(owner.userId)).toEqual({ count: 1 });
+    // Collection attachments are stored outside every folder (Wave 11, D58).
+    expect((await request(`/files?purpose=collection_attachment&folderId=${crypto.randomUUID()}`, { method: "POST", body: form() }, owner)).status).toBe(400);
+    const attachment = await request("/files?purpose=collection_attachment", { method: "POST", body: form() }, owner);
+    expect(attachment.status).toBe(201);
+    const stored = db.query("SELECT folder_id, purpose FROM documents WHERE id = ?").get(((await attachment.json()) as { document: { id: string } }).document.id);
+    expect(stored).toEqual({ folder_id: null, purpose: "collection_attachment" });
+    expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?").get(owner.userId)).toEqual({ count: 2 });
   });
 });

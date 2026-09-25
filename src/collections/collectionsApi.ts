@@ -1,4 +1,4 @@
-import { api, ApiError } from "../api";
+import { api, ApiError, getCsrfToken } from "../api";
 
 /** docs/plan/API_CONTRACTS.md § Collections. */
 export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "multi_select" | "url" | "note" | "file";
@@ -88,6 +88,33 @@ export const createView = (collectionId: string, name: string, config: ViewConfi
   api<{ view: CollectionView }>(`/collections/${collectionId}/views`, json("POST", { name, config }));
 export const updateView = (viewId: string, change: { name?: string; config?: ViewConfig }) => api<{ view: CollectionView }>(`/collections/views/${viewId}`, json("PATCH", change));
 export const deleteView = (viewId: string) => api<{ ok: true }>(`/collections/views/${viewId}`, json("DELETE", {}));
+
+export const attachDocument = (rowId: string, documentId: string, fieldId: string) =>
+  api<{ row: CollectionRow }>(`/collections/rows/${rowId}/attachments`, json("POST", { documentId, fieldId }));
+export const detachDocument = (rowId: string, documentId: string) =>
+  api<{ row: CollectionRow; documentBinned: boolean }>(`/collections/rows/${rowId}/attachments/${documentId}`, json("DELETE", {}));
+
+/** Uploads a row attachment (stored outside every folder; never listed in Files). XHR for progress. */
+export function uploadAttachment(file: File, onProgress: (fraction: number) => void): Promise<{ id: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/files?purpose=collection_attachment");
+    const token = getCsrfToken();
+    if (token) xhr.setRequestHeader("X-CSRF-Token", token);
+    xhr.setRequestHeader("Idempotency-Key", crypto.randomUUID());
+    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded / event.total); };
+    xhr.onload = () => {
+      let payload: { document?: { id: string }; error?: string } = {};
+      try { payload = JSON.parse(xhr.responseText || "{}"); } catch { /* keep the empty payload */ }
+      if (xhr.status >= 200 && xhr.status < 300 && payload.document) resolve(payload.document);
+      else reject(new ApiError(payload.error ?? `Upload failed (${xhr.status})`, xhr.status, payload));
+    };
+    xhr.onerror = () => reject(new ApiError("The upload was interrupted", 0));
+    const form = new FormData();
+    form.append("file", file, file.name);
+    xhr.send(form);
+  });
+}
 
 export type ShareRole = "viewer" | "editor";
 export type CollectionSharing = { visibility: Visibility; role: ShareRole; users: Array<{ id: string; display_name: string }> };

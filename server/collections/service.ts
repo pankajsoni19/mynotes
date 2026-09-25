@@ -393,6 +393,8 @@ export type RowSummary = {
   values: RowValues;
   /** Note fields resolved for this viewer: an unreadable note is `{ id, restricted: true }` (D58, T59). */
   links: Record<string, NoteLink>;
+  /** File fields: live documents linked to the row (D58); values are never stored for them. */
+  files: Record<string, AttachmentSummary[]>;
   revision: number;
   can_undo: boolean;
   created_by: string | null;
@@ -422,7 +424,34 @@ function resolveNotes(noteIds: string[], viewerId: string) {
   return titles;
 }
 
+export type AttachmentSummary = { id: string; name: string; mime_type: string; preview_kind: string; size_bytes: number; linked_by: string | null; created_at: string };
+
+/** Live linked documents per row and file field. Links under removed or retyped fields are not shown. */
+function attachmentsFor(schema: CollectionSchema, rowIds: string[]) {
+  const fileFields = new Set(schema.fields.filter((field) => field.type === "file").map((field) => field.id));
+  const byRow = new Map<string, Record<string, AttachmentSummary[]>>();
+  if (!fileFields.size || !rowIds.length) return byRow;
+  for (let start = 0; start < rowIds.length; start += 200) {
+    const batch = rowIds.slice(start, start + 200);
+    const rows = db.query(`SELECT a.row_id, a.field_id, d.id, d.name, d.mime_type, d.preview_kind, d.size_bytes, a.linked_by, a.created_at
+      FROM collection_row_attachments a JOIN documents d ON d.id = a.document_id AND d.deleted_at IS NULL
+      WHERE a.row_id IN (${batch.map(() => "?").join(", ")}) ORDER BY a.created_at, d.id`).all(...batch) as Array<AttachmentSummary & { row_id: string; field_id: string }>;
+    for (const { row_id, field_id, ...attachment } of rows) {
+      if (!fileFields.has(field_id)) continue;
+      const files = byRow.get(row_id) ?? {};
+      (files[field_id] ??= []).push(attachment);
+      byRow.set(row_id, files);
+    }
+  }
+  return byRow;
+}
+
 export function presentRows(schema: CollectionSchema, rows: RowWithNames[], viewerId: string): RowSummary[] {
+  const files = attachmentsFor(schema, rows.map((row) => row.id));
+  return presentValues(schema, rows, viewerId).map((row) => ({ ...row, files: files.get(row.id) ?? {} }));
+}
+
+function presentValues(schema: CollectionSchema, rows: RowWithNames[], viewerId: string): Omit<RowSummary, "files">[] {
   const noteFields = schema.fields.filter((field) => field.type === "note");
   const projected = rows.map((row) => ({ row, values: readValues(schema, JSON.parse(row.values_json)) }));
   const noteIds = noteFields.length ? projected.flatMap(({ values }) => noteFields.map((field) => values[field.id]).filter((id): id is string => typeof id === "string")) : [];
@@ -666,4 +695,77 @@ export function queryRows(userId: string, collectionId: string, input: QueryInpu
     schemaVersion: collection.schema_version,
     total
   };
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (D58). A linked document is a `collection_attachment` upload or
+// a Files item the linker owns. It is readable through a live row of a
+// readable collection (documentAccess.ts); it never appears in Files lists.
+
+/**
+ * Moves `collection_attachment` documents that no row links any more to the
+ * Bin (owner = uploader, deleted_by = actor), so they clear in 30 days instead
+ * of holding quota with no UI. Files items are left alone. Call inside the
+ * transaction that removed the links.
+ */
+export function binUnlinkedAttachments(documentIds: string[], actorId: string | null) {
+  const deletedAt = new Date();
+  const purgeAfter = purgeAfterFrom(deletedAt);
+  let moved = 0;
+  for (const documentId of new Set(documentIds)) {
+    const result = db.query(`UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ?
+      WHERE id = ? AND purpose = 'collection_attachment' AND deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM collection_row_attachments a WHERE a.document_id = documents.id)`)
+      .run(deletedAt.toISOString(), actorId, purgeAfter, documentId);
+    if (result.changes) {
+      moved += 1;
+      audit(actorId, null, "document.delete", { documentId, reason: "attachment_unlinked" });
+    }
+  }
+  return moved;
+}
+
+export async function attachDocument(userId: string, rowId: string, input: { documentId: string; fieldId: string }) {
+  const { collection: initial } = requireEditableRow(rowId, userId);
+  return withCollectionLock(initial.id, () => {
+    const { collection } = requireEditableRow(rowId, userId);
+    const schema = schemaOf(collection);
+    const field = schema.fields.find((item) => item.id === input.fieldId);
+    if (!field || field.type !== "file") throw new CollectionError(400, "Attach files to a file field", "INVALID_VALUES", { fieldErrors: { [input.fieldId.slice(0, 16)]: "Not a file field" } });
+    // Only the linker's own live documents (a Files item or a collection upload) can be linked.
+    const document = db.query("SELECT id, purpose FROM documents WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").get(input.documentId, userId) as { id: string; purpose: string } | null;
+    if (!document || (document.purpose !== "file" && document.purpose !== "collection_attachment")) throw new CollectionError(404, "File not found");
+    if (db.query("SELECT 1 FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(rowId, input.documentId)) {
+      throw new CollectionError(409, "This file is already attached to the row", "ALREADY_ATTACHED");
+    }
+    const count = (db.query("SELECT COUNT(*) AS count FROM collection_row_attachments WHERE row_id = ?").get(rowId) as { count: number }).count;
+    if (count >= LIMITS.attachmentsPerRow) throw limitReached(`A row can have up to ${LIMITS.attachmentsPerRow} attachments`);
+    db.transaction(() => {
+      const timestamp = now();
+      db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(rowId, input.documentId, input.fieldId, userId, timestamp);
+      db.query("UPDATE collection_rows SET updated_at = ?, updated_by = ? WHERE id = ?").run(timestamp, userId, rowId);
+      audit(userId, null, "collection.row_attach", { collectionId: collection.id, rowId, documentId: input.documentId });
+    })();
+    return { row: rowDetail(rowId, schema, userId)! };
+  });
+}
+
+/** Unlinks a document (an editor who linked it, or the collection owner). The last unlink bins a collection upload. */
+export async function detachDocument(userId: string, rowId: string, documentId: string) {
+  const { collection: initial } = requireEditableRow(rowId, userId);
+  return withCollectionLock(initial.id, () => {
+    const { collection } = requireEditableRow(rowId, userId);
+    const link = db.query("SELECT linked_by FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(rowId, documentId) as { linked_by: string | null } | null;
+    if (!link) throw new CollectionError(404, "Attachment not found");
+    if (link.linked_by !== userId && collection.owner_id !== userId) throw new CollectionError(403, "Only the person who attached this file or the collection owner can remove it", "NOT_LINKER");
+    let binned = 0;
+    db.transaction(() => {
+      db.query("DELETE FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").run(rowId, documentId);
+      db.query("UPDATE collection_rows SET updated_at = ?, updated_by = ? WHERE id = ?").run(now(), userId, rowId);
+      binned = binUnlinkedAttachments([documentId], userId);
+      audit(userId, null, "collection.row_detach", { collectionId: collection.id, rowId, documentId });
+    })();
+    return { row: rowDetail(rowId, schemaOf(collection), userId)!, documentBinned: binned > 0 };
+  });
 }

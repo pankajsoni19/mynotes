@@ -219,12 +219,17 @@ function uploadResponse(c: Context<AppEnv>, document: DocumentSummary, replay: b
 
 async function handleUpload(c: Context<AppEnv>) {
   const userId = c.get("user").id;
-  // Attachment uploads (?purpose=task_attachment) arrive with Task Boards stage C.
-  const purpose = c.req.query("purpose");
-  if (purpose !== undefined && purpose !== "file") return c.json({ error: "Invalid request", details: ["purpose must be file"] }, 400);
+  // Task attachment uploads (?purpose=task_attachment) arrive with Task Boards stage C.
+  const purposeParam = c.req.query("purpose");
+  if (purposeParam !== undefined && purposeParam !== "file" && purposeParam !== "collection_attachment") {
+    return c.json({ error: "Invalid request", details: ["purpose must be file or collection_attachment"] }, 400);
+  }
+  const purpose = purposeParam ?? "file";
   const folderParam = c.req.query("folderId");
-  const folderId = folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
-  if (!ownsFolder(folderId, userId)) return c.json({ error: "Folder not found" }, 404);
+  // Attachments live outside every folder (folder_id NULL) and never appear in Files (WAVES_10-12.md D58).
+  if (purpose !== "file" && folderParam !== undefined) return c.json({ error: "Invalid request", details: ["attachments cannot have a folderId"] }, 400);
+  const folderId = purpose !== "file" ? null : folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
+  if (folderId !== null && !ownsFolder(folderId, userId)) return c.json({ error: "Folder not found" }, 404);
 
   const keyHeader = c.req.header("Idempotency-Key");
   const uploadKey = keyHeader === undefined ? null : uuid.safeParse(keyHeader.trim().toLowerCase()).data ?? null;
@@ -275,13 +280,13 @@ async function handleUpload(c: Context<AppEnv>) {
           const existing = db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string } | null;
           if (existing) return { replayOf: existing.id };
         }
-        if (!ownsFolder(folderId, userId)) throw new UploadError(404, { error: "Folder not found" });
+        if (folderId !== null && !ownsFolder(folderId, userId)) throw new UploadError(404, { error: "Folder not found" });
         if (quota > 0 && storedBytes(userId) + received.size > quota) throw new UploadError(507, { error: "Storage quota exceeded", code: "QUOTA_EXCEEDED" });
         const timestamp = now();
-        db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, upload_key, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(id, userId, folderId, name, mimeType, previewKind, received.size, received.sha256, uploadKey, timestamp, timestamp);
-        audit(userId, null, "document.upload", { documentId: id, size: received.size, mimeType });
+        db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, upload_key, purpose, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(id, userId, folderId, name, mimeType, previewKind, received.size, received.sha256, uploadKey, purpose, timestamp, timestamp);
+        audit(userId, null, "document.upload", { documentId: id, size: received.size, mimeType, ...(purpose !== "file" ? { purpose } : {}) });
         return { created: true as const };
       })();
     } catch (error) {

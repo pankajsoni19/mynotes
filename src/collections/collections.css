@@ -167,6 +167,17 @@
 .row-field .cell-picker { white-space: normal; }
 .row-panel-meta { margin: 6px 0 0; color: #6f6f76; font-size: .74rem; }
 
+.row-attachments { display: grid; gap: 6px; }
+.row-attachments ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.row-attachments li { display: flex; align-items: center; gap: 4px; border: 1px solid #28282d; border-radius: 10px; background: #0f0f11; }
+.row-attachment-open { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 10px; color: #e8e8ea; text-decoration: none; }
+.row-attachment-open svg { width: 16px; flex: none; color: #b99b59; }
+.row-attachment-open span { min-width: 0; display: grid; overflow: hidden; font-size: .86rem; text-overflow: ellipsis; white-space: nowrap; }
+.row-attachment-open small { color: #77777e; font-size: .72rem; }
+.row-attachments li .icon-button { width: 44px; height: 44px; }
+.row-attachment-add { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; font-size: .84rem; }
+.row-attachment-add svg { width: 16px; }
+
 /* Phone cards */
 .collection-cards { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .collection-card { display: flex; align-items: center; border: 1px solid #242428; border-radius: 12px; background: #131315; }

@@ -80,7 +80,7 @@ export function purgeOwnedItem(type: BinType, id: string, ownerId: string): Prom
 
 export type Visibility = "private" | "selected" | "all_users";
 export type RestoreOutcome =
-  | { status: "restored"; folderId: string; folderName: string; visibility: Visibility }
+  | { status: "restored"; folderId: string | null; folderName: string | null; visibility: Visibility }
   | { status: "already_restored"; folderId: string | null; folderName: string | null }
   | { status: "purging" }
   | { status: "not_found" };
@@ -109,6 +109,18 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
     if (row.deleted_at === null) {
       const folder = ownedFolder(row.folder_id, ownerId);
       return { status: "already_restored", folderId: folder?.id ?? null, folderName: folder?.name ?? null };
+    }
+    // Attachments (purpose <> 'file') live outside every folder: restoring one into a folder would
+    // expose it to that folder's audience (WAVES_7-9.md §7, WAVES_10-12.md D58).
+    const purpose = type === "document" ? (db.query("SELECT purpose FROM documents WHERE id = ?").get(id) as { purpose: string }).purpose : "file";
+    if (purpose !== "file") {
+      return db.transaction((): RestoreOutcome => {
+        const restored = db.query(`UPDATE documents SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = NULL, updated_at = ?
+          WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`).run(now(), id, ownerId);
+        if (restored.changes !== 1) return { status: "purging" };
+        audit(ownerId, null, "document.restore", { documentId: id, folderId: null });
+        return { status: "restored", folderId: null, folderName: null, visibility: "private" };
+      })();
     }
     return db.transaction((): RestoreOutcome => {
       const folder = ownedFolder(row.folder_id, ownerId) ?? ownedFolder(ensureDefaultFolder(ownerId), ownerId)!;

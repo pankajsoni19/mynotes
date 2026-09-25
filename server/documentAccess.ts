@@ -1,5 +1,6 @@
 import { db, type DocumentRow } from "./db";
 import type { PreviewKind } from "./mimeSniff";
+import { readableCollectionPredicate } from "./collections/access";
 
 export type Visibility = "private" | "selected" | "all_users";
 
@@ -68,12 +69,26 @@ const readablePredicate = `
   )
 `;
 
+/**
+ * A document linked to a live row of a collection `$userId` can read
+ * (WAVES_10-12.md §3.2, D58). OR-ed into readableDocument* only, never into
+ * lists: attachments stay out of Files, and access ends with the link, the
+ * row, the collection, or the share (T58).
+ */
+const collectionAttachmentPredicate = `EXISTS (
+  SELECT 1 FROM collection_row_attachments a
+  JOIN collection_rows r ON r.id = a.row_id AND r.deleted_at IS NULL
+  JOIN collections c ON c.id = r.collection_id
+  WHERE a.document_id = d.id AND ${readableCollectionPredicate}
+)`;
+const readableSinglePredicate = `(${readablePredicate}) OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate})`;
+
 export function readableDocument(documentId: string, userId: string) {
-  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readablePredicate}`).get({ documentId, userId }) as DocumentRow | null;
+  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND (${readableSinglePredicate})`).get({ documentId, userId }) as DocumentRow | null;
 }
 
 export function readableDocumentSummary(documentId: string, userId: string) {
-  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readablePredicate}`).get({ documentId, userId }) as DocumentSummary | null;
+  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND (${readableSinglePredicate})`).get({ documentId, userId }) as DocumentSummary | null;
 }
 
 /**

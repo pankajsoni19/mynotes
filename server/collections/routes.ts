@@ -5,6 +5,7 @@ import { parseJson, uuid } from "../validation";
 import { QUERY_LIMITS, querySpecShape } from "./query";
 import { FIELD_ID, labelSchema, safeJson, type FieldInput } from "./schema";
 import {
+  attachDocument,
   CollectionError,
   createCollection,
   createRow,
@@ -12,6 +13,7 @@ import {
   deleteCollection,
   deleteRow,
   deleteView,
+  detachDocument,
   getCollection,
   getRow,
   getSharing,
@@ -62,6 +64,7 @@ export const viewPatchSchema = safeJson(z.object({ name: labelSchema(60).optiona
 export const rowCreateSchema = safeJson(z.object({ values: valuesObject, afterRowId: uuid.nullable().optional() }).strict());
 export const rowPatchSchema = safeJson(z.object({ values: valuesObject, revision }).strict());
 export const rowUndoSchema = safeJson(z.object({ revision }).strict());
+export const attachSchema = safeJson(z.object({ documentId: uuid, fieldId: z.string().regex(FIELD_ID) }).strict());
 
 export const pathId = (c: Context<AppEnv>, name: string) => uuid.parse(c.req.param(name));
 
@@ -172,6 +175,18 @@ export function registerCollectionRoutes(app: Hono<AppEnv>) {
     const rowId = pathId(c, "rowId");
     const body = await parseJson(c.req.raw, rowUndoSchema);
     return respond(c, () => undoRow(user(c), rowId, body));
+  });
+
+  app.post("/api/collections/rows/:rowId/attachments", async (c) => {
+    const rowId = pathId(c, "rowId");
+    const body = await parseJson(c.req.raw, attachSchema);
+    return respond(c, () => attachDocument(user(c), rowId, body), 201);
+  });
+
+  app.delete("/api/collections/rows/:rowId/attachments/:documentId", (c) => {
+    const rowId = pathId(c, "rowId");
+    const documentId = pathId(c, "documentId");
+    return respond(c, () => detachDocument(user(c), rowId, documentId));
   });
 
   app.delete("/api/collections/rows/:rowId", (c) => {
