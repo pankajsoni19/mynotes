@@ -8,7 +8,9 @@ import {
   createCollectionsHistoryState,
   parentCollectionsRoute,
   readCollectionsHistoryHint,
-  underlyingViewFor
+  readCollectionsSearch,
+  underlyingViewFor,
+  withCollectionsSearch
 } from "../src/collectionsRoute";
 import { closeTopLayer, openLayer, openLayerCount } from "../src/collections/dialogLayers";
 
@@ -73,6 +75,15 @@ test("row entries remember the view they were opened over, bound to user and row
   for (const hint of [{ collectionId, rowId, viewId: 5 }, { collectionId, viewId }, null]) {
     expect(readCollectionsHistoryHint({ "mynotes.collections-navigation": { version: 1, userId: "user-1", hint } }, "user-1")).toBeNull();
   }
+});
+
+test("the row search query rides in the list entry's history state, bound to the user", () => {
+  const state = withCollectionsSearch("user-1", "saffron", { "mynotes.depth": 2 });
+  expect(readCollectionsSearch(state, "user-1")).toBe("saffron");
+  expect(readCollectionsSearch(state, "user-2")).toBe("");
+  expect((state as Record<string, unknown>)["mynotes.depth"]).toBe(2);
+  expect(readCollectionsSearch(withCollectionsSearch("user-1", "  ", state), "user-1")).toBe("");
+  expect(readCollectionsSearch(withCollectionsSearch("user-1", "x".repeat(300), null), "user-1")).toHaveLength(200);
 });
 
 test("Back closes only the top-most open layer (a picker over the row panel), then nothing", () => {

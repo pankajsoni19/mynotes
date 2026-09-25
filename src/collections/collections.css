@@ -32,6 +32,15 @@
 .collection-share-role { margin-top: 10px; }
 .collection-share-role input:disabled + span { opacity: .45; }
 
+.collections-search { position: relative; margin: 0 0 12px; }
+.collections-search svg { position: absolute; top: 50%; left: 14px; width: 16px; transform: translateY(-50%); color: #77777e; }
+.collections-search input { width: 100%; min-height: 44px; border: 1px solid #2c2c31; border-radius: 12px; padding: 0 14px 0 40px; background: #0f0f11; color: #ededee; font-size: .92rem; outline: 0; }
+.collections-search input:focus { border-color: #6b582f; }
+.collections-results { margin-bottom: 18px; }
+.collection-hit { grid-template-columns: minmax(0, 1fr); }
+.collection-snippet { overflow: hidden; color: #9a9aa1; text-overflow: ellipsis; white-space: nowrap; }
+.collections-results mark { border-radius: 3px; background: #4a3d1b; color: #ffe19a; }
+
 /* New collection */
 .collection-new { display: flex; min-height: 0; flex-direction: column; }
 .collection-new-label { margin: 14px 20px 4px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

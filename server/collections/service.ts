@@ -29,6 +29,7 @@ import {
   type RowValues,
   type ValueContext
 } from "./schema";
+import { indexRow, reindexCollection } from "./search";
 import { COLLECTION_TEMPLATES, DEFAULT_FIELDS, templateById } from "./templates";
 
 /**
@@ -274,14 +275,13 @@ export function putSchema(userId: string, collectionId: string, input: { fields:
       const updated = db.query("UPDATE collections SET schema_json = ?, schema_version = schema_version + 1, updated_at = ? WHERE id = ? AND schema_version = ? AND deleted_at IS NULL")
         .run(JSON.stringify(schema), now(), collectionId, input.schemaVersion);
       if (updated.changes !== 1) throw new Error("Concurrent schema update detected");
-      afterSchemaChange(collectionId);
+      // Option labels and the primary field feed the row index, so the collection is reindexed here.
+      reindexCollection(collectionId);
       audit(userId, null, "collection.schema_update", { collectionId, fieldCount: schema.fields.length });
     })();
     return { collection: collectionDetail(collectionId, userId)! };
   });
 }
-
-/** Hooks run in the schema transaction (search reindex arrives with stage D). */
 function afterSchemaChange(_collectionId: string) {}
 
 // ---------------------------------------------------------------------------
@@ -521,9 +521,9 @@ function applyRenumber(renumbered: Positioned[] | null) {
   for (const item of renumbered) statement.run(item.position, item.id);
 }
 
-/** Row writes run these in their transaction (search indexing arrives with stage D). */
+/** Row writes run these in their transaction: the row index is written with the row (D57). */
 export const rowHooks = {
-  afterWrite: (_rowId: string, _collection: CollectionRecord) => undefined as void
+  afterWrite: (rowId: string, collection: CollectionRecord) => indexRow(rowId, schemaOf(collection), collection.schema_version)
 };
 
 export type RowCreateInput = { values: unknown; afterRowId?: string | null };

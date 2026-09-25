@@ -15,6 +15,7 @@ import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
 import { registerSearchRoutes } from "./searchRoutes";
 import { registerTaskRoutes } from "./tasks/routes";
 import { registerCollectionRoutes } from "./collections/routes";
+import { reconcileCollectionSearchIndex } from "./collections/search";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import {
@@ -871,6 +872,11 @@ try {
   await reconcileSearchIndex();
 } catch (error) {
   console.error("Search index reconcile failed", errorClass(error));
+}
+try {
+  reconcileCollectionSearchIndex();
+} catch (error) {
+  console.error("Collection search index reconcile failed", errorClass(error));
 }
 startSweeper();
 

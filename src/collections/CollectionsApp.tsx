@@ -111,6 +111,6 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
         onMissing={onMissing}
         notify={flash}
       />
-      : <CollectionList onOpen={(collection) => go(collectionsRoute(collection.id))} onOpenRow={(collectionId, rowId) => go(collectionsRoute(collectionId, { rowId }))} notify={flash} />}
+      : <CollectionList userId={userId} onOpen={(collection) => go(collectionsRoute(collection.id))} onOpenRow={(collectionId, rowId) => go(collectionsRoute(collectionId, { rowId }))} notify={flash} />}
   </main>;
 }

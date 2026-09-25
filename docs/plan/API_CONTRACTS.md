@@ -264,6 +264,16 @@ type NoteSearchHit = {
 
 Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT`: a note's owner searches their draft when one exists and the published version otherwise; everyone else searches the published version of notes they can read. Binned notes never match; restoring one makes it searchable again, and purging removes its index rows. The index holds the published version and the owner's draft, built from checksum-verified files in the same transaction as each change.
 
+### Collection rows (Wave 11)
+
+`GET /api/search?scope=collections&q=&collection=all|<uuid>&limit=20` uses the same query builder, rate limit, limit bounds, and segments. `folder` is ignored; a `collection` that is neither `all` nor a UUID is 400.
+
+```ts
+type RowSearchHit = { rowId: string; collectionId: string; collectionName: string; title: Segment[]; snippet: Segment[]; updated_at: string };
+```
+
+→ 200 `{ results: RowSearchHit[], truncated }`. The live `readableCollection` rule is applied in the query before `LIMIT` (T60); binned rows and rows of binned collections never match. The title is the primary field; the body is the other text, url, number, and date values and chosen option labels. Note titles and file names are never indexed (T59). Rows are indexed in the transaction that writes them (`collection_row_search` + `collection_row_fts`), a schema change reindexes its collection, and boot reconciles entries whose `source_revision` or `schema_version` is stale.
+
 ## Tasks (Wave 9)
 
 Task Boards ([WAVES_7-9.md](WAVES_7-9.md) §3). Every endpoint is under `/api/tasks`, takes and returns JSON, and inherits the global session, Origin, CSRF, `Content-Type: application/json`, and TOTP rules. Path ids are UUIDs (400 otherwise) and are always joined to a board the caller can read.

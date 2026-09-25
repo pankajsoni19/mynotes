@@ -62,6 +62,23 @@ export function underlyingViewFor(state: unknown, userId: string, route: Collect
   return hint && route.rowId && hint.rowId === route.rowId && hint.collectionId === route.collectionId ? hint.viewId : null;
 }
 
+// The row search on the list page keeps its query in history state (never in the URL), so Back from
+// a result returns to the results (as in Notes search, WAVES_7-9.md §7 change 3).
+const searchKey = "mynotes.collections-search";
+
+export function withCollectionsSearch(userId: string, q: string, currentState: unknown) {
+  const base = currentState && typeof currentState === "object" ? { ...currentState as Record<string, unknown> } : {};
+  if (q.trim()) base[searchKey] = { version: historyVersion, userId, q: q.slice(0, 200) };
+  else delete base[searchKey];
+  return base;
+}
+
+export function readCollectionsSearch(state: unknown, userId: string) {
+  if (!state || typeof state !== "object") return "";
+  const value = (state as Record<string, unknown>)[searchKey] as { version?: unknown; userId?: unknown; q?: unknown } | undefined;
+  return value && value.version === historyVersion && value.userId === userId && typeof value.q === "string" ? value.q.slice(0, 200) : "";
+}
+
 /** Keeps the current entry's hint when a write (a replace or URL normalisation) stays on the same row. */
 export function carriedCollectionsState(userId: string, route: CollectionsRoute, currentState: unknown): CollectionsHistoryState | null {
   const hint = readCollectionsHistoryHint(currentState, userId);

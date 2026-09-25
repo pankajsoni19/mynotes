@@ -3,6 +3,7 @@ import { readableNotePredicate } from "./access";
 import type { AppEnv } from "./auth";
 import { db } from "./db";
 import { buildFtsQuery, HIT_END, HIT_START, MAX_QUERY_LENGTH, toSegments, type Segment } from "./search";
+import { searchCollectionRows } from "./collections/search";
 import { uuid } from "./validation";
 
 /** docs/plan/API_CONTRACTS.md § Search. */
@@ -133,12 +134,18 @@ export function registerSearchRoutes(app: Hono<AppEnv>) {
     const folder = c.req.query("folder") ?? "all";
     const limitParam = c.req.query("limit");
     if (q.length > MAX_QUERY_LENGTH) return c.json(invalid(`q must be at most ${MAX_QUERY_LENGTH} characters`), 400);
-    if (scope !== "notes") return c.json(invalid("scope must be notes"), 400);
-    if (folder !== "all" && folder !== "shared" && !uuid.safeParse(folder).success) return c.json(invalid("folder must be all, shared, or a folder id"), 400);
+    if (scope !== "notes" && scope !== "collections") return c.json(invalid("scope must be notes or collections"), 400);
     const limit = limitParam === undefined ? DEFAULT_LIMIT : Number(limitParam);
     if (!/^\d+$/.test(limitParam ?? "20") || !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
       return c.json(invalid(`limit must be an integer from 1 to ${MAX_LIMIT}`), 400);
     }
+    if (scope === "collections") {
+      // Collection rows (Wave 11): `collection` is all or one collection id; the ACL is in the query.
+      const collection = (c.req.query("collection") ?? "all").toLowerCase();
+      if (collection !== "all" && !uuid.safeParse(collection).success) return c.json(invalid("collection must be all or a collection id"), 400);
+      return c.json(searchCollectionRows(userId, q, { collection, limit }));
+    }
+    if (folder !== "all" && folder !== "shared" && !uuid.safeParse(folder).success) return c.json(invalid("folder must be all, shared, or a folder id"), 400);
     return c.json(searchNotes(userId, q, { folder, limit }));
   });
 }

@@ -241,6 +241,12 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] A binned row is listed for the owner and its deleter (`can_purge` false for the deleter); strangers and non-deleters cannot restore; 409 `PARENT_IN_BIN` while the collection is binned; a deleter who lost edit access gets 404; only the owner purges.
 - [x] Purging a row bins uploads no other row links; the sweeper purges collections (rows and all, binning the last attachment) and rows past retention; Empty Bin purges the owner's collections and rows.
 
+`tests/collectionsSearch.test.ts`:
+
+- [x] Indexed text: the primary field is the title; other values and option labels are the body, controls stripped; note links and files are never indexed.
+- [x] Parity: a reader sees nothing before sharing, their own hits within `limit=2` despite 30 matches in a hidden collection (ACL before LIMIT), option-label hits, and nothing after unsharing; a binned row drops out and returns on restore; `collection=<id>` filters, and a bad id is 400; FTS rows equal mapping rows.
+- [x] Writes, undo, and an option rename (schema change) keep the index in step (`source_revision`, `schema_version`); boot reconcile rebuilds missing and stale entries, removes orphan FTS rows, and is idempotent.
+
 `tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
 
 - [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.

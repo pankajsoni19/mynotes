@@ -116,6 +116,11 @@ export function uploadAttachment(file: File, onProgress: (fraction: number) => v
   });
 }
 
+export type Segment = { text: string; hit: boolean };
+export type RowSearchHit = { rowId: string; collectionId: string; collectionName: string; title: Segment[]; snippet: Segment[]; updated_at: string };
+export const searchRows = (q: string, signal?: AbortSignal, collection = "all") =>
+  api<{ results: RowSearchHit[]; truncated: boolean }>(`/search?scope=collections&collection=${encodeURIComponent(collection)}&q=${encodeURIComponent(q)}&limit=30`, { signal });
+
 export type ShareRole = "viewer" | "editor";
 export type CollectionSharing = { visibility: Visibility; role: ShareRole; users: Array<{ id: string; display_name: string }> };
 export const getSharing = (collectionId: string) => api<CollectionSharing>(`/collections/${collectionId}/sharing`);
