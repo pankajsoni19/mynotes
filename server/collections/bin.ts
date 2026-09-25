@@ -129,12 +129,15 @@ const binnedRowSelect = `SELECT r.id, r.collection_id, c.name AS collection_name
 registerBinProvider("collection_row", {
   list(userId) {
     // The row's title is its primary field (fields[0]); JSON paths come from the stored schema, never from input.
+    // A deleter who is not the owner sees the row only while they can still edit the collection (the
+    // same rule as restore), so a lost share or a viewer role hides its title and collection name.
     const rows = db.query(`SELECT 'collection_row' AS type, r.id,
         COALESCE(json_extract(r.values_json, '$.' || json_extract(c.schema_json, '$.fields[0].id')), '') AS title,
         c.id AS folder_id, c.name AS folder_name, NULL AS size_bytes,
         r.deleted_at, r.purge_after, r.purge_started_at IS NOT NULL AS purging, c.owner_id = $userId AS can_purge
       FROM collection_rows r JOIN collections c ON c.id = r.collection_id
-      WHERE r.deleted_at IS NOT NULL AND c.purge_started_at IS NULL AND (c.owner_id = $userId OR r.deleted_by = $userId)
+      WHERE r.deleted_at IS NOT NULL AND c.purge_started_at IS NULL
+        AND (c.owner_id = $userId OR (r.deleted_by = $userId AND ${editableCollectionPredicate}))
       ORDER BY r.deleted_at DESC, r.id LIMIT 500`).all({ userId }) as Array<Pick<BinItem, "type" | "id" | "title" | "folder_id" | "folder_name" | "size_bytes" | "deleted_at" | "purge_after"> & { purging: number; can_purge: number }>;
     return rows.map((row): BinItem => ({ ...row, title: String(row.title), purging: row.purging === 1, ...providedDefaults, can_purge: row.can_purge === 1 }));
   },

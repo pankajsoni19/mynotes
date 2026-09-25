@@ -92,6 +92,12 @@ describe("collections in the Bin", () => {
     expect((await call(editor, "DELETE", `/rows/${row.id}`)).status).toBe(200);
     await shareCollection(owner, collection.id, "selected", [editor.userId], "viewer");
     expect((await restore(editor, "collection_row", row.id)).status).toBe(404);
+    // ...and no longer sees it (its title or the collection name) in their Bin; the owner still does.
+    expect((await bin(editor)).items.some((item) => item.id === row.id)).toBe(false);
+    expect((await bin(editor, "collection_row")).items).toEqual([]);
+    await shareCollection(owner, collection.id, "private");
+    expect((await bin(editor)).items.some((item) => item.id === row.id)).toBe(false);
+    expect((await bin(owner, "collection_row")).items.some((item) => item.id === row.id)).toBe(true);
 
     expect(await purge(owner, "collection_row", other.id)).toBe(200);
     expect(db.query("SELECT 1 FROM collection_rows WHERE id = ?").get(other.id)).toBeNull();
