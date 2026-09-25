@@ -2,10 +2,24 @@ import { useEffect, useRef } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop } from "../historyDialogs";
 
+type Guard = (poppedState: unknown) => boolean;
+
+// historyDialogs.ts holds one guard at a time. Tasks can nest them (the board's dialogs, the card
+// view's unsaved-description prompt, a confirm inside the card), so active guards form a stack and
+// the newest one is registered; when it goes away the one below it is registered again.
+const stack: Guard[] = [];
+let unregister: (() => void) | null = null;
+
+function registerTop() {
+  unregister?.();
+  const top = stack[stack.length - 1];
+  unregister = top ? registerHistoryDialogGuard(top) : null;
+}
+
 /**
- * D18 for the Tasks views: browser Back or Forward while a dialog or sheet is open only closes it.
- * Dialogs push no history entry, so the browser's move is undone with history.go(). Same contract
- * as FilesApp; the view on screen registers the guard.
+ * D18 for the Tasks views: browser Back or Forward while `open` only runs `close` (closing a
+ * dialog, or asking whether to discard changes). Dialogs push no history entry, so the browser's
+ * move is undone with history.go(). Same contract as FilesApp.
  */
 export function useHistoryDialogGuard(open: boolean, close: () => void) {
   const openRef = useRef(open);
@@ -17,11 +31,9 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
   const wasOpenRef = useRef(false);
   if (open && !wasOpenRef.current) depthRef.current = readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
-  // Registered only while open, so nested views (the card dialog over the board) each guard their
-  // own dialogs and the most recently opened one wins.
   useEffect(() => {
     if (!open) return undefined;
-    return registerHistoryDialogGuard((poppedState) => {
+    const guard: Guard = (poppedState) => {
       if (!openRef.current) return false;
       openRef.current = false;
       closeRef.current();
@@ -30,6 +42,13 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
       if (!direction) return false;
       undoDialogPop(direction);
       return true;
-    });
+    };
+    stack.push(guard);
+    registerTop();
+    return () => {
+      const index = stack.lastIndexOf(guard);
+      if (index >= 0) stack.splice(index, 1);
+      registerTop();
+    };
   }, [open]);
 }

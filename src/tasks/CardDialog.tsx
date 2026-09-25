@@ -6,7 +6,7 @@ import { ApiError } from "../api";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
+import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -76,6 +76,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   const [pendingFiles, setPendingFiles] = useState<UploadedAttachment[]>([]);
   const [unlinking, setUnlinking] = useState<CardAttachment | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [discardPrompt, setDiscardPrompt] = useState(false);
   const cardFileRef = useRef<HTMLInputElement>(null);
   const commentFileRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<CardDetail | null>(null);
@@ -98,20 +99,31 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   }, [cardId, onMissing]);
   useEffect(() => { void load(); }, [load]);
 
-  const closeSubDialog = useCallback(() => { setDeletingComment(null); setUnlinking(null); setConfirmDelete(false); }, []);
-  useHistoryDialogGuard(deletingComment !== null || unlinking !== null || confirmDelete, closeSubDialog);
+  const closeSubDialog = useCallback(() => { setDeletingComment(null); setUnlinking(null); setConfirmDelete(false); setDiscardPrompt(false); }, []);
+  const subDialogOpen = deletingComment !== null || unlinking !== null || confirmDelete || discardPrompt;
+  useHistoryDialogGuard(subDialogOpen, closeSubDialog);
+
+  // An unsaved description: Back, Escape, and Close ask "Discard changes?" first. Back is caught
+  // with the dialog guard (the browser's step is undone), so the card stays open behind the prompt.
+  const dirty = descriptionDirty(editing, draft, card?.description ?? "");
+  const askToDiscard = useCallback(() => setDiscardPrompt(true), []);
+  useHistoryDialogGuard(dirty && !subDialogOpen, askToDiscard);
+  const requestClose = useCallback(() => {
+    if (dirty) setDiscardPrompt(true);
+    else onClose();
+  }, [dirty, onClose]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || deletingComment || unlinking || confirmDelete || editing || editingComment) return;
+      if (event.key !== "Escape" || event.defaultPrevented || subDialogOpen || editingComment) return;
       // A dialog opened over the card (Move to…) handles its own Escape.
       if (window.document.querySelector(".file-dialog, .side-panel")) return;
       event.preventDefault();
-      onClose();
+      requestClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deletingComment, unlinking, confirmDelete, editing, editingComment, onClose]);
+  }, [subDialogOpen, editingComment, requestClose]);
 
   function applyCard(next: CardDetail) {
     setCard(next);
@@ -379,7 +391,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   };
 
   return <>
-    <button className="panel-scrim task-card-scrim" onClick={onClose} aria-label="Close card" tabIndex={-1} />
+    <button className="panel-scrim task-card-scrim" onClick={requestClose} aria-label="Close card" tabIndex={-1} />
     <section className="task-card-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={trapTabKey}>
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
@@ -404,7 +416,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
         </div>
         {card && <button className="icon-button" onClick={() => onMove(card)} aria-haspopup="dialog" aria-label="Move card" title="Move to…"><ArrowRightLeft /></button>}
         {card && <button className="icon-button" onClick={() => setConfirmDelete(true)} aria-haspopup="dialog" aria-label="Delete card" title="Move to the Bin"><Trash2 /></button>}
-        <button className="icon-button" onClick={onClose} aria-label="Close card" title="Close"><X /></button>
+        <button className="icon-button" onClick={requestClose} aria-label="Close card" title="Close"><X /></button>
       </header>
 
       <div className="task-card-dialog-body">
@@ -497,10 +509,17 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
         </>}
       </div>
     </section>
+    {discardPrompt && <ConfirmDialog title="Discard changes?" message="Your changes to the description have not been saved." confirmLabel="Discard" danger onConfirm={() => {
+      setDiscardPrompt(false);
+      setEditing(false);
+      setConflict(null);
+      onClose();
+    }} onCancel={() => setDiscardPrompt(false)} />}
     {confirmDelete && card && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("card", card.title)} confirmLabel="Move to Bin" danger busy={deleteBusy} onConfirm={() => {
       // Close the confirm first: closing the card then steps back in history, and an open
       // dialog's guard would otherwise swallow that step.
       setConfirmDelete(false);
+      setEditing(false);
       onDelete(card.id).catch((reason) => notify(taskErrorMessage(reason, "Could not delete the card")));
     }} onCancel={closeSubDialog} />}
     {unlinking && <ConfirmDialog title="Remove this attachment?" message={unlinkConfirmMessage(unlinking.name, unlinking.linked_by === userId)} confirmLabel="Remove" danger busy={deleteBusy} onConfirm={() => { void unlink(unlinking); }} onCancel={closeSubDialog} />}

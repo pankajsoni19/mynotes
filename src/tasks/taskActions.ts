@@ -61,3 +61,6 @@ export type TaskNotify = (message: string, action?: { label: string; run: () => 
  * title is still the one the edit started from, so another person's rename is never overwritten.
  */
 export const canRetryTitle = (baseTitle: string, serverTitle: string) => baseTitle === serverTitle;
+
+/** Whether leaving the card would lose description edits. */
+export const descriptionDirty = (editing: boolean, draft: string, saved: string) => editing && draft !== saved;
