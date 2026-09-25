@@ -119,6 +119,7 @@ The remaining requested work, in delivery order:
 | D17 | Documents are excluded from MCP in this scope. | MCP is read-only for notes. Exposing binaries needs its own design. |
 | D18 | Browser history entries are pushed only on mobile viewports, for all apps. This is unchanged from Wave 1 and Wave 2. On `popstate`, any open Files or Bin dialog closes before the panel snapshot is restored. | Parity with existing behavior. |
 | D19 | Delivery order is Files backend (W3) → Bin (W4) → Files UI (W5). The Bin ships before the Files UI, so no user ever deletes a file without a working Bin. | Avoids a period where delete copy promises a restore that doesn't exist yet. |
+| D21 | **(Added 2026-09-25, operator request.) Every app, view, and item gets its own URL** (`/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, `/files`, `/files/folder/:id`, `/files/:documentId`, `/bin`). Real history entries are pushed on desktop **and** mobile. This supersedes the mobile-only rule in D18 once Wave 2b ships; the mobile panel hint (`folders`/`list`/`editor`) stays as history state layered over the URL. No new dependency: a small in-house router (`src/router.ts`) over `history.pushState` and `popstate`. | Shareable and bookmarkable links, and later features (Files, Bin, MCP deep links) need addressable items. The production server already serves `dist/index.html` for every non-API path. |
 | D20 | No new runtime dependency except **`busboy`** (exact-pinned, lockfile committed) for streaming multipart parsing. MIME sniffing is an in-house signature table. | Small, well-known parser. A hand-rolled multipart parser is riskier. |
 
 ---
@@ -156,6 +157,25 @@ Gates **G2.1** and **G2.2** are blocking: Wave 2 cannot be released until each h
 7. Update `TODO.md`.
 
 There is no migration in Wave 2, so a pre-deploy backup is recommended but not required.
+
+---
+
+## 4b. Wave 2b: URL routing (v0.2.4, before Wave 3)
+
+Added 2026-09-25 at the operator's request. Delivered as its own wave between the Wave 2 release and the Files backend, so that the Bin app (W4) and Files UI (W5) are built on routes rather than on `/` plus history state.
+
+Scope:
+
+1. `src/router.ts`: pure `parseRoute(pathname) → Route | null` and `formatRoute(route) → string` with unit tests. Routes: `home`, `notes` (`folder: "all" | "shared" | uuid`, `noteId: uuid | null`), `files` (same shape with `documentId`), `bin`. Unknown paths resolve to `home`; malformed ids are ignored, not thrown.
+2. `App.tsx` navigates by pushing a URL (`navigate(route, { replace? })`) and reacts to `popstate` by parsing `location.pathname`. Desktop and mobile both push entries. The mobile panel (`folders`/`notes`/`editor`) remains a history-state hint layered over the URL through the existing helpers, so Wave 1 behaviour (Back between panels) is unchanged on phones.
+3. Leaving a note through any URL change runs `finalizeOpenNote` first; on failure the URL is restored (`replaceState`) and the note stays open with a toast, mirroring the current `leaveNotes` contract.
+4. Deep links: an unauthenticated visit to `/notes/<id>` shows login and then resumes that URL. Ids that are missing or not readable fall back to the containing list (`/notes`), never to an error page.
+5. Server: no change beyond confirming that the production SPA fallback (`serveStatic({ path: "./dist/index.html" })`) covers the new paths and that `/api/*` keeps its JSON 404.
+6. `localStorage` resume of the last folder/note applies only when the URL is `/notes` with no id.
+
+Out of scope: history entries for dialogs (settings, share, history panels), and query-string state.
+
+Gate: router unit tests, all existing tests, desktop + 390 px manual matrix (Home ⇄ each app ⇄ item, Back/Forward, reload on every route, deep link while logged out), then release v0.2.4.
 
 ---
 

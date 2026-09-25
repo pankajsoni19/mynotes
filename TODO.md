@@ -24,7 +24,25 @@ Implementation plan: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [API contract
   - [x] Tests added: `tests/noteFinalization.test.ts`, `tests/appShell.test.tsx`, legacy-entry cases in `tests/appShellNavigation.test.ts`.
   - Accepted low risks (not blocking): the settings scrim closes without the one-time MCP key confirmation (pre-existing in Notes, now also on Home); a Back/Forward pressed during an in-flight leave can leave history one entry out of step; clicking the brand button while a note switch is already running does nothing; Sign out from the Notes sidebar still cancels a pending autosave (pre-existing).
 - [x] Fix confirmed findings (`7a8319d`, `611bf88`, `963f9aa`)
-- [ ] Bump to 0.2.3 in every version location, run all gates, push and deploy, smoke test
+- [x] Second independent review of `cb59b6a..bd754d4` plus recovery QA (2026-09-25, fresh session)
+  - [x] **Medium, fixed** in `921fe28`: Tiptap `setEditable` emits an update by default, so mounting or locking the editor reported normalised Markdown as a user change. Reproduced on an isolated instance: a note authored through the API with `* item` bullets gained a draft on open and an unwanted version on leaving for Home. Fixed with `emitUpdate=false`; re-verified (version 1 and no draft after open + leave; a typed edit still publishes version 2).
+  - [x] **Medium/low, fixed** in `921fe28`: Publish, Discard, Delete, and the mobile actions menu are disabled while the leave finalization runs.
+  - [x] Verified on isolated desktop QA: leaving Notes publishes a new note (v1), publishes an edit of a published note (v2), and removes a blank new note; Settings opens and closes from Home and the Files placeholder; Sign out is present on Home, Files, and Bin.
+  - [x] Verified at 390 px: Home → Notes folders → list → editor, then Back unwinds editor → list → folders → Home (publishing the edit on the way, v3), Forward re-enters Notes, Back from Home leaves to the previous history entry; Files placeholder pushes one entry and Back returns Home. No loops.
+  - Accepted low risks (not blocking, recorded by the reviewer): a failed reload after a successful publish shows a "could not save" toast; a lasting 409 blocks leaving Notes until reload (same as note switches); history can drift by one entry during a concurrent leave/restore.
+  - Gates: `bun run typecheck`, `bun test` (25 pass), `git diff --check`, tracked-file secret/personal-data scan, `docker build --target verify`, `docker compose build` all pass at `921fe28`.
+- [ ] Bump to 0.2.3 in every version location, push and deploy, smoke test
+
+### Wave 2b — URL routing for every app, view, and item (target v0.2.4)
+
+Operator request (2026-09-25): every module, page, note, file, and view gets its own URL instead of everything living at `/`. Ships before the Bin and Files UIs so they are built on real routes. See DEVELOPMENT_PLAN §4b.
+
+- [ ] Route table and client router (`src/router.ts`): `/` Home, `/notes`, `/notes/folder/:folderId`, `/notes/shared`, `/notes/:noteId`, `/files`, `/files/folder/:folderId`, `/files/:documentId`, `/bin`; unknown paths fall back to Home
+- [ ] Desktop and mobile both push real history entries; the mobile-only `mynotes.mobile-navigation` and `mynotes.app-shell` state layers become a panel hint on top of the URL
+- [ ] Deep links resume the right note/folder; inaccessible ids fall back gracefully; login preserves the requested URL
+- [ ] Leaving a note by URL change still runs `finalizeOpenNote`; failures keep the URL on the note
+- [ ] Server: SPA fallback already serves `dist/index.html` for every non-API path in production; confirm `/api/*` 404s are unchanged and Vite dev fallback works
+- [ ] Tests: router parse/format round trips, history helper compatibility, and a manual desktop + 390 px matrix; release v0.2.4
 
 ### Wave 3 — Secure documents backend (released with Wave 4 as v0.3.0)
 
