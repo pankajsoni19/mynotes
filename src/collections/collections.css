@@ -172,7 +172,10 @@
 .row-field .cell-input, .row-field .cell-select, .row-field .cell-picker { min-height: 44px; border-color: #2c2c31; background: #0b0b0d; font-size: .92rem; }
 .row-field textarea.cell-input { padding: 10px; line-height: 1.45; resize: vertical; }
 .row-field .cell-readonly { min-height: 0; padding: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.row-field .cell-checkbox { width: 24px; height: 24px; margin: 10px 0; }
+.row-field .cell-checkbox { width: 24px; height: 24px; margin: 0; }
+.cell-checkbox-target { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; min-width: 44px; padding-right: 12px; justify-self: start; cursor: pointer; color: #b9b9bf; font-size: .92rem; }
+label.row-field-label { cursor: pointer; }
+.cell-error { display: block; margin-top: 4px; font-size: .74rem; white-space: normal; }
 .row-field .cell-picker { white-space: normal; }
 .row-panel-meta { margin: 6px 0 0; color: #6f6f76; font-size: .74rem; }
 

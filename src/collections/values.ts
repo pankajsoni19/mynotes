@@ -199,3 +199,13 @@ export function defaultFilterValue(field: FieldDefinition, op: string): string |
   if (field.type === "multi_select" || (field.type === "select" && op === "in")) return [];
   return field.type === "number" ? undefined : "";
 }
+
+/**
+ * Enter in a quick-add input submits its form explicitly (as the Tasks quick-add does), so it works
+ * with every input method and keyboard handler around the view.
+ */
+export function submitOnEnter(event: { key: string; nativeEvent: { isComposing?: boolean }; preventDefault: () => void; currentTarget: { form: HTMLFormElement | null } }) {
+  if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+  event.preventDefault();
+  event.currentTarget.form?.requestSubmit();
+}

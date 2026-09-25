@@ -9,7 +9,7 @@ import { CollectionList } from "../src/collections/CollectionList";
 import type { CollectionRow, FieldDefinition } from "../src/collections/collectionsApi";
 import { fromDrafts, moveDraft, newFieldDraft, toDrafts, typeChoices, validateDrafts } from "../src/collections/fieldDrafts";
 import { RowPanel } from "../src/collections/RowPanel";
-import { allowedTypeChanges, cardFields, defaultFilterValue, displayValue, filterReady, parseInput, validateCollectionName } from "../src/collections/values";
+import { allowedTypeChanges, cardFields, defaultFilterValue, displayValue, filterReady, parseInput, submitOnEnter, validateCollectionName } from "../src/collections/values";
 
 const fields: FieldDefinition[] = [
   { id: "f_aaaaaaaa", name: "Name", type: "text", required: true },
@@ -96,6 +96,34 @@ test("the row panel labels one editor per field and shows View only to viewers",
   expect([...editor.matchAll(/class="row-field-label"/g)]).toHaveLength(fields.length);
   expect(editor).toContain('aria-labelledby="row-field-f_aaaaaaaa"');
   expect(editor).toContain("<textarea");
+});
+
+test("the row panel's checkbox sits in a 44 px label that its field name also toggles", () => {
+  const collection = { id: "c", name: "Things", icon: "table", owner_id: "o", owner_name: "O", is_owner: 1 as const, role: "owner" as const, visibility: "private" as const, share_role: "viewer" as const, row_count: 1, field_count: fields.length, template_id: null, created_at: "", updated_at: "", fields, schema_version: 1 };
+  const props = { collection, rowId: "r", listed: row({ f_aaaaaaaa: "Mug", f_hhhhhhhh: true }), conflict: null, save: async () => null, onAcceptConflict: () => undefined, onActions: () => undefined, onClose: () => undefined, onMissing: () => undefined };
+  const editor = renderToStaticMarkup(<RowPanel {...props} editable />);
+  expect(editor).toContain('<label class="row-field-label" id="row-field-f_hhhhhhhh" for="row-field-f_hhhhhhhh-input">');
+  expect(editor).toContain('<label class="cell-checkbox-target"><input type="checkbox" id="row-field-f_hhhhhhhh-input"');
+  // The table keeps its bare checkbox.
+  const cell = renderToStaticMarkup(<CellEditor field={fields[7]!} row={row({ f_hhhhhhhh: true })} editable onSave={async () => true} onOpenPicker={() => undefined} />);
+  expect(cell).not.toContain("cell-checkbox-target");
+});
+
+test("Enter in the New row input submits its form, except while composing", () => {
+  let submitted = 0;
+  const form = { requestSubmit: () => { submitted += 1; } } as unknown as HTMLFormElement;
+  const press = (key: string, isComposing = false) => {
+    let prevented = false;
+    submitOnEnter({ key, nativeEvent: { isComposing }, preventDefault: () => { prevented = true; }, currentTarget: { form } });
+    return prevented;
+  };
+  expect(press("Enter")).toBe(true);
+  expect(press("Enter", true)).toBe(false);
+  expect(press("a")).toBe(false);
+  expect(submitted).toBe(1);
+  const markup = renderToStaticMarkup(<CollectionCards fields={fields} rows={[]} editable conflicts={{}} onOpenRow={() => undefined} onRowActions={() => undefined} onReloadRow={() => undefined} onAdd={async () => true} />);
+  expect(markup).toContain('<form class="collection-quick-add collection-card-add">');
+  expect(markup).not.toMatch(/New row Name"[^>]*disabled/);
 });
 
 test("filters are sent only when complete", () => {
