@@ -15,6 +15,7 @@ MyNotes is a private, self-hosted home for the notes you cannot afford to lose: 
 - **Write without friction.** A responsive, macOS Notes-inspired workspace pairs folders and note cards with an Outline-like editor, slash commands, Markdown formatting, checklists, links, quotes, and code blocks.
 - **Keep every meaningful change.** Edits begin as drafts, save automatically, publish as immutable versions, and can be compared or restored when you need to understand how a note evolved.
 - **Share deliberately.** Notes start private. Share an individual note or a folder with trusted accounts or everyone signed in, with note-level permissions taking precedence.
+- **Recover mistakes.** Deleted notes and files wait in a shared Bin for 30 days, with their history and sharing intact, before they are removed for good.
 - **Connect trusted AI clients.** An authenticated Streamable HTTP MCP server lets tools search and read your published notes through revocable, one-time-visible API keys. Drafts and write operations stay out of reach.
 - **Own portable data.** Content remains readable Markdown on disk; SQLite holds the metadata, identities, sessions, folders, sharing rules, and version index.
 - **Protect sensitive knowledge.** Argon2id passwords, cookie and CSRF protections, optional or required Google Authenticator-compatible two-factor authentication, encrypted TOTP data, and a hardened non-root Docker container provide a practical local security baseline.
@@ -63,13 +64,15 @@ Docker is published on port `2026` for LAN access. Prefer Tailscale Serve with H
 
 ## Development
 
-The host does not need Bun when using Docker:
+Development runs on the host with Bun (Compose only defines the production `app` service):
 
 ```sh
-docker compose --profile dev up app-dev
+bun install
+DATA_DIR=./data APP_ORIGIN=http://localhost:5173 COOKIE_SECURE=false ALLOW_REGISTRATION=true bun run dev
+bun run dev:client
 ```
 
-The dev server is available at `http://localhost:2026` and mounts the source tree.
+`bun run dev` serves the API on port `2026` (stop the Docker container first, since it uses the same port) and restarts on changes. `bun run dev:client` starts Vite at `http://localhost:5173` and proxies `/api` to it. `./data` is ignored by Git. Run `bun run typecheck` and `bun test` before committing.
 
 ## Storage
 
@@ -77,11 +80,15 @@ The container reads and writes `/data`, mapped by Compose to:
 
 ```text
 /srv/mynotes
-├── mynotes.sqlite
-└── notes/<note-id>/
-    ├── current.md
-    ├── draft.md
-    └── versions/000001.md
+├── mynotes.sqlite (+ -wal, -shm)
+├── notes/<note-id>/
+│   ├── current.md
+│   ├── draft.md
+│   └── versions/000001.md
+├── documents/
+│   ├── objects/<document-id>
+│   └── .staging/<document-id>.part
+└── backup/                        weekly archives (host backup script only)
 ```
 
 Markdown files are never exposed as static files; authenticated API handlers enforce note access before reading them.
@@ -105,6 +112,18 @@ File names live only in SQLite and are never used as paths. Uploads are streamed
 | `MIN_FREE_DISK_BYTES` | `1073741824` (1 GiB) | Uploads are refused when they would leave less free space than this on the data volume. |
 
 Only one MyNotes instance may use a data directory at a time: upload slots, per-document locks, and the sweeper live in the process.
+
+## Bin
+
+Deleting a note or a file moves it to the shared **Bin** (Home → Bin) for exactly **30 days**. The retention period is fixed and not configurable.
+
+- **What is kept:** everything. A binned note keeps its draft, published versions, and files on disk; a binned file keeps its bytes. Sharing rows are kept too, so restoring an item gives its previous audience access again. While an item is in the Bin nobody can read it, including its owner outside the Bin and MCP clients.
+- **Restore** puts an item back in its original folder, or in your Default folder if the original was deleted. The confirmation toast names the folder and says when the item is shared again (a Default folder shared with others widens its audience).
+- **Blank notes** that were never published skip the Bin and are removed at once, so the Bin does not fill with empty drafts. Any note with content, published or not, goes to the Bin, including an unpublished note whose draft you discard.
+- **Delete forever** and **Empty Bin** remove items permanently. After 30 days an hourly sweeper (which also runs at boot) deletes expired items for you, in batches of 100 per run. A purge first marks the item so it can never be read or restored again, then removes its files, then its database row; if the process stops half way, the next sweep finishes the job.
+- Documents in the Bin still count towards `USER_STORAGE_QUOTA_BYTES` until they are deleted forever.
+
+**Upgrading from 0.3.0 or earlier:** notes deleted before this version (which the old interface described as permanent) reappear in the Bin for 30 days after the upgrade, then are deleted automatically. Never-published notes deleted before the upgrade are removed on the first sweep. Empty the Bin, or delete those items forever, if you do not want to keep them for that window.
 
 ## Database migrations
 
@@ -139,6 +158,6 @@ MYNOTES_DATA_DIR=/srv/mynotes-restored docker compose up -d --build
 
 The archive contains the data directory contents at its root, so no path rearrangement is required.
 
-Archives include `documents/objects` but not `documents/.staging`. With documents stored, archive size and the time the app is stopped grow with the stored files (gzip gains little on already-compressed media), five archives multiply that disk use, and a purged document can survive in older archives for up to about five weeks.
+Archives include `documents/objects` but not `documents/.staging`. With documents stored, archive size and the time the app is stopped grow with the stored files (gzip gains little on already-compressed media), and five archives multiply that disk use. Items in the Bin are included in backups like live ones, and a note or file you delete forever (or that expires from the Bin) can survive in older archives for up to about five weeks, until those archives rotate out.
 
 The backup intentionally does not include `.env`. Store `.env` securely alongside your backup process—especially `TOTP_ENCRYPTION_KEY`, which is required to use restored TOTP enrollments.
