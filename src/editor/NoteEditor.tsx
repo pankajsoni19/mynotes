@@ -38,7 +38,8 @@ export function NoteEditor({ markdown, editable, onChange }: Props) {
 
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(editable);
+    // Never emit an update here: Tiptap would report its normalised Markdown as a user change.
+    editor.setEditable(editable, false);
   }, [editable, editor]);
 
   useEffect(() => {

@@ -28,3 +28,10 @@ test("an explicit app section wins over an inherited Notes snapshot", () => {
   expect(resolveAppHistorySection(home, "user-1")).toBe("home");
   expect(resolveAppHistorySection(notes, "user-1")).toBe("notes");
 });
+
+test("a Notes entry pushed on top of a Home entry resolves back to Notes", () => {
+  const home = createAppHistoryState("user-1", "home", null);
+  const notes = createAppHistoryState("user-1", "notes", createHistoryState("user-1", { panel: "folders", folder: "all", noteId: null }, home));
+  expect(resolveAppHistorySection(notes, "user-1")).toBe("notes");
+  expect(resolveAppHistorySection(home, "user-1")).toBe("home");
+});

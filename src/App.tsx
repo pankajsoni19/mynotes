@@ -1192,7 +1192,7 @@ export function App() {
               <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? <em>Draft</em> : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
               {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
             </button>
-            {item.is_owner === 1 && <button className="note-delete-button" onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
+            {item.is_owner === 1 && <button className="note-delete-button" disabled={leavingNotes} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
           </article>)}
           {!visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? "Try another search." : selectedFolder === "shared" ? "Notes shared with you will appear here." : "Create a note and start writing."}</p>{!query && selectedFolder !== "shared" && <button onClick={createNote}>New note</button>}</div>}
         </div>
@@ -1206,15 +1206,15 @@ export function App() {
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               {note.isOwner && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
-              {note.isOwner && note.hasDraft && <button className="text-action" onClick={discard}>Discard</button>}
-              {hasPublishableDelta && <button className="publish-button" onClick={() => { void publish(); }}>Publish version</button>}
-              <button className="icon-button mobile-more" onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
+              {note.isOwner && note.hasDraft && <button className="text-action" disabled={leavingNotes} onClick={discard}>Discard</button>}
+              {hasPublishableDelta && <button className="publish-button" disabled={leavingNotes} onClick={() => { void publish(); }}>Publish version</button>}
+              <button className="icon-button mobile-more" disabled={leavingNotes} onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
             </div>
             {mobileActions && <div className="mobile-actions-menu">
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
               {note.isOwner && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
-              {note.isOwner && note.hasDraft && <button onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
-              {hasPublishableDelta && <button onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
+              {note.isOwner && note.hasDraft && <button disabled={leavingNotes} onClick={() => { setMobileActions(false); discard(); }}><X />Discard draft</button>}
+              {hasPublishableDelta && <button disabled={leavingNotes} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
             </div>}
           </header>
           <article className="document-shell">

@@ -24,3 +24,9 @@ test("Files and Bin placeholders offer the same account actions", () => {
     expect(markup).toContain(">Sign out</span>");
   }
 });
+
+test("placeholders keep a Home button and an Open Notes shortcut", () => {
+  const markup = renderToStaticMarkup(<AppPlaceholder {...account} section="files" onHome={() => undefined} onOpenNotes={() => undefined} />);
+  expect(markup).toContain("Home");
+  expect(markup).toContain("Open Notes");
+});
