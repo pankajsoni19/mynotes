@@ -11,16 +11,12 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "notes:read", label: "Read notes", help: "Published notes you can open, note search, and folders." },
   { scope: "notes:write-draft", label: "Write drafts", help: "Create notes and edit drafts of your own notes; never publishes.", implies: "notes:read" },
   { scope: "files:read", label: "Read files", help: "File details and the text of text files up to 1 MiB." },
-  { scope: "tasks:read", label: "Read tasks", help: "Boards and cards you can see." },
-  { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards; never deletes.", implies: "tasks:read" }
+  { scope: "tasks:read", label: "Read tasks", help: "Read boards and cards" },
+  { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards: never deletes", implies: "tasks:read" }
 ];
 
-/**
- * The permissions offered when creating a key. The task scopes are accepted
- * by the API but have no tools until the MCP task tools land, so they are not
- * offered yet; add them here with those tools.
- */
-export const OFFERED_MCP_PERMISSIONS = MCP_PERMISSIONS.filter((permission) => !permission.scope.startsWith("tasks:"));
+/** The permissions offered when creating a key: every scope that has tools. */
+export const OFFERED_MCP_PERMISSIONS = MCP_PERMISSIONS;
 
 export const DEFAULT_KEY_SCOPES: readonly McpScope[] = ["notes:read"];
 

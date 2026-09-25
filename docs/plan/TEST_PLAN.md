@@ -234,7 +234,7 @@ Manual QA (desktop and 390×844, two users):
 Unit tests (no server):
 
 - [x] `tests/mcpScopes.test.ts`: normalizing adds implied reads, dedupes, and orders; write implies read and never the reverse; stored JSON reads leniently (null, bad JSON, objects, unknown values) and never grants more than is stored.
-- [x] `tests/mcpPermissions.test.ts`: the Settings list mirrors the server scopes and implications; the Write drafts help says "never publishes"; checking a write scope checks and locks its read scope; unchecking it unlocks but keeps the read; only the notes and files scopes are offered until the task tools land.
+- [x] `tests/mcpPermissions.test.ts`: the Settings list mirrors the server scopes and implications; the Write drafts help says "never publishes"; checking a write scope checks and locks its read scope; unchecking it unlocks but keeps the read; every scope is offered, and the Write tasks help says "never deletes".
 - [x] `tests/noteFinalization.test.ts`: leaving a note auto-publishes only a draft edited in this session; a waiting draft (MCP or another session) is not published; the Publish button is offered for any owner delta; the "Draft by <key>" label.
 
 `tests/migrations.test.ts`:
@@ -249,7 +249,7 @@ Unit tests (no server):
 - [x] Draft writes: `create_note` makes a draft-only note (no version) in Default or an owned folder, never a folder shared by someone else; the draft is indexed for the owner's search but not for MCP search; `draftMcpKeyName`/`draft_mcp_key_name` show the key and `draft_mcp_key_id` is never returned; publish and discard clear it. `update_note_draft` appends and replaces, keeps the version count, audits `mcp.note_draft_update`, and returns `DRAFT_CHANGED` with `currentRevision` for a stale revision and after a human autosave. Shared (readable but not owned), binned, and missing notes return the same `NOT_FOUND`.
 - [x] Documents: text is read as strict UTF-8; PDFs, binaries, a bad UTF-8 tail past the sniffed prefix (`NOT_TEXT`), and files over 1 MiB (`TOO_LARGE`) are refused; metadata carries no hash, path, or upload key; sharing, the Bin, and `purpose <> 'file'` documents follow the Files list predicate.
 - [x] Limits: 120 calls a minute, then `RATE_LIMITED` with `retryAfterSeconds`, per key; 30 writes a minute (refused CAS attempts count); a refused call charges no bucket; the daily `create_note` bucket resets after a day; per-user limits (60 writes and 1000 calls a minute, 400 `create_note` a day) span all keys of a user and leave other users unaffected.
-- [ ] Tasks: the W9 role matrix for the task tools (lands with `feat: add MCP task tools`).
+- [x] Tasks (`tests/mcpTasks.test.ts`): task tools appear only for task scopes (write implies read, no delete, column, or sharing tools) and handlers reject other keys; a stranger and a non-member of a private board get `NOT_FOUND` identical to a missing id for every tool; IDOR through another board's column is `NOT_FOUND`; a member creates, moves, and comments, and the rows land as that user; `task.card_create`, `task.card_move`, and `task.comment_create` carry `{via: "mcp", keyId}` and HTTP writes do not; removing the member applies at once; plain-text descriptions, attachment names only, and the column filter; `STALE_POSITION` with the current order for create and move; route validation (`INVALID`); `TaskError` mapping (`CARD_CHANGED`, `OWNER_ONLY`, `LIMIT_REACHED`); the daily `task_write` bucket blocks writes but not reads.
 
 Manual QA:
 

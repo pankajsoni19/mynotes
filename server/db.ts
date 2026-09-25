@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { config } from "./config";
 import { runMigrations } from "./migrations";
@@ -94,8 +95,21 @@ export function ensureDefaultFolder(userId: string) {
 const usersMissingDefault = db.query("SELECT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM folders f WHERE f.owner_id = u.id AND f.is_default = 1)").all() as Array<{ id: string }>;
 for (const user of usersMissingDefault) ensureDefaultFolder(user.id);
 
+/**
+ * Extra audit metadata for everything a call does, such as `{via: "mcp", keyId}`
+ * when an MCP tool runs a module's service. Services keep writing their usual
+ * events; the context is merged into each one.
+ */
+const auditContext = new AsyncLocalStorage<Record<string, unknown>>();
+
+export function withAuditContext<T>(extra: Record<string, unknown>, operation: () => T): T {
+  return auditContext.run(extra, operation);
+}
+
 export function audit(actorId: string | null, noteId: string | null, eventType: string, metadata?: unknown) {
+  const extra = auditContext.getStore();
+  const merged = extra ? { ...(metadata as Record<string, unknown> | undefined), ...extra } : metadata;
   db.query(
     "INSERT INTO audit_log (id, actor_id, note_id, event_type, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(crypto.randomUUID(), actorId, noteId, eventType, metadata ? JSON.stringify(metadata) : null, now());
+  ).run(crypto.randomUUID(), actorId, noteId, eventType, merged ? JSON.stringify(merged) : null, now());
 }

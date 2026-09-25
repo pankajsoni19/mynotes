@@ -421,7 +421,14 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `get_document_metadata` | files:read | `{ documentId }` | `{ document: DocumentSummary }` under the Files list predicate |
 | `read_document_text` | files:read | `{ documentId }` | `{ id, name, mimeType, sizeBytes, text }` for `preview_kind = 'text'` up to 1 MiB, strict UTF-8 |
 
-Task tools (`list_boards`, `list_cards`, `get_card` under tasks:read; `create_card`, `move_card`, `comment_on_card` under tasks:write) land after Task Boards ([WAVES_7-9.md](WAVES_7-9.md) §4.2).
+| `list_boards` | tasks:read | `{}` | `{ boards }` as `GET /api/tasks/boards` |
+| `list_cards` | tasks:read | `{ boardId, columnId? }` | `{ board: { id, name, owner_name, is_owner }, columns: { id, name, position }[], cards: { id, column_id, column_name, position, title, description_preview, revision, creator_name, comment_count, attachments: string[], updated_at }[] }`. `description_preview` is plain text, at most 280 characters; `attachments` are file names only. A `columnId` not on the board is `NOT_FOUND` |
+| `get_card` | tasks:read | `{ cardId }` | `{ card: { id, board_id, board_name, column_id, column_name, title, description, revision, creator_name, created_at, updated_at }, comments (latest 50), hasMoreComments, attachments: string[] }`. `description` is plain text |
+| `create_card` | tasks:write | `{ boardId, columnId, title, description?, afterCardId? }` | `{ card: { id, board_id, column_id, title, revision } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards` |
+| `move_card` | tasks:write | `{ cardId, columnId, afterCardId? }` | `{ card: { id, column_id, position } }`. Same board only; `afterCardId` omitted = bottom, `null` = top |
+| `comment_on_card` | tasks:write | `{ cardId, body }` | `{ comment: { id, card_id, created_at } }`, authored by the key's owner |
+
+Task tools call the `/api/tasks` services as the key's owner, so the W9 rules apply unchanged: any board reader (owner, member, everyone on an `all_users` board) may create, move, and comment; a board the user cannot read, and every id on it, is `NOT_FOUND`, identical to a missing id. There are no tools that edit, delete, or bin cards, or that change columns, sharing, or boards. A stale `afterCardId` returns `STALE_POSITION` with `columnId` and the column's current `order`; `LIMIT_REACHED` passes through the board caps. Task writes are audited through the usual `task.card_create`, `task.card_move`, and `task.comment_create` events with `{ via: "mcp", keyId }` added.
 
 Errors are tool results with `isError: true` whose text is `{ error, code, ...details }`:
 
@@ -430,13 +437,15 @@ Errors are tool results with `isError: true` whose text is `{ error, code, ...de
 | `NOT_FOUND` | Missing, not readable, not owned (draft tools), binned, or not a Files document; all look the same |
 | `INVALID` | Arguments fail validation (the transport may also reject them before the tool runs) |
 | `SCOPE_REQUIRED` | The key lacks the tool's scope, or was revoked meanwhile |
-| `RATE_LIMITED` | Per key: 120 calls and 30 writes per minute, 200 `create_note` per day (500 task writes per day reserved); per user across keys: 1000 calls and 60 writes per minute, 400 `create_note` per day. Includes `retryAfterSeconds` |
+| `RATE_LIMITED` | Per key: 120 calls and 30 writes per minute, 200 `create_note` and 500 task writes per day; per user across keys: 1000 calls and 60 writes per minute, 400 `create_note` and 1000 task writes per day. Includes `retryAfterSeconds` |
 | `DRAFT_CHANGED` | `baseRevision` is not the current draft revision. Includes `currentRevision` |
+| `STALE_POSITION` | `afterCardId` is not a live card in the target column. Includes `columnId` and the column's current `order` |
+| `LIMIT_REACHED` | A board cap (cards per board, comments per card) |
 | `NOT_TEXT` | Not a text file, or not valid UTF-8 |
 | `TOO_LARGE` | Text file over 1 MiB, or Markdown over `MAX_MARKDOWN_BYTES` |
 | `INTERNAL` | Integrity or server failure |
 
-Writes are audited as `mcp.note_create` and `mcp.note_draft_update` (`{ via: "mcp", keyId, mode?, revision? }`); reads are not audited.
+Note writes are audited as `mcp.note_create` and `mcp.note_draft_update` (`{ via: "mcp", keyId, mode?, revision? }`), task writes as their usual `task.*` events with `{ via: "mcp", keyId }` added; reads are not audited.
 
 ### Note fields for MCP drafts
 

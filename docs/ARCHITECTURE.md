@@ -202,7 +202,9 @@ Tools reuse the HTTP services as the key's owner:
 
 An MCP write sets `notes.draft_mcp_key_id`; publish, discard, and restore-to-draft clear it. The editor shows "Draft by <key>" from `draftMcpKeyName`, and the list from `draft_mcp_key_name`. Leaving a note auto-publishes only when the user typed in it this session and no MCP key wrote the draft (`shouldAutoPublish` in `src/noteFinalization.ts`), so an agent's draft always waits for an explicit Publish. Publish sends the draft revision the editor last saw; a newer revision (409 `DRAFT_CHANGED`) reloads the note instead of publishing it.
 
-To add a module's tools (the task tools next, then the later scopes in WAVES_10-12 D70): add its scope pair to `MCP_SCOPES` and `IMPLIED_READ_SCOPE` if it is new, write specs with `defineTool`, and spread them into `mcpToolSpecs` at the marked extension point. Writes set `write: true` (and a `dailyBucket` when capped), audit `{via: "mcp", keyId}`, use revision CAS, and never delete.
+Task tools live in `server/tasks/mcpTools.ts`. They validate with the `/api/tasks` route schemas, call the same service functions as the routes, map `TaskError` to `{error, code}` (`NOT_FOUND`, `STALE_POSITION`, `LIMIT_REACHED`, …), and run inside `withAuditContext({via: "mcp", keyId})` (`server/db.ts`), which merges those fields into the services' usual `task.*` audit events.
+
+To add a module's tools (the later scopes in WAVES_10-12 D70): add its scope pair to `MCP_SCOPES` and `IMPLIED_READ_SCOPE` if it is new, write specs with `defineTool` from `server/mcpToolKit.ts` in the module, and spread them into `mcpToolSpecs`. Writes set `write: true` (and a `dailyBucket` when capped), audit `{via: "mcp", keyId}`, use revision CAS, and never delete.
 
 ## UI
 
