@@ -215,6 +215,17 @@ Clients treat a 404 on a **retry** as success.
 
 `DELETE /api/bin` with body `{}` → 200 `{ ok: true, purged: number, pending: number }`. Items are processed in batches. Failures stay marked for the sweeper.
 
+### Collections and rows (Wave 11, D68)
+
+`:type` also accepts `collection` and `collection_row`, and `GET /api/bin?type=` takes either. Collection items come from a provider registered by `server/collections/bin.ts`; `BinItem` gains an optional `can_purge`.
+
+| Type | Listed for | `title` / `folder_*` | Restore | Delete forever |
+| --- | --- | --- | --- | --- |
+| `collection` | its owner | name / null | owner; 409 `LIMIT_REACHED` at 100 live collections | owner |
+| `collection_row` | the collection owner and whoever binned it | primary field / the collection's id and name | owner or deleter while they can still edit the collection (404 otherwise); 409 `PARENT_IN_BIN` while the collection is binned; 409 `LIMIT_REACHED` at 10,000 live rows | collection owner only (`can_purge: false` for others) |
+
+A purge is one transaction (nothing lives outside SQLite) and cascades to rows, members, views, links, and search rows; documents it leaves unlinked with `purpose = 'collection_attachment'` move to the uploader's Bin. The sweeper purges collections and rows past `purge_after`, and Empty Bin purges the owner's collections and the binned rows of collections they own. Audit: `collection.restore`, `collection.purge { collectionId, reason, rowCount, binnedDocuments }`, `collection.row_restore`, `collection.row_purge`.
+
 > **Implementation notes (shipped in v0.3.1):**
 > - Purge audit events (`note.purge`, `document.purge`) record `reason`: `user`, `blank`, `retention`, or `resumed`. `resumed` marks a purge the sweeper finished after an interruption; the original reason is not stored.
 > - The sweeper's Bin step has two separate budgets per table and run: up to 50 interrupted purges resumed, then up to 100 items past `purge_after`. Retention is re-checked under the lock, so an item restored and deleted again mid-run is not purged. Remaining items wait for the next hourly run.

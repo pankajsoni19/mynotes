@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppHome } from "../src/AppShell";
+import { binFolderLabel, binItemLabel, filterBinItems } from "../src/bin/binFormat";
+import type { BinItem } from "../src/types";
 import { CellEditor } from "../src/collections/cells";
 import { CollectionCards } from "../src/collections/CollectionCards";
 import { CollectionList } from "../src/collections/CollectionList";
@@ -113,6 +115,22 @@ test("filters are sent only when complete", () => {
   expect(defaultFilterValue(fields[7]!, "is")).toBe(true);
   expect(defaultFilterValue(fields[3]!, "in")).toEqual([]);
   expect(defaultFilterValue(fields[0]!, "empty")).toBeUndefined();
+});
+
+test("the Bin labels collections and rows and filters them together", () => {
+  const base = { folder_id: null, size_bytes: null, deleted_at: "2026-01-01T00:00:00.000Z", purge_after: "2026-01-31T00:00:00.000Z", purging: false };
+  const items: BinItem[] = [
+    { ...base, type: "collection", id: "c", title: "Recipes", folder_name: null },
+    { ...base, type: "collection_row", id: "r", title: "", folder_name: "Recipes", can_purge: false },
+    { ...base, type: "note", id: "n", title: "Note", folder_name: null }
+  ];
+  expect(filterBinItems(items, "collections").map((item) => item.id)).toEqual(["c", "r"]);
+  expect(filterBinItems(items, "note").map((item) => item.id)).toEqual(["n"]);
+  expect(binFolderLabel(items[0]!)).toBe("Collections");
+  expect(binFolderLabel(items[1]!)).toBe("Recipes");
+  expect(binFolderLabel(items[2]!)).toBe("Default");
+  expect(binItemLabel(items[1]!)).toBe("Untitled row");
+  expect(binItemLabel({ type: "collection", title: " " })).toBe("Untitled collection");
 });
 
 test("field drafts mirror the schema rules and build the PUT body", () => {

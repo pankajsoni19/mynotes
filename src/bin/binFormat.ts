@@ -1,7 +1,7 @@
 // Pure Bin display helpers. No DOM or network access, so they are unit tested directly.
 import type { BinItem, Visibility } from "../types";
 
-export type BinFilter = "all" | "note" | "document";
+export type BinFilter = "all" | "note" | "document" | "collections";
 
 const DAY_MS = 86_400_000;
 
@@ -18,17 +18,27 @@ export function purgeCountdownLabel(purgeAfter: string, nowMs = Date.now()) {
   return days === 1 ? "Deletes in 1 day" : `Deletes in ${days} days`;
 }
 
-/** Where a restore will put the item: its original folder, or Default when that folder is gone. */
-export function binFolderLabel(item: Pick<BinItem, "folder_name">) {
+/**
+ * Where a restore will put the item: its original folder, or Default when that folder is gone. A
+ * collection returns to Collections; a row returns to its collection (Wave 11).
+ */
+export function binFolderLabel(item: Pick<BinItem, "folder_name"> & { type?: BinItem["type"] }) {
+  if (item.type === "collection") return "Collections";
+  if (item.type === "collection_row") return item.folder_name ?? "its collection";
   return item.folder_name ?? "Default";
 }
 
+export const isCollectionItem = (item: Pick<BinItem, "type">) => item.type === "collection" || item.type === "collection_row";
+
 export function filterBinItems(items: BinItem[], filter: BinFilter) {
-  return filter === "all" ? items : items.filter((item) => item.type === filter);
+  if (filter === "all") return items;
+  if (filter === "collections") return items.filter(isCollectionItem);
+  return items.filter((item) => item.type === filter);
 }
 
 export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
-  return item.title.trim() || (item.type === "note" ? "Untitled note" : "Untitled file");
+  const fallback = { note: "Untitled note", document: "Untitled file", collection: "Untitled collection", collection_row: "Untitled row" }[item.type];
+  return item.title.trim() || fallback;
 }
 
 export function deleteForeverConfirm(title: string) {

@@ -5,7 +5,12 @@ import { storage, withResourceLock } from "./storage";
 /** Bin retention is a constant (D11), not configurable. */
 export const BIN_RETENTION_MS = 30 * 86_400_000;
 
-export type BinType = "note" | "document";
+/** Types stored in the core tables below. */
+export type CoreBinType = "note" | "document";
+/** Types whose module registers a BinProvider (Collections, WAVES_10-12.md D68). */
+export type ProvidedBinType = "collection" | "collection_row";
+export type BinType = CoreBinType | ProvidedBinType;
+export const BIN_TYPES: readonly BinType[] = ["note", "document", "collection", "collection_row"];
 /**
  * Why an item was purged, as recorded in the audit metadata. "resumed" marks a
  * purge the sweeper finished after it was interrupted: the original reason
@@ -20,13 +25,14 @@ export const purgeAfterFrom = (deletedAt: Date) => new Date(deletedAt.getTime() 
 
 const tables = { note: "notes", document: "documents" } as const;
 export const lockKey = (type: BinType, id: string) => `${type}:${id}`;
+const isProvided = (type: BinType): type is ProvidedBinType => type === "collection" || type === "collection_row";
 
 /**
  * Byte removal for each type. ENOENT counts as success in both. Kept on an
  * object so tests can inject a failure without touching the filesystem.
  */
 export const binStorage = {
-  removeBytes: (type: BinType, id: string) => type === "note" ? storage.removeNote(id) : removeObject(id)
+  removeBytes: (type: CoreBinType, id: string) => type === "note" ? storage.removeNote(id) : removeObject(id)
 };
 
 /**
@@ -38,7 +44,7 @@ export const binStorage = {
  * 3. Delete the row in a transaction (cascades clear versions and shares) and
  *    audit the purge with the id in metadata, since audit_log.note_id is nulled.
  */
-export async function purgeLocked(type: BinType, id: string, options: { reason: PurgeReason; actorId: string | null; ownerId?: string; dueBy?: string }): Promise<PurgeOutcome> {
+export async function purgeLocked(type: CoreBinType, id: string, options: { reason: PurgeReason; actorId: string | null; ownerId?: string; dueBy?: string }): Promise<PurgeOutcome> {
   const table = tables[type];
   const startedAt = new Date().toISOString();
   // Sweeper purges re-check retention under the lock: an item restored and deleted
@@ -70,6 +76,7 @@ export async function purgeLocked(type: BinType, id: string, options: { reason: 
  * from a missing one (404). A row already being purged is finished here.
  */
 export function purgeOwnedItem(type: BinType, id: string, ownerId: string): Promise<PurgeOutcome | "live"> {
+  if (isProvided(type)) return requireProvider(type).purge(id, ownerId);
   return withResourceLock(lockKey(type, id), async () => {
     const row = db.query(`SELECT deleted_at FROM ${tables[type]} WHERE id = ? AND owner_id = ?`).get(id, ownerId) as { deleted_at: string | null } | null;
     if (!row) return "not_found";
@@ -83,7 +90,35 @@ export type RestoreOutcome =
   | { status: "restored"; folderId: string | null; folderName: string | null; visibility: Visibility }
   | { status: "already_restored"; folderId: string | null; folderName: string | null }
   | { status: "purging" }
-  | { status: "not_found" };
+  | { status: "not_found" }
+  /** A child (a row) whose parent (its collection) is itself in the Bin: restore the parent first. */
+  | { status: "parent_in_bin" }
+  | { status: "limit_reached"; message: string };
+
+/**
+ * A module's Bin items (D68): listed with the caller's items, restored and
+ * purged through /api/bin, swept by retention, and emptied with the Bin. The
+ * provider enforces its own ownership rules and locks.
+ */
+export type BinProvider = {
+  list: (userId: string) => BinItem[];
+  restore: (id: string, userId: string) => Promise<RestoreOutcome>;
+  purge: (id: string, userId: string) => Promise<PurgeOutcome | "live">;
+  sweep: (cutoff: string) => Promise<BinSweepCounts>;
+  empty: (userId: string) => Promise<BinSweepCounts>;
+};
+const providers = new Map<ProvidedBinType, BinProvider>();
+
+/** Registered by server/collections/bin.ts when the module loads. */
+export function registerBinProvider(type: ProvidedBinType, provider: BinProvider) {
+  providers.set(type, provider);
+}
+
+function requireProvider(type: ProvidedBinType) {
+  const provider = providers.get(type);
+  if (!provider) throw new Error(`No Bin provider for ${type}`);
+  return provider;
+}
 
 type RestorableRow = { folder_id: string | null; visibility: Visibility; sharing_override: number; deleted_at: string | null; purge_started_at: string | null };
 type FolderRow = { id: string; name: string; visibility: Visibility };
@@ -100,6 +135,7 @@ const ownedFolder = (folderId: string | null, ownerId: string) => folderId === n
  * audience regains access; the response reports the effective visibility.
  */
 export function restoreItem(type: BinType, id: string, ownerId: string): Promise<RestoreOutcome> {
+  if (isProvided(type)) return requireProvider(type).restore(id, ownerId);
   const table = tables[type];
   return withResourceLock(lockKey(type, id), async () => {
     const row = db.query(`SELECT folder_id, visibility, sharing_override, deleted_at, purge_started_at FROM ${table} WHERE id = ? AND owner_id = ?`)
@@ -164,6 +200,12 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
       else if (outcome === "pending") counts.pending += 1;
     }
   }
+  // Provided types (collections, rows) purge due items in their own order: parents first.
+  for (const provider of providers.values()) {
+    const provided = await provider.sweep(cutoff);
+    counts.purged += provided.purged;
+    counts.pending += provided.pending;
+  }
   return counts;
 }
 
@@ -177,6 +219,8 @@ export type BinItem = {
   deleted_at: string;
   purge_after: string;
   purging: boolean;
+  /** Provided types only: false when the caller may restore but not delete forever (a row someone else owns, D41). */
+  can_purge?: boolean;
 };
 
 export const BIN_LIST_LIMIT = 500;
@@ -191,11 +235,16 @@ export function listBin(ownerId: string, type: BinType | null) {
       d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging
     FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
     WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
+  if (type !== null && isProvided(type)) return requireProvider(type).list(ownerId).slice(0, BIN_LIST_LIMIT);
   // The Files filter shows Files items only; attachments appear under All (WAVES_7-9.md §7).
   const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'` : `${notes} UNION ALL ${documents}`;
   const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
     .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging"> & { purging: number }>;
-  return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1 }));
+  const core = rows.map((row): BinItem => ({ ...row, purging: row.purging === 1 }));
+  if (type !== null) return core;
+  const all = [...core, ...[...providers.values()].flatMap((provider) => provider.list(ownerId))];
+  all.sort((left, right) => left.deleted_at < right.deleted_at ? 1 : left.deleted_at > right.deleted_at ? -1 : left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+  return all.slice(0, BIN_LIST_LIMIT);
 }
 
 /**
@@ -217,6 +266,11 @@ export async function emptyBin(ownerId: string) {
       }
       after = batch[batch.length - 1]!.id;
     }
+  }
+  for (const provider of providers.values()) {
+    const provided = await provider.empty(ownerId);
+    counts.purged += provided.purged;
+    counts.pending += provided.pending;
   }
   return counts;
 }

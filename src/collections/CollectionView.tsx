@@ -8,6 +8,7 @@ import { collectionsRoute } from "../collectionsRoute";
 import type { GoOptions } from "./CollectionsApp";
 import {
   createView,
+  deleteCollection,
   deleteRow,
   deleteView,
   errorCode,
@@ -58,6 +59,7 @@ type Dialog =
   | { kind: "saveView"; value: SortFilter }
   | { kind: "renameView" }
   | { kind: "deleteView" }
+  | { kind: "deleteCollection" }
   | { kind: "picker"; rowId: string; fieldId: string }
   | { kind: "actions"; rowId: string };
 
@@ -150,6 +152,17 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       notify(`Updated “${saved.name}”`);
     } catch (reason) {
       notify(errorMessage(reason, "Could not update the view"));
+    }
+  }
+
+  async function removeCollection() {
+    setDialog(null);
+    try {
+      await deleteCollection(collectionId);
+      notify("Collection moved to the Bin");
+      go(collectionsRoute(), { replace: true });
+    } catch (reason) {
+      notify(errorMessage(reason, "Could not delete the collection"));
     }
   }
 
@@ -246,6 +259,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         <button className="icon-button" onClick={() => setDialog({ kind: "rename" })} aria-haspopup="dialog" aria-label="Rename collection" title="Rename"><Pencil /></button>
         <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "fields" })} aria-haspopup="dialog"><Columns3 /><span>Fields</span></button>
         <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "share" })} aria-haspopup="dialog" aria-label="Share collection"><Share2 /><span>Share</span></button>
+        <button className="icon-button" onClick={() => setDialog({ kind: "deleteCollection" })} aria-haspopup="dialog" aria-label="Move collection to the Bin" title="Move to Bin"><Trash2 /></button>
       </span>}
     </header>
 
@@ -341,6 +355,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         setDialog(null);
       }} />}
     {dialog?.kind === "deleteView" && view && <ConfirmDialog title="Delete view" message={`Delete the view “${view.name}”? Rows are not affected.`} confirmLabel="Delete view" danger onCancel={closeDialog} onConfirm={() => { void removeCurrentView(); }} />}
+    {dialog?.kind === "deleteCollection" && <ConfirmDialog title="Move to Bin" message={`Move “${collection.name}” and its ${rowCountLabel(collection.row_count)} to the Bin? Everyone it is shared with loses access. You can restore it for 30 days.`} confirmLabel="Move to Bin" danger onCancel={closeDialog} onConfirm={() => { void removeCollection(); }} />}
     {dialog?.kind === "picker" && dialogRow && pickerField && <OptionPicker field={pickerField} selected={Array.isArray(dialogRow.values[pickerField.id]) ? dialogRow.values[pickerField.id] as string[] : []}
       onClose={closeDialog} onSave={async (ids) => (await rows.save(dialogRow.id, { [pickerField.id]: ids.length ? ids : null })) !== null} />}
     {dialog?.kind === "actions" && dialogRow && <RowActionSheet row={dialogRow} editable={editable} onClose={closeDialog}

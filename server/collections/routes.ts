@@ -2,6 +2,8 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
+// Registers collections and rows as Bin providers (server/bin.ts).
+import "./bin";
 import { QUERY_LIMITS, querySpecShape } from "./query";
 import { FIELD_ID, labelSchema, safeJson, type FieldInput } from "./schema";
 import {

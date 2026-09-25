@@ -56,7 +56,7 @@ export type DocumentSummary = {
   updated_at: string;
 };
 export type BinItem = {
-  type: "note" | "document";
+  type: "note" | "document" | "collection" | "collection_row";
   id: string;
   title: string;
   folder_id: string | null;
@@ -65,5 +65,7 @@ export type BinItem = {
   deleted_at: string;
   purge_after: string;
   purging: boolean;
+  /** Collections: false when the caller may restore a row but not delete it forever. */
+  can_purge?: boolean;
 };
 export type BinRestoreResult = { ok: true; folderId: string | null; folderName: string | null; visibility?: Visibility; alreadyRestored?: true };

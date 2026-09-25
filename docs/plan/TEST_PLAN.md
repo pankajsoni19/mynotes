@@ -235,6 +235,12 @@ Waves land on separate branches, so the migration assertion is tolerant: `[1..9]
 - [x] Rules: viewers 403 `READ_ONLY`; strangers 404; only the caller's own live `file`/`collection_attachment` documents and only file fields; `ALREADY_ATTACHED`; `NOT_LINKER` for editors removing someone else's link, the owner may; 20 per row.
 - [x] IDOR across rows and collections; `restricted` note links never disclose titles or grant access.
 
+`tests/collectionsBin.test.ts`:
+
+- [x] A binned collection is unreadable to members, listed (and filterable) for its owner only, restored with a CAS (sharing kept), 409 `NOT_IN_BIN` when live, and 409 `LIMIT_REACHED` past 100 live collections; unknown Bin types are 400.
+- [x] A binned row is listed for the owner and its deleter (`can_purge` false for the deleter); strangers and non-deleters cannot restore; 409 `PARENT_IN_BIN` while the collection is binned; a deleter who lost edit access gets 404; only the owner purges.
+- [x] Purging a row bins uploads no other row links; the sweeper purges collections (rows and all, binning the last attachment) and rows past retention; Empty Bin purges the owner's collections and rows.
+
 `tests/collectionsRoute.test.ts` and `tests/collectionsApp.test.tsx` (no server):
 
 - [x] `/collections`, `/collections/:c`, `/collections/:c/view/:v`, and `/collections/:c/row/:r` round-trip and normalise; malformed pieces degrade to the collection or the list; formatting never escapes the origin; Back steps row → view → collection → list → Home (history when this visit pushed entries, a replace or Home at depth 0); the row entry's view hint is bound to user and row; the dialog guard closes only the top-most layer and leaves popstate alone when nothing is open.

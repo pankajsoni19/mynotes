@@ -1,10 +1,10 @@
 import type { Context, Hono } from "hono";
 import type { AppEnv } from "./auth";
-import { emptyBin, listBin, purgeOwnedItem, restoreItem, type BinType } from "./bin";
+import { BIN_TYPES, emptyBin, listBin, purgeOwnedItem, restoreItem, type BinType } from "./bin";
 import { uuid } from "./validation";
 
-const isBinType = (value: string | undefined): value is BinType => value === "note" || value === "document";
-const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: ["type must be note or document"] }, 400);
+const isBinType = (value: string | undefined): value is BinType => BIN_TYPES.includes(value as BinType);
+const invalidType = (c: Context<AppEnv>) => c.json({ error: "Invalid request", details: [`type must be one of ${BIN_TYPES.join(", ")}`] }, 400);
 const notFound = (c: Context<AppEnv>) => c.json({ error: "Item not found" }, 404);
 
 /** Bin API (docs/plan/API_CONTRACTS.md § Bin). Every endpoint is scoped to the caller's own items. */
@@ -25,6 +25,10 @@ export function registerBinRoutes(app: Hono<AppEnv>) {
         return c.json({ ok: true, folderId: outcome.folderId, folderName: outcome.folderName, visibility: outcome.visibility });
       case "already_restored":
         return c.json({ ok: true, alreadyRestored: true, folderId: outcome.folderId, folderName: outcome.folderName });
+      case "parent_in_bin":
+        return c.json({ error: "Restore its collection from the Bin first", code: "PARENT_IN_BIN" }, 409);
+      case "limit_reached":
+        return c.json({ error: outcome.message, code: "LIMIT_REACHED" }, 409);
       case "purging":
         return c.json({ error: "This item is being permanently deleted", code: "PURGING" }, 409);
       default:
