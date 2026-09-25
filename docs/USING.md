@@ -4,7 +4,7 @@ This guide covers the apps a signed-in user sees. For installing, configuring, b
 
 ## Home and URLs
 
-Signing in lands on **Home**, which links to Notes, Files, and Tasks, with the Bin next to Settings and Sign out at the top (a small count shows when it holds items); each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
+Signing in lands on **Home**, which is also **Today** (below): a row of app links (Notes, Files, Tasks), with the Bin next to Settings and Sign out at the top (a small count shows when it holds items); each app's Home control (the app name at the top of its sidebar) leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
 
 | URL | View |
 | --- | --- |
@@ -23,6 +23,23 @@ Signing in lands on **Home**, which links to Notes, Files, and Tasks, with the B
 | `/bin` | Bin |
 
 Unknown paths open Home. A link to a note or file you cannot read (or that is missing or in the Bin) falls back to the list with a message. On phones, Back steps from the editor or preview to the list, then to the folders, then to Home, without leaving the site; in Tasks it steps from a card to its board, to the board list, then to Home. With a dialog or sheet open, Back only closes it.
+
+## Today
+
+Home shows what needs you today, in sections of up to ten items each. Every item is a link; Back from it returns to Today. **View all** opens the owning app.
+
+| Section | Shows |
+| --- | --- |
+| Due soon | Cards due within seven days, or overdue, on boards you can open, except in done columns |
+| My tasks | Open cards assigned to you or added by you |
+| Recent notes | Notes you can read, newest change first (someone else's note appears once it is published, with its published title) |
+| Unpublished drafts | Your notes whose draft differs from what is published |
+| Drafts from agents | Your notes with a draft written through an MCP key |
+| Recent files | Files you can see in Files |
+| Leaving the Bin soon | Your Bin items that are deleted forever within three days |
+| Storage | How much of your storage quota is used, and how much of it is in the Bin |
+
+**Refresh** reloads everything; coming back to the tab after a minute reloads too. If one section fails, it shows **Retry** and the others still load. **Customize** shows or hides sections; the choice is kept in this browser for your account only. On phones Today is a single column.
 
 ## Notes
 
@@ -81,6 +98,7 @@ Tasks holds kanban boards. A new board starts with **To do**, **Doing**, and **D
 - **The card view.** Click a card (or press Enter on it) to open it; it has its own URL, and Back closes it. The title saves when you leave the field. The description is Markdown, edited with **Edit** and saved with **Save**; if someone else saved first, choose **Reload** (take theirs) or **Copy my text**. Comments load 50 at a time; you can edit or delete your own, and the board owner can delete any.
 - **Attachments.** **Attach** adds files to the card, and the comment box can attach files to a comment. Images pasted or dropped into the description become attachments and show inline. Attachments never appear in Files; they are readable by the people who can open the board, and only while the card and your access last. Removing an attachment from its last card moves it to your Bin.
 - **Phones.** A board shows one column at a time: swipe sideways, or tap a column in the strip above it, which also shows how many cards each column holds. Back returns to the same column.
+- **Due dates and assignees.** The card view has **Due** (a date; **Clear** removes it) and **Assignee** (anyone who can open the board). Cards show a due chip: red when overdue, amber for today and the next days. The board owner can mark any column as a **done column** from its ⋯ menu (**Done** is one from the start); cards there count as finished and are left out of Today.
 - **Limits.** 50 boards per owner, 20 columns and 1000 cards per board, 500 comments and 50 attachments per card, 10 attachments per comment.
 
 ## Bin
@@ -112,7 +130,8 @@ Permissions are fixed when the key is created; to change them, create a new key 
 | Write drafts | `notes:write-draft` | Create notes and change the drafts of **your own** notes (`create_note`, `get_note_draft`, `update_note_draft`). It never publishes, never creates a version, and cannot delete, move, or share anything. Includes Read notes. |
 | Read files | `files:read` | List files and folders, see file details, and read text files (such as `.txt`, `.md`, `.csv`, `.json`) up to 1 MiB. Images, PDFs, and other binary files cannot be read. |
 | Read tasks | `tasks:read` | List the boards you can open, their columns and cards, and read a card with its comments (`list_boards`, `list_cards`, `get_card`). Descriptions come back as plain text and attachments as file names only. |
-| Write tasks | `tasks:write` | Create cards, move them within a board, and comment on them as you (`create_card`, `move_card`, `comment_on_card`), on any board you can use. It never edits or deletes a card and cannot change columns, sharing, or boards. Includes Read tasks. |
+| Write tasks | `tasks:write` | Create cards (optionally with a due date), move them within a board, and comment on them as you (`create_card`, `move_card`, `comment_on_card`), on any board you can use. It never edits or deletes a card and cannot change columns, sharing, or boards. Includes Read tasks. |
+| Read Today | `today:read` | Read the Today summary (`get_today`, titles only). Each section also needs the matching permission above: notes sections need Read notes, Recent files needs Read files, and task sections need Read tasks; Bin and storage need only Read Today. |
 
 Keys created before this release keep exactly what they could do before: Read notes. Card changes made through a key appear on the board like your own and are recorded in the audit log with the key's id.
 

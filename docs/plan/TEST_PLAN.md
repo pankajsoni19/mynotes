@@ -1,4 +1,4 @@
-# Test plan: Home, Files, Bin, Search, Tasks, and MCP scopes
+# Test plan: Home, Files, Bin, Search, Tasks, MCP scopes, and Today
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every automated case below must exist and pass before its wave's exit gate.
 
@@ -256,6 +256,24 @@ Manual QA:
 - [ ] Settings → MCP server at desktop and 390×844: Permissions rows are at least 44 px, checking Write drafts checks and locks Read notes, the key list shows scope chips, and the copied config still works.
 - [ ] With a `notes:write-draft` key, call `create_note`, then open Nook: the list and editor show "Draft by <key>"; switching notes without typing leaves it unpublished; Publish version removes the badge.
 - [ ] A notes-only client (for example the MCP Inspector) lists only the read tools.
+
+## Wave 10: Today
+
+- [x] `tests/migrations.test.ts`: 011 on a v0.6.0-shaped database adds `due_on` (GLOB CHECK), `assignee_id` (SET NULL when the user goes), and `is_done` (backfilled for Done, done, and DONE, not "Done soon"), plus the three indexes; ids 1–11 present whether or not 012/013 are registered
+- [x] `tests/tasksDates.test.ts`: new boards mark Done as done; readers set and clear `dueOn` and `assigneeId` under revision CAS; real-date validation (Feb 29, month 13, shapes, range); `ASSIGNEE_NOT_MEMBER` for strangers, unknown and disabled users, and anyone once the board is `all_users`; the readers list; `isDone` owner only; the due chip helper
+- [x] `tests/mcpTasks.test.ts`: `create_card` takes and validates `dueOn`; `get_card` returns `due_on`
+- [x] `tests/today.test.ts`: section shape and order, no `upcoming`; tz validation (including a browser alias), `sections=`, 401, and 30/min per user; UTC+14 and UTC−12 midnights for the date and overdue flags; a failing provider errors only its section, an unavailable module is absent, and a long page is cut to ten; parity with the Notes, Files, Tasks, and Bin lists across sharing, unsharing, Bin, member removal, done columns, and drafts (draft titles never reach recipients); agent drafts; storage and `binSoon`; 10 + `more`
+- [x] `tests/mcpToday.test.ts`: `get_today` only with `today:read` (handler re-check); sections filtered per module scope, write implies read (T74); titles only; tz validation; not audited
+- [x] `tests/appShell.test.tsx`: Today keeps the account row and greeting; launcher links Notes, Files, Tasks without the Bin; busy skeletons labelled by headings; row copy and routes; storage text; hidden sections per user survive bad storage; one column with 44 px targets at phone widths
+- [x] `tests/tasksApp.test.tsx`: due chip and assignee on cards, none in a done column
+
+Manual QA (desktop and 390×844):
+
+- [ ] Today loads with skeletons, then every section; Refresh announces through the live region; a failed section shows Retry
+- [ ] Each item link opens its app at the item (note in the editor, card over its board, file preview, Bin); Back returns to Today, and Back on Today at depth 0 leaves the site
+- [ ] Customize sections hides and shows sections, survives a reload, and Back while it is open only closes it
+- [ ] The card view sets and clears Due and Assignee; the chip turns red when overdue; marking a column done removes its cards from Today
+- [ ] axe (or the browser accessibility tree) shows labelled sections, headings, links, and the storage meter
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

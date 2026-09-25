@@ -1,4 +1,4 @@
-# API contracts: Files, content, Bin, Search, Tasks, and MCP
+# API contracts: Files, content, Bin, Search, Tasks, Today, and MCP
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every endpoint lives under `/api` and inherits the existing middleware:
 
@@ -312,7 +312,7 @@ Same rules as folder sharing: the owner cannot be a recipient (400), `selected` 
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `POST /boards/:b/columns { name, afterColumnId? }` | owner | 201 `{ column, columns }`. Omitted `afterColumnId` appends; `null` puts the column first. | 400, 403, 404 (board, or an anchor not on this board), 409 `LIMIT_REACHED` |
-| `PATCH /columns/:c { name?, afterColumnId? }` | owner | 200 `{ column, columns, renormalized? }` | 400 (neither field, or after itself), 403, 404 |
+| `PATCH /columns/:c { name?, afterColumnId?, isDone? }` | owner | 200 `{ column, columns, renormalized? }`. Columns carry `is_done: 0 \| 1` (migration 011); a new board's Done column starts at 1. | 400 (no field, or after itself), 403, 404 |
 | `DELETE /columns/:c` | owner | 200 `{ ok: true, columns }` | 403, 404, 409 `COLUMN_NOT_EMPTY` (with `cardCount`) or `LAST_COLUMN` |
 
 Binned cards do not block deleting their column; they keep `column_id = NULL` and restore to the first column.
@@ -326,6 +326,8 @@ type CardSummary = {
   has_description: 0 | 1;            // the board view never carries descriptions
   revision: number;                  // starts at 1, +1 on every title/description edit
   created_by: string | null; creator_name: string | null;
+  due_on: string | null;             // YYYY-MM-DD (migration 011)
+  assignee_id: string | null; assignee_name: string | null;
   comment_count: number; attachment_count: number;
   created_at: string; updated_at: string;
 };
@@ -334,9 +336,10 @@ type CardDetail = CardSummary & { description: string };  // Markdown, at most 6
 
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
-| `POST /boards/:b/cards { columnId, title, description?, afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. | 400, 404 (board, or a column not on this board), 409 `STALE_POSITION` or `LIMIT_REACHED` |
+| `GET /boards/:b/readers` | reader | 200 `{ users: { id, displayName }[] }`: everyone who can open the board (owner plus members, or every enabled user on an `all_users` board), at most 200, for the assignee picker | 404 |
+| `POST /boards/:b/cards { columnId, title, description?, dueOn?, afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. | 400, 404 (board, or a column not on this board), 409 `STALE_POSITION` or `LIMIT_REACHED` |
 | `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: CardAttachment[] }`: the newest 50 comments in chronological order, and every live attachment | 404 |
-| `PATCH /cards/:k { title?, description?, revision }` | reader | 200 `{ card }` with `revision + 1` | 400, 404, 409 `{ code: "CARD_CHANGED", card }` (the current card) when `revision` is not the stored one |
+| `PATCH /cards/:k { title?, description?, dueOn?, assigneeId?, revision }` | reader | 200 `{ card }` with `revision + 1`. `dueOn` is a real date `YYYY-MM-DD` (1900–2999) or `null`; `assigneeId` a user or `null`; omitted fields are unchanged | 400 (including `ASSIGNEE_NOT_MEMBER` when the assignee is disabled or cannot read the board), 404, 409 `{ code: "CARD_CHANGED", card }` (the current card) when `revision` is not the stored one |
 | `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION` |
 | `DELETE /cards/:k` | reader | 200 `{ ok: true, purgeAfter }`: the card moves to the Bin and keeps its column | 404 |
 
@@ -387,6 +390,23 @@ type CardAttachment = {
 - Inline images in a description use the same content URL, `/api/files/:id/content?disposition=inline`.
 
 **Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.card_create`, `task.card_update`, `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
+## Today (Wave 10)
+
+`GET /api/today?tz=<IANA>&sections=<a,b>?` returns 200 `{ generatedAt, date, sections }`. `date` is today in `tz`. `sections` maps each installed section, in order, to `{ items, more, href }` (at most ten items; `more` when there are more; `href` is the owning app's list). A section whose provider failed is `{ items: [], more: false, href, error }`; the others still load. Sections of modules that are not installed are absent. There are no counts, bodies, or caching. `sections=` limits the response to those names (the per-section Retry).
+
+| Section | Items |
+| --- | --- |
+| `tasksDue` | `{ cardId, boardId, boardName, title, dueOn, overdue }`: live cards on readable boards, not in a done column, `due_on ≤ date + 7`, soonest first |
+| `tasksMine` | as `tasksDue` plus `reason: "assigned" \| "created"`: open cards assigned to or created by the caller |
+| `notesRecent` | `{ id, title, owner_name, is_owner, updated_at }`: readable notes; others' notes only once published, with the published title and time |
+| `drafts` | `{ id, title, updated_at, neverPublished }`: the caller's notes whose draft differs from the published version, not written by an MCP key |
+| `agentDrafts` | `{ id, title, keyName, updated_at }`: the caller's drafts written by an MCP key |
+| `files` | `{ id, name, mime_type, preview_kind, size_bytes, owner_name, is_owner, updated_at }`: the Files list, newest first |
+| `binSoon` | `{ type, id, title, purge_after }`: the caller's Bin items purged within three days |
+| `storage` | one item `{ usedBytes, binnedBytes, quotaBytes }`: bytes counted against the quota (live and binned), the binned part, and the quota (`null` = unlimited) |
+
+Errors: 400 when `tz` is not an IANA zone `Intl` accepts (list entries and the aliases browsers still report) or `sections` names an unknown section; 429 `RATE_LIMITED` with `Retry-After` above 30 requests a minute per user.
+
 ## MCP keys and tools (Wave 8)
 
 ### Keys
@@ -426,9 +446,10 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `list_boards` | tasks:read | `{}` | `{ boards }` as `GET /api/tasks/boards` |
 | `list_cards` | tasks:read | `{ boardId, columnId? }` | `{ board: { id, name, owner_name, is_owner }, columns: { id, name, position }[], cards: { id, column_id, column_name, position, title, description_preview, revision, creator_name, comment_count, attachments: string[], updated_at }[] }`. `description_preview` is plain text, at most 280 characters; `attachments` are file names only. A `columnId` not on the board is `NOT_FOUND` |
 | `get_card` | tasks:read | `{ cardId }` | `{ card: { id, board_id, board_name, column_id, column_name, title, description, revision, creator_name, created_at, updated_at }, comments (latest 50), hasMoreComments, attachments: string[] }`. `description` is plain text |
-| `create_card` | tasks:write | `{ boardId, columnId, title, description?, afterCardId? }` | `{ card: { id, board_id, column_id, title, revision } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards` |
+| `create_card` | tasks:write | `{ boardId, columnId, title, description?, dueOn?, afterCardId? }` | `{ card: { id, board_id, column_id, title, due_on, revision } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards` |
 | `move_card` | tasks:write | `{ cardId, columnId, afterCardId? }` | `{ card: { id, column_id, position } }`. Same board only; `afterCardId` omitted = bottom, `null` = top |
 | `comment_on_card` | tasks:write | `{ cardId, body }` | `{ comment: { id, card_id, created_at } }`, authored by the key's owner |
+| `get_today` | today:read | `{ tz? }` (IANA, default UTC) | The `GET /api/today` body, titles and ids only, with only the sections the key may read: task sections need `tasks:read`, `notesRecent`/`drafts`/`agentDrafts` need `notes:read`, `files` needs `files:read`; `binSoon` and `storage` need `today:read` alone. `list_cards` and `get_card` also return `due_on` and `assignee_name` |
 
 Task tools call the `/api/tasks` services as the key's owner, so the W9 rules apply unchanged: any board reader (owner, member, everyone on an `all_users` board) may create, move, and comment; a board the user cannot read, and every id on it, is `NOT_FOUND`, identical to a missing id. There are no tools that edit, delete, or bin cards, or that change columns, sharing, or boards. A stale `afterCardId` returns `STALE_POSITION` with `columnId` and the column's current `order`; `LIMIT_REACHED` passes through the board caps. Task writes are audited through the usual `task.card_create`, `task.card_move`, and `task.comment_create` events with `{ via: "mcp", keyId }` added.
 

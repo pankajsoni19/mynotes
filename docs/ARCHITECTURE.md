@@ -168,6 +168,14 @@ Kanban boards (WAVES_7-9.md §3 with the director's §7 review), migration 009: 
 
 **Audit.** `task.board_*`, `task.column_*`, `task.card_*`, `task.comment_*`, and `task.attachment_*` events record ids only.
 
+## Today
+
+`GET /api/today?tz=` (server/today/) composes **sections** from providers registered with `registerTodayProvider(name, {href, load, mcpScope?, available?})`. A provider may only call its module's own predicate or list function: `readableBoardPredicate` for tasks (live cards, columns with `is_done = 0`), `readableNotePredicate` for notes, `recentListableDocuments` (the Files list predicate, `purpose = 'file'`) for files, `listBin` for the Bin, and `storageUsage` (the quota's own sum) for storage. Each fetches at most 11 rows and returns ten plus `more`, ids and titles only. Providers run independently; one that throws errors only its own section. A module that is not installed registers nothing, so its section is absent (Calendar's `upcoming` and Collections add theirs from their own code). Requests are limited to 30 a minute per user in memory, and `tz` must be an IANA zone known to `Intl` (aliases browsers still report, such as `Asia/Calcutta`, are accepted as sent). Recipients see a shared note only once it is published, with its published title and time.
+
+The client (src/today/) renders `TodayHome` at `/` in place of the old card grid. Its launcher list (`TODAY_APPS`) and section copy (`TODAY_SECTIONS`) are plain lists later modules extend. Links push their route with `mynotes.depth + 1` through `navigate`, so Back returns to Today; the Customize dialog pushes nothing and registers the history dialog guard. Hidden sections are stored in `localStorage` under `mynotes:today:hidden:<userId>`.
+
+Migration 011 adds `cards.due_on` (a `YYYY-MM-DD` GLOB CHECK; real dates are checked by the API), `cards.assignee_id` (a board reader, checked by the API), and `board_columns.is_done` (backfilled for columns named Done), plus indexes for due, assignee, and creator lookups.
+
 ## API surface
 
 All `/api` routes except health, about, login, and register need a session. Mutations need an allowed `Origin`, `X-CSRF-Token`, and a JSON body (except the upload). With `TOTP_POLICY=required`, a user without a factor can reach only logout and the TOTP status, setup, and enable routes.
