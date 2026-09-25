@@ -65,7 +65,9 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [ ] List, metadata, rename, move, sharing (folder inheritance + document precedence), and soft-delete APIs
 - [ ] Authenticated content responses with strict headers, single Range, If-Range, and HEAD
 - [ ] Upload env vars, Compose pass-through, and backup staging exclusion
-- [ ] Wave tests, RSS streaming check, and independent security review
+- [x] Wave tests (118 across 16 files), independent security review (no high/critical; three race tests, a teardown guard, and a contract row added in `cbf73f5`, `2397a78`, `3c9db1e`)
+- [x] Container base image moved to Bun 1.4.2 (`4e040c3`): Bun 1.2.22 buffered an 800 MiB upload to 1.67 GB RSS. In-container check on the production image (2026-09-25): 600 MB upload at 150 MB/s, RSS baseline 64 MB → peak 89 MB, staging empty afterwards, `Range` 206 and the exact content headers confirmed.
+- Accepted low findings: content responses omit HSTS/Permissions-Policy (contract-conformant); streamed 200/206 bodies are chunked without Content-Length (Bun); huge chunked non-file bodies get Bun's bare 413; upload slots are per user only; a few invisible characters beyond the plan's list survive name sanitising.
 
 ### Wave 3c — Note editor: inline images, tables, PDF export (operator request 2026-09-25, ships with v0.3.0 or the next release)
 
