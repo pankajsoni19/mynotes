@@ -6,7 +6,7 @@ import { ApiError } from "../api";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { attachmentsFor, canUnlink, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
+import { attachmentsFor, binConfirmMessage, canUnlink, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -39,6 +39,8 @@ type CardDialogProps = {
   onMissing: () => void;
   onChanged: (card: CardDetail) => void;
   onMove: (card: CardDetail) => void;
+  /** Moves the card to the Bin (the dialog confirms first) and closes it. */
+  onDelete: (cardId: string) => Promise<void>;
   notify: (message: string) => void;
 };
 
@@ -52,7 +54,7 @@ const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.pa
  * The description is Markdown shown through the notes renderer read-only (D44) and edited with
  * an explicit Save; a revision conflict offers Reload or Copy my text.
  */
-export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, notify }: CardDialogProps) {
+export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify }: CardDialogProps) {
   const [card, setCard] = useState<CardDetail | null>(null);
   const [comments, setComments] = useState<CardComment[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -73,6 +75,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   const [attaching, setAttaching] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<UploadedAttachment[]>([]);
   const [unlinking, setUnlinking] = useState<CardAttachment | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const cardFileRef = useRef<HTMLInputElement>(null);
   const commentFileRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<CardDetail | null>(null);
@@ -95,12 +98,12 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   }, [cardId, onMissing]);
   useEffect(() => { void load(); }, [load]);
 
-  const closeSubDialog = useCallback(() => { setDeletingComment(null); setUnlinking(null); }, []);
-  useHistoryDialogGuard(deletingComment !== null || unlinking !== null, closeSubDialog);
+  const closeSubDialog = useCallback(() => { setDeletingComment(null); setUnlinking(null); setConfirmDelete(false); }, []);
+  useHistoryDialogGuard(deletingComment !== null || unlinking !== null || confirmDelete, closeSubDialog);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || deletingComment || unlinking || editing || editingComment) return;
+      if (event.key !== "Escape" || event.defaultPrevented || deletingComment || unlinking || confirmDelete || editing || editingComment) return;
       // A dialog opened over the card (Move to…) handles its own Escape.
       if (window.document.querySelector(".file-dialog, .side-panel")) return;
       event.preventDefault();
@@ -108,7 +111,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deletingComment, unlinking, editing, editingComment, onClose]);
+  }, [deletingComment, unlinking, confirmDelete, editing, editingComment, onClose]);
 
   function applyCard(next: CardDetail) {
     setCard(next);
@@ -393,6 +396,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
           {titleError && <p className="file-dialog-error" role="alert">{titleError}</p>}
         </div>
         {card && <button className="icon-button" onClick={() => onMove(card)} aria-haspopup="dialog" aria-label="Move card" title="Move to…"><ArrowRightLeft /></button>}
+        {card && <button className="icon-button" onClick={() => setConfirmDelete(true)} aria-haspopup="dialog" aria-label="Delete card" title="Move to the Bin"><Trash2 /></button>}
         <button className="icon-button" onClick={onClose} aria-label="Close card" title="Close"><X /></button>
       </header>
 
@@ -486,6 +490,12 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
         </>}
       </div>
     </section>
+    {confirmDelete && card && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("card", card.title)} confirmLabel="Move to Bin" danger busy={deleteBusy} onConfirm={() => {
+      // Close the confirm first: closing the card then steps back in history, and an open
+      // dialog's guard would otherwise swallow that step.
+      setConfirmDelete(false);
+      onDelete(card.id).catch((reason) => notify(taskErrorMessage(reason, "Could not delete the card")));
+    }} onCancel={closeSubDialog} />}
     {unlinking && <ConfirmDialog title="Remove this attachment?" message={unlinkConfirmMessage(unlinking.name, unlinking.linked_by === userId)} confirmLabel="Remove" danger busy={deleteBusy} onConfirm={() => { void unlink(unlinking); }} onCancel={closeSubDialog} />}
     {deletingComment && <ConfirmDialog title="Delete this comment?" message="The comment is deleted for everyone. This cannot be undone." confirmLabel="Delete comment" danger busy={deleteBusy} onConfirm={() => { void removeComment(deletingComment); }} onCancel={closeSubDialog} />}
   </>;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ChevronLeft, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
+import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
@@ -16,7 +17,10 @@ import { cardCountLabel, validateBoardName, validateColumnName } from "./taskAct
 import {
   createCard,
   createColumn,
+  deleteBoard,
+  deleteCard,
   deleteColumn,
+  restoreTaskItem,
   getBoard,
   moveCard,
   renameBoard,
@@ -37,17 +41,20 @@ type BoardViewProps = {
   onCloseCard: () => void;
   onBack: () => void;
   onMissing: () => void;
-  notify: (message: string) => void;
+  notify: TaskNotify;
+  /** After the board moved to the Bin: leave it for the list. */
+  onBoardDeleted: () => void;
+  onOpenBoard: (boardId: string) => void;
 };
 
 type BoardDialog =
-  | { kind: "rename" | "share" | "addColumn" }
+  | { kind: "rename" | "share" | "addColumn" | "deleteBoard" }
   | { kind: "columnMenu" | "renameColumn" | "deleteColumn"; columnId: string }
   | { kind: "moveCard"; cardId: string };
 
 export const MAX_COLUMNS = 20;
 
-export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard, onBack, onMissing, notify }: BoardViewProps) {
+export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard }: BoardViewProps) {
   const focusCardId = openCardId;
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -260,6 +267,40 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     }
   }
 
+  async function removeBoard() {
+    const name = detailRef.current?.board.name ?? "board";
+    setDeleting(true);
+    try {
+      await deleteBoard(boardId);
+      setDialog(null);
+      returnFocusRef.current = null;
+      onBoardDeleted();
+      notify(`Moved “${name}” to the Bin`, { label: "Undo", run: () => {
+        restoreTaskItem("board", boardId).then(() => onOpenBoard(boardId), (reason) => notify(taskErrorMessage(reason, "Could not restore the board")));
+      } });
+    } catch (reason) {
+      closeDialog();
+      notify(taskErrorMessage(reason, "Could not delete the board"));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  /** The card dialog asked to bin its card (after its own confirm). */
+  async function removeCard(cardId: string) {
+    const card = detailRef.current?.cards.find((item) => item.id === cardId);
+    await deleteCard(cardId);
+    setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => item.id !== cardId), board: { ...current.board, card_count: Math.max(0, current.board.card_count - 1) } } : current);
+    lastOpenCardRef.current = null;
+    onCloseCard();
+    notify(`Moved “${card?.title ?? "card"}” to the Bin`, { label: "Undo", run: () => {
+      restoreTaskItem("card", cardId).then((result) => {
+        notify(`Restored to ${result.columnName ?? "the board"}`);
+        void load();
+      }, (reason) => notify(taskErrorMessage(reason, "Could not restore the card")));
+    } });
+  }
+
   async function removeColumn(columnId: string) {
     setDeleting(true);
     try {
@@ -289,6 +330,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       {owner && <span className="task-board-actions">
         <button className="icon-button" onClick={(event) => openDialog({ kind: "rename" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Rename board" title="Rename board"><Pencil /></button>
         <button className="icon-button" onClick={(event) => openDialog({ kind: "share" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Share board" title="Share board"><Share2 /></button>
+        <button className="icon-button" onClick={(event) => openDialog({ kind: "deleteBoard" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Delete board" title="Move to the Bin"><Trash2 /></button>
       </span>}
     </header>
     <p id="task-card-keys" className="sr-only">Press Alt with an arrow key to move a card up, down, or to the next column.</p>
@@ -344,6 +386,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       onMissing={onCardMissing}
       notify={notify}
       onMove={(card) => openDialog({ kind: "moveCard", cardId: card.id })}
+      onDelete={removeCard}
       onChanged={(card) => setCards((items) => items.map((item) => item.id === card.id ? {
         ...item,
         title: card.title,
@@ -361,6 +404,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       notify("Sharing updated");
       void load();
     }} />}
+    {dialog?.kind === "deleteBoard" && board && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", board.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void removeBoard(); }} onCancel={closeDialog} />}
     {dialog?.kind === "addColumn" && <NameDialog title="Add column" eyebrow={board?.name ?? "Board"} label="Column name" initialValue="" submitLabel="Add column" hint="Up to 60 characters. It is added at the end." validate={(value) => validateColumnName(value)} onSubmit={addColumn} onCancel={closeDialog} />}
     {dialog?.kind === "columnMenu" && dialogColumn && <ModalDialog title={dialogColumn.name} eyebrow="Column" onClose={closeDialog}>
       <div className="move-list task-menu">

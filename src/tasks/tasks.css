@@ -192,3 +192,4 @@
   .task-attachment .icon-button, .task-pending-files .icon-button { width: 44px; height: 44px; }
   .task-composer-actions button { min-height: 44px; }
 }
+.tasks-app ~ .toast, .tasks-app .toast { z-index: 60; }

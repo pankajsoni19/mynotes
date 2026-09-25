@@ -47,3 +47,11 @@ export const isInlineImage = (attachment: Pick<AttachmentLike, "preview_kind" | 
 export const unlinkConfirmMessage = (name: string, ownFile: boolean) => ownFile
   ? `Remove “${name}” from this card? If no other card uses it, it moves to your Bin for 30 days.`
   : `Remove “${name}” from this card? If no other card uses it, it moves to its uploader's Bin for 30 days.`;
+
+/** The Files-style confirm copy for moving a card or board to the Bin. */
+export const binConfirmMessage = (kind: "card" | "board", name: string) => kind === "card"
+  ? `Move “${name}” to the Bin? You can restore it for 30 days.`
+  : `Move the board “${name}” and all its cards to the Bin? You can restore it for 30 days.`;
+
+/** A toast action, such as Undo after moving something to the Bin. */
+export type TaskNotify = (message: string, action?: { label: string; run: () => void }) => void;

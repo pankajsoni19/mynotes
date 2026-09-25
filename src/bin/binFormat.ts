@@ -1,7 +1,9 @@
 // Pure Bin display helpers. No DOM or network access, so they are unit tested directly.
-import type { BinItem, Visibility } from "../types";
+import type { BinItem, BinRestoreResult, Visibility } from "../types";
 
-export type BinFilter = "all" | "note" | "document";
+export type BinFilter = "all" | "note" | "document" | "tasks";
+
+export const isTaskBinItem = (item: Pick<BinItem, "type">) => item.type === "card" || item.type === "board";
 
 const DAY_MS = 86_400_000;
 
@@ -18,17 +20,46 @@ export function purgeCountdownLabel(purgeAfter: string, nowMs = Date.now()) {
   return days === 1 ? "Deletes in 1 day" : `Deletes in ${days} days`;
 }
 
-/** Where a restore will put the item: its original folder, or Default when that folder is gone. */
-export function binFolderLabel(item: Pick<BinItem, "folder_name">) {
+/** Where a restore will put the item: its original folder (Default when that folder is gone), or a card's board. */
+export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick<BinItem, "type" | "board_name">>) {
+  if (item.type === "card") return item.board_name ?? "its board";
+  if (item.type === "board") return "Tasks";
   return item.folder_name ?? "Default";
 }
 
+/** The Tasks filter shows cards and boards together. */
 export function filterBinItems(items: BinItem[], filter: BinFilter) {
-  return filter === "all" ? items : items.filter((item) => item.type === filter);
+  if (filter === "all") return items;
+  if (filter === "tasks") return items.filter(isTaskBinItem);
+  return items.filter((item) => item.type === filter);
 }
 
+const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board" };
+
 export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
-  return item.title.trim() || (item.type === "note" ? "Untitled note" : "Untitled file");
+  return item.title.trim() || untitled[item.type];
+}
+
+/** The kind shown to screen readers and in the row meta. */
+export function binKindLabel(item: Pick<BinItem, "type" | "attachment">) {
+  if (item.type === "note") return "Note";
+  if (item.type === "card") return "Card";
+  if (item.type === "board") return "Board";
+  return item.attachment ? "Card attachment" : "File";
+}
+
+/** Toast after restoring any Bin item. */
+export function restoreResultMessage(item: Pick<BinItem, "type">, result: BinRestoreResult) {
+  if (item.type === "board") {
+    const name = result.boardName ? ` “${result.boardName}”` : "";
+    return result.alreadyRestored ? `The board${name} is already restored` : `Restored the board${name}`;
+  }
+  if (item.type === "card") {
+    const where = [result.columnName, result.boardName].filter(Boolean).join(" on ");
+    return result.alreadyRestored ? `Already restored${where ? ` to ${where}` : ""}` : `Restored${where ? ` to ${where}` : ""}`;
+  }
+  const folderName = result.folderName ?? "Default";
+  return result.alreadyRestored ? `Already restored to ${folderName}` : restoredMessage(folderName, result.visibility);
 }
 
 export function deleteForeverConfirm(title: string) {

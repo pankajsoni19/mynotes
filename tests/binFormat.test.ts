@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { binFolderLabel, binItemLabel, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage } from "../src/bin/binFormat";
+import { binFolderLabel, binItemLabel, binKindLabel, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage, restoreResultMessage } from "../src/bin/binFormat";
 import type { BinItem } from "../src/types";
 
 const DAY = 86_400_000;
@@ -63,5 +63,29 @@ describe("Bin labels and copy", () => {
     expect(restoredMessage("Team", "selected")).toBe("Restored to Team · shared with selected people");
     expect(emptiedMessage(3, 0)).toBe("3 items deleted forever");
     expect(emptiedMessage(1, 2)).toBe("1 item deleted forever. 2 still finishing.");
+  });
+});
+
+describe("Tasks items in the Bin", () => {
+  const card = { type: "card" as const, id: "k", title: "Ship it", folder_id: null, folder_name: null, size_bytes: null, deleted_at: "2026-01-02T00:00:00.000Z", purge_after: "2026-02-01T00:00:00.000Z", purging: false, board_id: "b", board_name: "Launch", attachment: false, can_purge: false };
+  const board = { ...card, type: "board" as const, id: "b", title: "Launch", can_purge: true };
+  const note = { ...card, type: "note" as const, id: "n", title: "A note", board_id: null, board_name: null, can_purge: true };
+  const attachment = { ...note, type: "document" as const, id: "d", title: "shot.png", attachment: true };
+
+  test("the Tasks filter shows cards and boards", () => {
+    expect(filterBinItems([card, board, note, attachment], "tasks").map((item) => item.id)).toEqual(["k", "b"]);
+    expect(filterBinItems([card, board, note, attachment], "document").map((item) => item.id)).toEqual(["d"]);
+  });
+
+  test("labels name the board, the kind, and the restore result", () => {
+    expect(binFolderLabel(card)).toBe("Launch");
+    expect(binFolderLabel(board)).toBe("Tasks");
+    expect(binItemLabel({ type: "card", title: " " })).toBe("Untitled card");
+    expect(binItemLabel({ type: "board", title: "" })).toBe("Untitled board");
+    expect([card, board, note, attachment].map((item) => binKindLabel(item))).toEqual(["Card", "Board", "Note", "Card attachment"]);
+    expect(restoreResultMessage(card, { ok: true, boardName: "Launch", columnName: "To do" })).toBe("Restored to To do on Launch");
+    expect(restoreResultMessage(board, { ok: true, boardName: "Launch" })).toBe("Restored the board “Launch”");
+    expect(restoreResultMessage(board, { ok: true, boardName: "Launch", alreadyRestored: true })).toBe("The board “Launch” is already restored");
+    expect(restoreResultMessage(note, { ok: true, folderName: "Projects", visibility: "private" })).toBe("Restored to Projects");
   });
 });

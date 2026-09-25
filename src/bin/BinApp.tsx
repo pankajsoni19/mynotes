@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, Ellipsis, File as FileIcon, House, NotebookText, RotateCcw, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArchiveRestore, Ellipsis, File as FileIcon, House, KanbanSquare, NotebookText, RotateCcw, Sparkles, SquareCheck, Trash2, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { AccountActions } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
@@ -9,12 +9,13 @@ import { deleteBinItem, emptyBin, listBin, restoreBinItem } from "./binApi";
 import {
   binFolderLabel,
   binItemLabel,
+  binKindLabel,
   deleteForeverConfirm,
   emptiedMessage,
   emptyBinConfirm,
   filterBinItems,
   purgeCountdownLabel,
-  restoredMessage,
+  restoreResultMessage,
   type BinFilter
 } from "./binFormat";
 import "./bin.css";
@@ -34,8 +35,11 @@ type PendingAction = "restore" | "delete";
 const filters: Array<{ value: BinFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "note", label: "Notes" },
-  { value: "document", label: "Files" }
+  { value: "document", label: "Files" },
+  { value: "tasks", label: "Tasks" }
 ];
+
+const itemIcons = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare } as const;
 
 const itemKey = (item: Pick<BinItem, "type" | "id">) => `${item.type}:${item.id}`;
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -109,11 +113,14 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     try {
       const result = await restoreBinItem(item);
       removeItem(item);
-      const folderName = result.folderName ?? "Default";
-      flash(result.alreadyRestored ? `Already restored to ${folderName}` : restoredMessage(folderName, result.visibility));
+      flash(restoreResultMessage(item, result));
       onRestored?.(item);
+      // Restoring a board brings its binned cards' board back too; refresh so their rows update.
+      if (item.type === "board") void load();
     } catch (reason) {
       if (errorCode(reason) === "PURGING") flash("This item is being deleted forever and can't be restored");
+      else if (errorCode(reason) === "BOARD_IN_BIN") flash(`Restore the board ${item.board_name ? `“${item.board_name}” ` : ""}first`);
+      else if (errorCode(reason) === "LIMIT_REACHED") flash(reason instanceof Error ? reason.message : "That board is full");
       else if (reason instanceof ApiError && reason.status === 404) flash("This item is no longer in the Bin");
       else flash(reason instanceof Error ? reason.message : "Could not restore this item");
       void load();
@@ -147,6 +154,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
       } else {
         if (reason instanceof ApiError && reason.status === 404) flash("This item is no longer in the Bin");
         else if (errorCode(reason) === "NOT_IN_BIN") flash("This item was already restored");
+        else if (errorCode(reason) === "OWNER_ONLY") flash("Only the board owner can delete this forever");
         else {
           // The request may or may not have reached the server; a later 404 means it did.
           retriedDeletesRef.current.add(itemKey(item));
@@ -178,7 +186,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     setSheetKey(itemKey(item));
   }
 
-  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : "Nothing in the Bin.";
+  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "tasks" ? "No cards or boards in the Bin." : "Nothing in the Bin.";
 
   return <main className="app-page bin-app">
     <header className="app-page-header">
@@ -192,7 +200,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
         <div>
           <span className="eyebrow">Shared Bin</span>
           <h1 id="bin-title">Bin</h1>
-          <p>Deleted notes and files stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
+          <p>Deleted notes, files, cards, and boards stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
         </div>
         <button className="bin-empty-button" onClick={() => { void emptyAll(); }} disabled={!all.length || busy}><Trash2 />{emptying ? "Emptying…" : "Empty Bin"}</button>
       </div>
@@ -218,22 +226,23 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
       {!loadError && items && !visible.length && <div className="bin-state">
         <span className="bin-state-icon"><Trash2 /></span>
         <h2>{emptyCopy}</h2>
-        <p>Deleted notes and files stay here for 30 days.</p>
+        <p>Deleted notes, files, cards, and boards stay here for 30 days.</p>
       </div>}
 
       {!loadError && visible.length > 0 && <ul className="bin-list" aria-label="Items in the Bin">
         {visible.map((item) => {
           const key = itemKey(item);
           const action = pending[key];
-          const Icon = item.type === "note" ? NotebookText : FileIcon;
+          const Icon = itemIcons[item.type];
+          const canPurge = item.can_purge !== false;
           const label = binItemLabel(item);
           const disabled = Boolean(action) || item.purging || emptying;
           return <li key={key} className={`bin-row${action || item.purging ? " pending" : ""}`} aria-busy={action || item.purging ? true : undefined}>
             <span className="bin-row-icon" aria-hidden="true"><Icon /></span>
             <span className="bin-row-copy">
-              <span className="bin-row-title" title={label}><span className="sr-only">{item.type === "note" ? "Note: " : "File: "}</span>{label}</span>
+              <span className="bin-row-title" title={label}><span className="sr-only">{binKindLabel(item)}: </span>{label}</span>
               <span className="bin-row-meta">
-                <span>{binFolderLabel(item)}</span>
+                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.attachment ? "Card attachment · restores to Default" : binFolderLabel(item)}</span>
                 <time dateTime={item.deleted_at}>Deleted {relativeTime(item.deleted_at)}</time>
                 {item.purging || action === "delete"
                   ? <span className="bin-row-status">Deleting forever…</span>
@@ -245,7 +254,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
             </span>
             <span className="bin-row-actions">
               <button className="bin-action" onClick={() => { void restore(item); }} disabled={disabled} aria-label={`Restore ${label}`}><ArchiveRestore />Restore</button>
-              <button className="bin-action danger" onClick={() => { void deleteForever(item); }} disabled={disabled} aria-label={`Delete ${label} forever`}><Trash2 />Delete forever</button>
+              {canPurge && <button className="bin-action danger" onClick={() => { void deleteForever(item); }} disabled={disabled} aria-label={`Delete ${label} forever`}><Trash2 />Delete forever</button>}
             </span>
             <button className="icon-button bin-more" onClick={(event) => openSheet(item, event.currentTarget)} disabled={disabled} aria-haspopup="dialog" aria-label={`Actions for ${label}`}><Ellipsis /></button>
           </li>;
@@ -260,8 +269,8 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
           <strong id="bin-sheet-title" title={binItemLabel(sheetItem)}>{binItemLabel(sheetItem)}</strong>
           <button className="icon-button" onClick={closeSheet} aria-label="Close actions"><X /></button>
         </header>
-        <button autoFocus onClick={() => { void restore(sheetItem); }}><ArchiveRestore />Restore to {binFolderLabel(sheetItem)}</button>
-        <button className="danger" onClick={() => { void deleteForever(sheetItem); }}><Trash2 />Delete forever</button>
+        <button autoFocus onClick={() => { void restore(sheetItem); }}><ArchiveRestore />{sheetItem.type === "board" ? "Restore board" : `Restore to ${binFolderLabel(sheetItem)}`}</button>
+        {sheetItem.can_purge !== false && <button className="danger" onClick={() => { void deleteForever(sheetItem); }}><Trash2 />Delete forever</button>}
         <button onClick={closeSheet}>Cancel</button>
       </div>
     </>}

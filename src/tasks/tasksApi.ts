@@ -118,3 +118,8 @@ export const unlinkAttachment = (cardId: string, documentId: string) =>
   api<{ ok: true; movedToBin: boolean }>(`/tasks/cards/${cardId}/attachments/${documentId}`, json("DELETE", {}));
 export const createCommentWithFiles = (cardId: string, body: string, attachmentIds: string[]) =>
   api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", attachmentIds.length ? { body, attachmentIds } : { body }));
+
+export const deleteCard = (cardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/cards/${cardId}`, json("DELETE", {}));
+export const deleteBoard = (boardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/boards/${boardId}`, json("DELETE", {}));
+export const restoreTaskItem = (type: "card" | "board", id: string) =>
+  api<{ ok: true; alreadyRestored?: true; boardId: string; boardName: string; columnId: string | null; columnName: string | null }>(`/bin/${type}/${id}/restore`, json("POST", {}));

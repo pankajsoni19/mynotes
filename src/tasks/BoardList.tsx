@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import { KanbanSquare, Pencil, Plus, RotateCcw, Share2, TriangleAlert, Users } from "lucide-react";
+import { KanbanSquare, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert, Users } from "lucide-react";
+import { ConfirmDialog } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { NameDialog } from "../files/RenameDialog";
 import { BoardSharePanel } from "./BoardSharePanel";
-import { cardCountLabel, sharingLabel, validateBoardName } from "./taskActions";
-import { createBoard, listBoards, renameBoard, taskErrorMessage, type BoardSummary } from "./tasksApi";
+import { binConfirmMessage, cardCountLabel, sharingLabel, validateBoardName, type TaskNotify } from "./taskActions";
+import { createBoard, deleteBoard, listBoards, renameBoard, restoreTaskItem, taskErrorCode, taskErrorMessage, type BoardSummary } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
 type BoardListProps = {
   onOpen: (board: BoardSummary) => void;
-  notify: (message: string) => void;
+  /** Opens a board by id (after Undo restores it). */
+  onOpenBoard?: (boardId: string) => void;
+  notify: TaskNotify;
 };
 
-type ListDialog = { kind: "new" } | { kind: "rename" | "share"; boardId: string };
+type ListDialog = { kind: "new" } | { kind: "rename" | "share" | "delete"; boardId: string };
 
-export function BoardList({ onOpen, notify }: BoardListProps) {
+export function BoardList({ onOpen, onOpenBoard, notify }: BoardListProps) {
+  const [deleting, setDeleting] = useState(false);
   const [boards, setBoards] = useState<BoardSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<ListDialog | null>(null);
@@ -51,6 +55,32 @@ export function BoardList({ onOpen, notify }: BoardListProps) {
     notify(`Renamed to “${saved.name}”`);
   }
 
+  async function remove(board: BoardSummary) {
+    setDeleting(true);
+    try {
+      await deleteBoard(board.id);
+      setBoards((current) => current?.filter((item) => item.id !== board.id) ?? current);
+      setDialog(null);
+      notify(`Moved “${board.name}” to the Bin`, { label: "Undo", run: () => { void undoDelete(board); } });
+    } catch (reason) {
+      setDialog(null);
+      notify(taskErrorMessage(reason, "Could not delete the board"));
+      void load();
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function undoDelete(board: BoardSummary) {
+    try {
+      await restoreTaskItem("board", board.id);
+      notify(`Restored the board “${board.name}”`, onOpenBoard ? { label: "Open", run: () => onOpenBoard(board.id) } : undefined);
+    } catch (reason) {
+      notify(taskErrorCode(reason) === "LIMIT_REACHED" ? "You already have 50 boards" : taskErrorMessage(reason, "Could not restore the board"));
+    }
+    void load();
+  }
+
   const row = (board: BoardSummary) => <li key={board.id} className="task-board-row">
     <button className="task-board-open" onClick={() => onOpen(board)}>
       <span className="task-board-icon" aria-hidden="true"><KanbanSquare /></span>
@@ -66,6 +96,7 @@ export function BoardList({ onOpen, notify }: BoardListProps) {
     {board.is_owner === 1 && <span className="task-board-actions">
       <button className="icon-button" onClick={() => setDialog({ kind: "rename", boardId: board.id })} aria-haspopup="dialog" aria-label={`Rename ${board.name}`} title="Rename"><Pencil /></button>
       <button className="icon-button" onClick={() => setDialog({ kind: "share", boardId: board.id })} aria-haspopup="dialog" aria-label={`Share ${board.name}`} title="Share"><Share2 /></button>
+      <button className="icon-button" onClick={() => setDialog({ kind: "delete", boardId: board.id })} aria-haspopup="dialog" aria-label={`Delete ${board.name}`} title="Move to the Bin"><Trash2 /></button>
     </span>}
   </li>;
 
@@ -97,6 +128,7 @@ export function BoardList({ onOpen, notify }: BoardListProps) {
 
     {dialog?.kind === "new" && <NameDialog title="New board" eyebrow="Tasks" label="Board name" initialValue="" submitLabel="Create board" hint="Up to 120 characters. It starts with To do, Doing, and Done." validate={(value) => validateBoardName(value)} onSubmit={create} onCancel={closeDialog} />}
     {dialog?.kind === "rename" && dialogBoard && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={dialogBoard.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, dialogBoard.name)} onSubmit={(name) => rename(dialogBoard, name)} onCancel={closeDialog} />}
+    {dialog?.kind === "delete" && dialogBoard && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", dialogBoard.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void remove(dialogBoard); }} onCancel={closeDialog} />}
     {dialog?.kind === "share" && dialogBoard && <BoardSharePanel board={dialogBoard} onClose={closeDialog} onChanged={() => {
       setDialog(null);
       notify("Sharing updated");

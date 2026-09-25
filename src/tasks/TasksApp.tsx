@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { TaskNotify } from "./taskActions";
 import { House, Sparkles } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
@@ -17,6 +18,7 @@ type TasksAppProps = {
   userId: string;
   displayName: string;
   navigate: TasksNavigate;
+  /** The app toast; Tasks shows its own so a message can carry Undo. */
   flash: (message: string) => void;
   onHome: () => void;
   onSettings: () => void;
@@ -32,8 +34,17 @@ const currentTasksRoute = (): TasksRoute => {
  * Tasks: the board list (/tasks) and one board (/tasks/:boardId). Every view is a history entry;
  * dialogs and sheets push none (D18). Back steps card → board → list → Home.
  */
-export function TasksApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut }: TasksAppProps) {
+export function TasksApp({ userId, displayName, navigate, onHome, onSettings, onSignOut }: TasksAppProps) {
   const [route, setRoute] = useState<TasksRoute>(currentTasksRoute);
+  // Tasks keeps its own toast so a message can carry an action (Undo after moving to the Bin).
+  const [toast, setToast] = useState<{ id: number; message: string; action?: { label: string; run: () => void } } | null>(null);
+  const toastIdRef = useRef(0);
+  const notify = useCallback<TaskNotify>((message, action) => setToast({ id: ++toastIdRef.current, message, action }), []);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast((current) => current?.id === toast.id ? null : current), toast.action ? 8000 : 3200);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
   const routeRef = useRef(route);
   routeRef.current = route;
   // App's navigate is recreated on every render; read it through a ref so effects run once.
@@ -77,9 +88,9 @@ export function TasksApp({ userId, displayName, navigate, flash, onHome, onSetti
   }, [go]);
 
   const onMissing = useCallback(() => {
-    flash("Board not found");
+    notify("Board not found");
     go(tasksRoute(), true);
-  }, [flash, go]);
+  }, [notify, go]);
 
   return <main className={`app-page tasks-app${route.boardId ? " tasks-board-open" : ""}`}>
     <header className="app-page-header">
@@ -88,7 +99,11 @@ export function TasksApp({ userId, displayName, navigate, flash, onHome, onSetti
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
     {route.boardId
-      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={flash} />
-      : <BoardList onOpen={(board) => go(tasksRoute(board.id))} notify={flash} />}
+      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} />
+      : <BoardList onOpen={(board) => go(tasksRoute(board.id))} onOpenBoard={(boardId) => go(tasksRoute(boardId))} notify={notify} />}
+    {toast && <div className="toast file-toast" role="status">
+      <span>{toast.message}</span>
+      {toast.action && <button className="file-toast-action" onClick={() => { const run = toast.action!.run; setToast(null); run(); }}>{toast.action.label}</button>}
+    </div>}
   </main>;
 }

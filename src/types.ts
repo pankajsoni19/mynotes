@@ -56,7 +56,7 @@ export type DocumentSummary = {
   updated_at: string;
 };
 export type BinItem = {
-  type: "note" | "document";
+  type: "note" | "document" | "card" | "board";
   id: string;
   title: string;
   folder_id: string | null;
@@ -65,5 +65,23 @@ export type BinItem = {
   deleted_at: string;
   purge_after: string;
   purging: boolean;
+  /** Cards: their board; boards: themselves (Wave 9). Older servers omit these fields. */
+  board_id?: string | null;
+  board_name?: string | null;
+  /** A document that was a card attachment. */
+  attachment?: boolean;
+  /** False for a card the caller deleted on someone else's board: they may only restore it. */
+  can_purge?: boolean;
 };
-export type BinRestoreResult = { ok: true; folderId: string | null; folderName: string | null; visibility?: Visibility; alreadyRestored?: true };
+export type BinRestoreResult = {
+  ok: true;
+  folderId?: string | null;
+  folderName?: string | null;
+  visibility?: Visibility;
+  alreadyRestored?: true;
+  /** Cards and boards. */
+  boardId?: string;
+  boardName?: string;
+  columnId?: string | null;
+  columnName?: string | null;
+};
