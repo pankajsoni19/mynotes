@@ -1,4 +1,4 @@
-import { Archive, ArrowRight, FileText, House, LogOut, Settings, Sparkles, Trash2 } from "lucide-react";
+import { Archive, ArrowRight, FileText, LogOut, Settings, Sparkles, Trash2 } from "lucide-react";
 import "./appShell.css";
 import type { AppSection } from "./appShellNavigation";
 
@@ -12,7 +12,7 @@ type ShellProps = AccountProps & {
   onOpen: (section: AppSection) => void;
 };
 
-function AccountActions({ displayName, onSettings, onSignOut }: AccountProps) {
+export function AccountActions({ displayName, onSettings, onSignOut }: AccountProps) {
   return <div className="app-account" role="group" aria-label="Account">
     <span className="app-home-user">{displayName}</span>
     <button className="app-account-button" onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>
@@ -23,7 +23,7 @@ function AccountActions({ displayName, onSettings, onSignOut }: AccountProps) {
 const cards: Array<{ section: Exclude<AppSection, "home">; icon: typeof Archive; eyebrow: string; title: string; copy: string; status: string }> = [
   { section: "notes", icon: Archive, eyebrow: "Your workspace", title: "Notes", copy: "Write fluid Markdown notes, keep versions, and share with the people you choose.", status: "Open Notes" },
   { section: "files", icon: FileText, eyebrow: "Your workspace", title: "Files", copy: "Upload, preview, and organize documents next to your notes.", status: "Open Files" },
-  { section: "bin", icon: Trash2, eyebrow: "Coming next", title: "Bin", copy: "Restore deleted notes and documents during their 30-day recovery window.", status: "Preview" }
+  { section: "bin", icon: Trash2, eyebrow: "Your workspace", title: "Bin", copy: "Restore deleted notes and files for 30 days", status: "Open Bin" }
 ];
 
 export function AppHome({ displayName, onOpen, onSettings, onSignOut }: ShellProps) {
@@ -44,17 +44,5 @@ export function AppHome({ displayName, onOpen, onSettings, onSignOut }: ShellPro
         </button>)}
       </div>
     </section>
-  </main>;
-}
-
-export function AppPlaceholder({ section, onHome, onOpenNotes, ...account }: AccountProps & { section: Exclude<AppSection, "home" | "notes">; onHome: () => void; onOpenNotes: () => void }) {
-  const title = section === "files" ? "Files" : "Bin";
-  const detail = section === "files"
-    ? "Document uploads, safe previews, downloads, and drag-to-folder organization are on their way."
-    : "Deleted notes and documents will be recoverable here for 30 days once the shared Bin arrives.";
-  const Icon = section === "files" ? FileText : Trash2;
-  return <main className="app-placeholder">
-    <header className="app-placeholder-header"><button className="app-home-button" onClick={onHome}><House />Home</button><span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><small>MyNotes</small><strong>{title}</strong></span></span><AccountActions {...account} /></header>
-    <section className="app-placeholder-content"><span className="app-placeholder-icon"><Icon /></span><span className="eyebrow">Foundation in progress</span><h1>{title}</h1><p>{detail}</p><button className="primary-button" onClick={onOpenNotes}>Open Notes</button></section>
   </main>;
 }

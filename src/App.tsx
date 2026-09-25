@@ -36,7 +36,8 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
-import { AppHome, AppPlaceholder } from "./AppShell";
+import { AppHome } from "./AppShell";
+import { BinApp } from "./bin/BinApp";
 import { FilesApp } from "./files/FilesApp";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
@@ -921,12 +922,13 @@ export function App() {
   }
 
   async function deleteNote(noteId: string, title: string) {
-    if (!window.confirm(`Delete “${title}”? This removes the note and its version history.`)) return;
+    if (!window.confirm(`Move “${title}” to the Bin? You can restore it for 30 days.`)) return;
     if (noteId === selectedNoteId) {
       cancelPendingAutosave();
-      if (savingPromiseRef.current) await savingPromiseRef.current;
+      // The note stays restorable from the Bin, so keep the latest edits in its draft.
+      await saveDraft();
     }
-    await api(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
+    const result = await api<{ purged?: boolean }>(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
     if (noteId === selectedNoteId) {
       setSelectedNoteId(null);
       setNote(null);
@@ -938,7 +940,7 @@ export function App() {
       navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
     }
     await loadNavigation();
-    flash("Note deleted");
+    flash(result.purged ? "Empty note removed" : "Moved to the Bin");
   }
 
   async function publish(reloadCurrent = true) {
@@ -1025,9 +1027,20 @@ export function App() {
   }
 
   async function discard() {
-    if (!note || !window.confirm("Discard this draft and return to the published version?")) return;
+    if (!note) return;
     const removesNote = note.current_version === 0;
-    await api(`/notes/${note.id}/draft`, { method: "DELETE", body: "{}" });
+    const message = !removesNote
+      ? "Discard this draft and return to the published version?"
+      : markdown.trim() === ""
+        ? "Discard this empty note?"
+        : `This note was never published. Move “${note.title || "Untitled"}” to the Bin? You can restore it for 30 days.`;
+    if (!window.confirm(message)) return;
+    if (removesNote) {
+      cancelPendingAutosave();
+      // Discarding an unpublished note moves it to the Bin with its draft, so save the latest edits first.
+      await saveDraft();
+    }
+    const result = await api<{ binned?: boolean; purged?: boolean }>(`/notes/${note.id}/draft`, { method: "DELETE", body: "{}" });
     if (removesNote) {
       if (newlyCreatedNoteIdRef.current === note.id) newlyCreatedNoteIdRef.current = null;
       setSelectedNoteId(null);
@@ -1038,7 +1051,7 @@ export function App() {
       await loadNavigation();
       setMobilePanel("notes");
       navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
-      flash("Unpublished note removed");
+      flash(result.binned ? "Moved to the Bin" : "Empty note removed");
     } else {
       await Promise.all([loadNote(note.id), loadNavigation()]);
       flash("Draft discarded");
@@ -1248,7 +1261,7 @@ export function App() {
   if (activeApp !== "notes" && !session.totp.setupRequired) return <>
     {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
-      : <AppPlaceholder {...account} section={activeApp} onHome={() => { void openHome(); }} onOpenNotes={() => openApp("notes")} />}
+      : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}

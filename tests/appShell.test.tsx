@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AppHome, AppPlaceholder } from "../src/AppShell";
+import { AppHome } from "../src/AppShell";
+import { BinApp } from "../src/bin/BinApp";
 
 const account = { displayName: "Ada Lovelace", onSettings: () => undefined, onSignOut: () => undefined };
 
@@ -17,26 +18,26 @@ test("Home offers Settings and Sign out in its header", () => {
   expect(buttons[1]).toContain('title="Sign out"');
 });
 
-test("Files and Bin placeholders offer the same account actions", () => {
-  for (const section of ["files", "bin"] as const) {
-    const markup = renderToStaticMarkup(<AppPlaceholder {...account} section={section} onHome={() => undefined} onOpenNotes={() => undefined} />);
-    expect(accountButtons(markup)).toHaveLength(2);
-    expect(markup).toContain(">Sign out</span>");
-  }
+test("the Bin app offers Home and the same account actions", () => {
+  const markup = renderToStaticMarkup(<BinApp {...account} flash={() => undefined} onHome={() => undefined} />);
+  expect(accountButtons(markup)).toHaveLength(2);
+  expect(markup).toContain(">Sign out</span>");
+  expect(markup).toContain("<small>MyNotes</small><strong>Bin</strong>");
+  expect(markup).toContain(">Home</button>");
+  // Nothing is loaded yet, so the list shows its loading state and Empty Bin is disabled.
+  expect(markup).toContain("Loading the Bin…");
+  expect(markup).toMatch(/<button class="bin-empty-button" disabled="">/);
+  for (const label of ["All", "Notes", "Files"]) expect(markup).toContain(`>${label}</button>`);
 });
 
-test("placeholders keep a Home button and an Open Notes shortcut", () => {
-  const markup = renderToStaticMarkup(<AppPlaceholder {...account} section="files" onHome={() => undefined} onOpenNotes={() => undefined} />);
-  expect(markup).toContain("Home");
-  expect(markup).toContain("Open Notes");
-});
-
-test("Home opens Files as a live app while Bin stays a preview", () => {
+test("Home opens Files and Bin as live apps", () => {
   const markup = renderToStaticMarkup(<AppHome {...account} onOpen={() => undefined} />);
   const files = markup.match(/<button class="app-card app-card-files">(.*?)<\/button>/)?.[1] ?? "";
   expect(files).toContain("Your workspace");
   expect(files).toContain("Upload, preview, and organize documents next to your notes.");
   expect(files).toContain("Open Files");
   const bin = markup.match(/<button class="app-card app-card-bin">(.*?)<\/button>/)?.[1] ?? "";
-  expect(bin).toContain("Coming next");
+  expect(bin).toContain("Restore deleted notes and files for 30 days");
+  expect(bin).toContain("Open Bin");
+  expect(bin).not.toContain("Coming next");
 });

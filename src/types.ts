@@ -55,3 +55,15 @@ export type DocumentSummary = {
   created_at: string;
   updated_at: string;
 };
+export type BinItem = {
+  type: "note" | "document";
+  id: string;
+  title: string;
+  folder_id: string | null;
+  folder_name: string | null;
+  size_bytes: number | null;
+  deleted_at: string;
+  purge_after: string;
+  purging: boolean;
+};
+export type BinRestoreResult = { ok: true; folderId: string | null; folderName: string | null; visibility?: Visibility; alreadyRestored?: true };
