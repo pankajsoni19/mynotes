@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardList } from "../src/tasks/BoardList";
-import { cardCountLabel, sharingLabel, validateBoardName, validateCardTitle, validateColumnName } from "../src/tasks/taskActions";
+import { attachmentsFor, canUnlink, cardCountLabel, commentBodyError, isInlineImage, sharingLabel, unlinkConfirmMessage, validateBoardName, validateCardTitle, validateColumnName } from "../src/tasks/taskActions";
 
 test("the board list starts with its loading state and a New board action", () => {
   const markup = renderToStaticMarkup(<BoardList onOpen={() => undefined} notify={() => undefined} />);
@@ -24,4 +24,26 @@ test("name validation mirrors the server rules", () => {
   expect(cardCountLabel(1)).toBe("1 card");
   expect(cardCountLabel(0)).toBe("0 cards");
   expect(sharingLabel("all_users")).toBe("Everyone here");
+});
+
+test("attachment helpers group by comment, gate removal, and pick inline images", () => {
+  const base = { preview_kind: "image", mime_type: "image/png" };
+  const items = [
+    { ...base, document_id: "a", comment_id: null, linked_by: "u1" },
+    { ...base, document_id: "b", comment_id: "c1", linked_by: "u2" },
+    { document_id: "c", comment_id: null, linked_by: "u2", preview_kind: "none", mime_type: "application/zip" }
+  ];
+  expect(attachmentsFor(items, null).map((item) => item.document_id)).toEqual(["a", "c"]);
+  expect(attachmentsFor(items, "c1").map((item) => item.document_id)).toEqual(["b"]);
+  expect(canUnlink(items[1]!, "u2", false)).toBe(true);
+  expect(canUnlink(items[1]!, "u1", false)).toBe(false);
+  expect(canUnlink(items[1]!, "u1", true)).toBe(true);
+  expect(isInlineImage(items[0]!)).toBe(true);
+  expect(isInlineImage({ preview_kind: "image", mime_type: "image/svg+xml" })).toBe(false);
+  expect(isInlineImage(items[2]!)).toBe(false);
+  expect(unlinkConfirmMessage("a.png", true)).toContain("your Bin");
+  expect(unlinkConfirmMessage("a.png", false)).toContain("uploader's Bin");
+  expect(commentBodyError("  ")).not.toBeNull();
+  expect(commentBodyError("é".repeat(8193))).not.toBeNull();
+  expect(commentBodyError("ok")).toBeNull();
 });

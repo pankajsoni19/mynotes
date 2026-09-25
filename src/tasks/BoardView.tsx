@@ -335,6 +335,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
 
     {openCardId && detail && <CardDialog
       key={openCardId}
+      userId={userId}
       cardId={openCardId}
       columns={columns}
       columnId={cards.find((card) => card.id === openCardId)?.column_id}

@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowRightLeft, Copy, MessageSquare, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Copy, Download, File as FileIcon, MessageSquare, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
+import { contentUrl, formatBytes } from "../files/filesApi";
 import { ApiError } from "../api";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { commentBodyError, validateCardTitle } from "./taskActions";
+import { attachmentsFor, canUnlink, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import {
-  createComment,
+  createCommentWithFiles,
   deleteComment,
+  linkAttachment,
+  unlinkAttachment,
+  uploadAttachment,
+  type CardAttachment,
+  type UploadedAttachment,
   getCard,
   listComments,
   taskErrorCode,
@@ -21,6 +28,7 @@ import {
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
 type CardDialogProps = {
+  userId: string;
   cardId: string;
   columns: BoardColumn[];
   /** The card's column as the board knows it (moves happen on the board). */
@@ -32,8 +40,6 @@ type CardDialogProps = {
   onChanged: (card: CardDetail) => void;
   onMove: (card: CardDetail) => void;
   notify: (message: string) => void;
-  /** Stores an image pasted or picked into the description (stage C attachments). */
-  uploadImage?: (cardId: string, file: File) => Promise<{ src: string; alt: string }>;
 };
 
 const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -46,7 +52,7 @@ const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.pa
  * The description is Markdown shown through the notes renderer read-only (D44) and edited with
  * an explicit Save; a revision conflict offers Reload or Copy my text.
  */
-export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, notify, uploadImage }: CardDialogProps) {
+export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, notify }: CardDialogProps) {
   const [card, setCard] = useState<CardDetail | null>(null);
   const [comments, setComments] = useState<CardComment[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -63,6 +69,12 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
   const [editingComment, setEditingComment] = useState<{ id: string; body: string } | null>(null);
   const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [attachments, setAttachments] = useState<CardAttachment[]>([]);
+  const [attaching, setAttaching] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<UploadedAttachment[]>([]);
+  const [unlinking, setUnlinking] = useState<CardAttachment | null>(null);
+  const cardFileRef = useRef<HTMLInputElement>(null);
+  const commentFileRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<CardDetail | null>(null);
   cardRef.current = card;
   const titleId = useId();
@@ -75,6 +87,7 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
       setTitle(view.card.title);
       setComments(view.comments);
       setHasMore(view.hasMoreComments);
+      setAttachments(view.attachments);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 404) onMissing();
       else setLoadError(taskErrorMessage(reason, "Could not load this card"));
@@ -82,12 +95,12 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
   }, [cardId, onMissing]);
   useEffect(() => { void load(); }, [load]);
 
-  const closeSubDialog = useCallback(() => setDeletingComment(null), []);
-  useHistoryDialogGuard(deletingComment !== null, closeSubDialog);
+  const closeSubDialog = useCallback(() => { setDeletingComment(null); setUnlinking(null); }, []);
+  useHistoryDialogGuard(deletingComment !== null || unlinking !== null, closeSubDialog);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || deletingComment || editing || editingComment) return;
+      if (event.key !== "Escape" || event.defaultPrevented || deletingComment || unlinking || editing || editingComment) return;
       // A dialog opened over the card (Move to…) handles its own Escape.
       if (window.document.querySelector(".file-dialog, .side-panel")) return;
       event.preventDefault();
@@ -95,7 +108,7 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deletingComment, editing, editingComment, onClose]);
+  }, [deletingComment, unlinking, editing, editingComment, onClose]);
 
   function applyCard(next: CardDetail) {
     setCard(next);
@@ -199,12 +212,22 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
     }
     setPosting(true);
     try {
-      const { comment } = await createComment(cardId, composer);
+      const files = pendingFiles;
+      const { comment } = await createCommentWithFiles(cardId, composer, files.map((file) => file.id));
       setComments((current) => [...current, comment]);
       setComposer("");
-      if (card) onChanged({ ...card, comment_count: card.comment_count + 1 });
+      setPendingFiles([]);
+      if (files.length) {
+        const timestamp = comment.created_at;
+        setAttachments((current) => [...current, ...files.map((file): CardAttachment => ({ document_id: file.id, card_id: cardId, comment_id: comment.id, linked_by: userId, linker_name: comment.author_name, name: file.name, mime_type: file.mime_type, preview_kind: file.preview_kind, size_bytes: file.size_bytes, created_at: timestamp }))]);
+      }
+      if (card) {
+        const next = { ...card, comment_count: card.comment_count + 1, attachment_count: card.attachment_count + files.length };
+        setCard(next);
+        onChanged(next);
+      }
     } catch (reason) {
-      notify(taskErrorCode(reason) === "LIMIT_REACHED" ? "This card has reached its comment limit" : taskErrorMessage(reason, "Could not post the comment"));
+      notify(taskErrorCode(reason) === "LIMIT_REACHED" ? taskErrorMessage(reason, "This card is full") : taskErrorMessage(reason, "Could not post the comment"));
     } finally {
       setPosting(false);
     }
@@ -230,8 +253,14 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
     setDeleteBusy(true);
     try {
       await deleteComment(commentId);
+      const removed = attachments.filter((item) => item.comment_id === commentId).length;
       setComments((current) => current.filter((item) => item.id !== commentId));
-      if (card) onChanged({ ...card, comment_count: Math.max(0, card.comment_count - 1) });
+      setAttachments((current) => current.filter((item) => item.comment_id !== commentId));
+      if (card) {
+        const next = { ...card, comment_count: Math.max(0, card.comment_count - 1), attachment_count: Math.max(0, card.attachment_count - removed) };
+        setCard(next);
+        onChanged(next);
+      }
       setDeletingComment(null);
       notify("Comment deleted");
     } catch (reason) {
@@ -241,6 +270,95 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
       setDeleteBusy(false);
     }
   }
+
+  function countChanged(delta: number) {
+    const current = cardRef.current;
+    if (!current) return;
+    const next = { ...current, attachment_count: Math.max(0, current.attachment_count + delta) };
+    setCard(next);
+    onChanged(next);
+  }
+
+  /** Uploads a file as a task attachment and links it to the card. */
+  async function attachFile(file: File) {
+    const uploaded = await uploadAttachment(file);
+    const { attachment } = await linkAttachment(cardId, uploaded.id);
+    setAttachments((current) => current.some((item) => item.document_id === attachment.document_id) ? current : [...current, attachment]);
+    countChanged(1);
+    return { uploaded, attachment };
+  }
+
+  async function attachFiles(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
+    setAttaching(true);
+    try {
+      for (const file of files) {
+        try {
+          await attachFile(file);
+        } catch (reason) {
+          notify(`${file.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
+        }
+      }
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  // Images pasted, dropped, or picked into the description become attachments of this card and
+  // are shown inline through the same content URL (never a data: or external URL).
+  async function uploadDescriptionImage(file: File) {
+    if (!isInsertableImageType(file.type)) throw new Error(IMAGE_REJECTED_MESSAGE);
+    const { uploaded } = await attachFile(file);
+    if (uploaded.preview_kind !== "image" || !isInsertableImageType(uploaded.mime_type.split(";")[0]!.trim())) {
+      throw new Error("Attached as a file: only PNG, JPEG, GIF, and WebP images show inline");
+    }
+    return { src: imageContentUrl(uploaded.id), alt: imageAltText(uploaded.name || file.name) };
+  }
+
+  async function pickCommentFiles(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
+    setAttaching(true);
+    try {
+      for (const file of files) {
+        try {
+          const uploaded = await uploadAttachment(file);
+          setPendingFiles((current) => [...current, uploaded]);
+        } catch (reason) {
+          notify(`${file.name}: ${taskErrorMessage(reason, "could not upload")}`);
+        }
+      }
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  async function unlink(attachment: CardAttachment) {
+    setDeleteBusy(true);
+    try {
+      const result = await unlinkAttachment(cardId, attachment.document_id);
+      setAttachments((current) => current.filter((item) => item.document_id !== attachment.document_id));
+      countChanged(-1);
+      notify(result.movedToBin ? `Removed “${attachment.name}”; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed “${attachment.name}” from this card`);
+    } catch (reason) {
+      notify(taskErrorMessage(reason, "Could not remove the attachment"));
+    } finally {
+      setDeleteBusy(false);
+      setUnlinking(null);
+    }
+  }
+
+  const attachmentList = (items: CardAttachment[]) => items.length > 0 && <ul className="task-attachments">
+    {items.map((item) => <li key={item.document_id} className="task-attachment">
+      {isInlineImage(item)
+        ? <a className="task-attachment-thumb" href={contentUrl(item.document_id, "inline")} target="_blank" rel="noopener noreferrer"><img src={contentUrl(item.document_id, "inline")} alt="" loading="lazy" /></a>
+        : <span className="task-attachment-icon" aria-hidden="true"><FileIcon /></span>}
+      <span className="task-attachment-copy"><span title={item.name}>{item.name}</span><small>{formatBytes(item.size_bytes)}{item.linker_name ? ` · ${item.linker_name}` : ""}</small></span>
+      <a className="icon-button" href={contentUrl(item.document_id, "attachment")} download aria-label={`Download ${item.name}`} title="Download"><Download /></a>
+      {canUnlink(item, userId, boardOwner) && <button className="icon-button" onClick={() => setUnlinking(item)} aria-haspopup="dialog" aria-label={`Remove ${item.name}`} title="Remove"><Trash2 /></button>}
+    </li>)}
+  </ul>;
 
   const column = card ? columns.find((item) => item.id === (columnId ?? card.column_id)) : undefined;
   const composerKey = (event: ReactKeyboardEvent<HTMLTextAreaElement>, submit: () => void) => {
@@ -298,7 +416,7 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
                   onNotice={notify}
                   label="Card description"
                   placeholder="Describe the work… Type / for commands"
-                  uploadImage={uploadImage ? (file) => uploadImage(card.id, file) : () => Promise.reject(new Error("Images can't be added to cards yet"))}
+                  uploadImage={uploadDescriptionImage}
                 />
                 {conflict && <div className="task-conflict" role="alert">
                   <p>Someone else changed this card while you were editing. Reload shows their version and replaces your text.</p>
@@ -315,6 +433,15 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
               : card.description.trim()
                 ? <div className="task-description-view"><NoteEditor key={`${card.id}:${card.revision}`} markdown={card.description} editable={false} onChange={() => undefined} label="Card description" /></div>
                 : <button className="task-description-empty" onClick={startEditing}>Add a description…</button>}
+          </section>
+
+          <section className="task-card-section" aria-labelledby={`${titleId}-files`}>
+            <header>
+              <h3 id={`${titleId}-files`}><Paperclip aria-hidden="true" />Attachments</h3>
+              <button className="secondary-button task-small-button" onClick={() => cardFileRef.current?.click()} disabled={attaching}><Paperclip />{attaching ? "Uploading…" : "Attach"}</button>
+              <input ref={cardFileRef} type="file" multiple hidden onChange={(event) => { void attachFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
+            </header>
+            {attachmentList(attachmentsFor(attachments, null)) || <p className="task-comment-empty">No files yet. Pasted images in the description are attached here too.</p>}
           </section>
 
           <section className="task-card-section" aria-labelledby={`${titleId}-comments`}>
@@ -340,17 +467,26 @@ export function CardDialog({ cardId, columns, columnId, boardOwner, onClose, onM
                     <span><button className="secondary-button task-small-button" onClick={() => setEditingComment(null)}>Cancel</button><button className="primary-button task-small-button" onClick={() => { void saveComment(); }}>Save</button></span>
                   </div>
                   : <p className="task-comment-body">{comment.body}</p>}
+                {attachmentList(attachmentsFor(attachments, comment.id))}
               </li>)}
               {!comments.length && <li className="task-comment-empty">No comments yet.</li>}
             </ol>
             <div className="task-comment-composer">
               <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={(event) => composerKey(event, () => { void post(); })} placeholder="Write a comment" aria-label="Write a comment" rows={2} disabled={posting} />
-              <button className="primary-button" onClick={() => { void post(); }} disabled={posting || !composer.trim()}>{posting ? "Posting…" : "Comment"}</button>
+              {pendingFiles.length > 0 && <ul className="task-pending-files" aria-label="Files to attach">
+                {pendingFiles.map((file) => <li key={file.id}><Paperclip aria-hidden="true" /><span title={file.name}>{file.name}</span><button className="icon-button" onClick={() => setPendingFiles((current) => current.filter((item) => item.id !== file.id))} aria-label={`Don't attach ${file.name}`}><X /></button></li>)}
+              </ul>}
+              <span className="task-composer-actions">
+                <button className="secondary-button task-small-button" onClick={() => commentFileRef.current?.click()} disabled={attaching || posting || pendingFiles.length >= 10}><Paperclip />{attaching ? "Uploading…" : "Attach"}</button>
+                <input ref={commentFileRef} type="file" multiple hidden onChange={(event) => { void pickCommentFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
+                <button className="primary-button" onClick={() => { void post(); }} disabled={posting || attaching || !composer.trim()}>{posting ? "Posting…" : "Comment"}</button>
+              </span>
             </div>
           </section>
         </>}
       </div>
     </section>
+    {unlinking && <ConfirmDialog title="Remove this attachment?" message={unlinkConfirmMessage(unlinking.name, unlinking.linked_by === userId)} confirmLabel="Remove" danger busy={deleteBusy} onConfirm={() => { void unlink(unlinking); }} onCancel={closeSubDialog} />}
     {deletingComment && <ConfirmDialog title="Delete this comment?" message="The comment is deleted for everyone. This cannot be undone." confirmLabel="Delete comment" danger busy={deleteBusy} onConfirm={() => { void removeComment(deletingComment); }} onCancel={closeSubDialog} />}
   </>;
 }

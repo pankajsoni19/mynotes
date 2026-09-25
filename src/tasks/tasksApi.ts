@@ -1,4 +1,5 @@
-import { api, ApiError } from "../api";
+import { api, ApiError, getCsrfToken } from "../api";
+import { uploadErrorMessage } from "../files/filesApi";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -72,7 +73,7 @@ export type CardComment = {
   created_at: string;
   edited_at: string | null;
 };
-export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean };
+export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean; attachments: CardAttachment[] };
 
 export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}`);
 export const updateCard = (cardId: string, change: { title?: string; description?: string; revision: number }) =>
@@ -82,3 +83,38 @@ export const listComments = (cardId: string, before: string) =>
 export const createComment = (cardId: string, body: string) => api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", { body }));
 export const updateComment = (commentId: string, body: string) => api<{ comment: CardComment }>(`/tasks/comments/${commentId}`, json("PATCH", { body }));
 export const deleteComment = (commentId: string) => api<{ ok: true }>(`/tasks/comments/${commentId}`, json("DELETE", {}));
+
+export type CardAttachment = {
+  document_id: string;
+  card_id: string;
+  comment_id: string | null;
+  linked_by: string | null;
+  linker_name: string | null;
+  name: string;
+  mime_type: string;
+  preview_kind: string;
+  size_bytes: number;
+  created_at: string;
+};
+
+export type UploadedAttachment = { id: string; name: string; mime_type: string; preview_kind: string; size_bytes: number };
+
+/** Uploads a file as a task attachment (no folder, never in Files). It is readable to the board only once linked. */
+export async function uploadAttachment(file: File): Promise<UploadedAttachment> {
+  const body = new FormData();
+  body.append("file", file, file.name || "attachment");
+  const headers = new Headers({ "Idempotency-Key": crypto.randomUUID() });
+  const csrf = getCsrfToken();
+  if (csrf) headers.set("X-CSRF-Token", csrf);
+  const response = await fetch("/api/files?purpose=task_attachment", { method: "POST", body, headers, credentials: "same-origin" });
+  const payload = await response.json().catch(() => ({})) as { document?: UploadedAttachment };
+  if (!response.ok || !payload.document) throw new Error(uploadErrorMessage(response.status, payload));
+  return payload.document;
+}
+
+export const linkAttachment = (cardId: string, documentId: string, commentId?: string) =>
+  api<{ attachment: CardAttachment }>(`/tasks/cards/${cardId}/attachments`, json("POST", commentId ? { documentId, commentId } : { documentId }));
+export const unlinkAttachment = (cardId: string, documentId: string) =>
+  api<{ ok: true; movedToBin: boolean }>(`/tasks/cards/${cardId}/attachments/${documentId}`, json("DELETE", {}));
+export const createCommentWithFiles = (cardId: string, body: string, attachmentIds: string[]) =>
+  api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", attachmentIds.length ? { body, attachmentIds } : { body }));

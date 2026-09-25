@@ -29,3 +29,21 @@ export function commentBodyError(body: string) {
   if (new TextEncoder().encode(body).length > COMMENT_MAX_BYTES) return "Comments can be at most 16 KB.";
   return null;
 }
+
+type AttachmentLike = { document_id: string; comment_id: string | null; linked_by: string | null; preview_kind: string; mime_type: string };
+
+/** Files attached to the card itself (null) or through one comment. */
+export function attachmentsFor<T extends AttachmentLike>(attachments: readonly T[], commentId: string | null) {
+  return attachments.filter((item) => item.comment_id === commentId);
+}
+
+/** Whether the viewer may remove an attachment: whoever linked it, or the board owner. */
+export const canUnlink = (attachment: AttachmentLike, userId: string, boardOwner: boolean) => boardOwner || attachment.linked_by === userId;
+
+/** Images the server previews inline are shown as thumbnails; everything else is a download. */
+export const isInlineImage = (attachment: Pick<AttachmentLike, "preview_kind" | "mime_type">) =>
+  attachment.preview_kind === "image" && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(attachment.mime_type.split(";")[0]!.trim().toLowerCase());
+
+export const unlinkConfirmMessage = (name: string, ownFile: boolean) => ownFile
+  ? `Remove “${name}” from this card? If no other card uses it, it moves to your Bin for 30 days.`
+  : `Remove “${name}” from this card? If no other card uses it, it moves to its uploader's Bin for 30 days.`;
