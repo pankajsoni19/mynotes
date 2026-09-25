@@ -139,6 +139,8 @@ This mirrors the notes endpoints exactly.
 - **Missing or not owned:** 404.
 - Audit: `document.delete { documentId }`.
 
+**Non-file documents (Wave 9 review fix):** `PATCH /api/files/:id`, `GET`/`PUT /api/files/:id/sharing` return 404 for documents whose `purpose` is not `file`; `DELETE /api/files/:id` bins an attachment only when no card links it, otherwise 409 `{ code: "ATTACHMENT_LINKED" }`. Folder and sharing access apply only to `file` documents; attachments are readable solely through their board (Wave 9 §3.2).
+
 <a id="content"></a>
 ### Content
 

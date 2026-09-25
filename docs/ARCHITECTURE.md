@@ -128,6 +128,8 @@ Every step runs under the item's resource lock and is idempotent. Restore is a c
 
 Bin purges run even when the file sweep fails. Logs carry counts only.
 
+- **Task attachments never linked (Wave 9 review fix):** uploads with `purpose = 'task_attachment'` that have no `card_attachments` row after 24 hours are moved to the uploader's Bin, 100 per run, audited with reason `attachment_never_linked` and no actor.
+
 ## Search
 
 Full-text search over notes (WAVES_7-9.md §2) uses an SQLite FTS5 table that stores its text, so `snippet()` and `highlight()` work (migration 008):
