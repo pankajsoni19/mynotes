@@ -142,3 +142,56 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
   }
   return counts;
 }
+
+export type BinItem = {
+  type: BinType;
+  id: string;
+  title: string;
+  folder_id: string | null;
+  folder_name: string | null;
+  size_bytes: number | null;
+  deleted_at: string;
+  purge_after: string;
+  purging: boolean;
+};
+
+export const BIN_LIST_LIMIT = 500;
+
+/** The caller's own binned items, newest deletion first. Folder columns are null when the original folder is gone (restore then targets Default). */
+export function listBin(ownerId: string, type: BinType | null) {
+  const notes = `SELECT 'note' AS type, n.id, n.title, f.id AS folder_id, f.name AS folder_name, NULL AS size_bytes,
+      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging
+    FROM notes n LEFT JOIN folders f ON f.id = n.folder_id AND f.owner_id = n.owner_id
+    WHERE n.owner_id = $ownerId AND n.deleted_at IS NOT NULL`;
+  const documents = `SELECT 'document' AS type, d.id, d.name AS title, f.id AS folder_id, f.name AS folder_name, d.size_bytes,
+      d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging
+    FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
+    WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
+  const source = type === "note" ? notes : type === "document" ? documents : `${notes} UNION ALL ${documents}`;
+  const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
+    .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging"> & { purging: number }>;
+  return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1 }));
+}
+
+/**
+ * Empty Bin: purges each of the owner's binned items independently, in
+ * batches of SWEEP_BATCH_SIZE. Failed byte removals stay tombstoned for the sweeper.
+ */
+export async function emptyBin(ownerId: string) {
+  const counts = { purged: 0, pending: 0 };
+  for (const type of ["note", "document"] as const) {
+    let after = "";
+    for (;;) {
+      const batch = db.query(`SELECT id FROM ${tables[type]} WHERE owner_id = ? AND deleted_at IS NOT NULL AND id > ? ORDER BY id LIMIT ?`)
+        .all(ownerId, after, SWEEP_BATCH_SIZE) as Array<{ id: string }>;
+      if (batch.length === 0) break;
+      for (const { id } of batch) {
+        const outcome = await withResourceLock(lockKey(type, id), () => purgeLocked(type, id, { reason: "user", actorId: ownerId, ownerId }));
+        if (outcome === "purged") counts.purged += 1;
+        else if (outcome === "pending") counts.pending += 1;
+      }
+      after = batch[batch.length - 1]!.id;
+    }
+  }
+  return counts;
+}

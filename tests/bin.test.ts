@@ -303,3 +303,243 @@ describe("restore, purge, and the retention sweeper", () => {
     expect(existsSync(noteDir(id))).toBe(false);
   });
 });
+
+type BinItem = { type: "note" | "document"; id: string; title: string; folder_id: string | null; folder_name: string | null; size_bytes: number | null; deleted_at: string; purge_after: string; purging: boolean };
+const listBin = async (session: Session, query = "") => json<{ items: BinItem[] }>(await request(`/bin${query}`, {}, session));
+const restore = (session: Session, type: string, id: string) => request(`/bin/${type}/${id}/restore`, { method: "POST", body: "{}" }, session);
+const purge = (session: Session, type: string, id: string) => request(`/bin/${type}/${id}`, { method: "DELETE", body: "{}" }, session);
+const emptyBin = (session: Session) => request("/bin", { method: "DELETE", body: "{}" }, session);
+
+describe("Bin API", () => {
+  test("lists only the caller's binned notes and documents, newest deletion first, with a type filter", async () => {
+    const owner = await createUser("Bin list owner");
+    const other = await createUser("Bin list other");
+    const folderId = await createFolder(owner, "Listed folder");
+    const noteId = await createNote(owner, "# Listed note", { publish: true, folderId });
+    const document = await uploadDocument(owner, "twelve bytes", "listed.txt");
+    const live = await createNote(owner, "Still live", { publish: true });
+    const othersNote = await createNote(other, "Not yours", { publish: true });
+    await deleteNote(owner, noteId);
+    await Bun.sleep(5);
+    await deleteDocument(owner, document.id);
+    await deleteNote(other, othersNote);
+
+    const { items } = await listBin(owner);
+    expect(items.map((item) => item.id)).toEqual([document.id, noteId]);
+    const [documentItem, noteItem] = items;
+    expect(noteItem).toEqual({
+      type: "note", id: noteId, title: "Listed note", folder_id: folderId, folder_name: "Listed folder", size_bytes: null,
+      deleted_at: noteRow(noteId)!.deleted_at!, purge_after: noteRow(noteId)!.purge_after!, purging: false
+    });
+    expect(documentItem).toMatchObject({ type: "document", title: "listed.txt", folder_name: "Default", size_bytes: 12, purging: false });
+    expect(Object.keys(documentItem!).sort()).toEqual(["deleted_at", "folder_id", "folder_name", "id", "purge_after", "purging", "size_bytes", "title", "type"]);
+    expect(items.some((item) => item.id === live || item.id === othersNote)).toBe(false);
+    expect((await listBin(owner, "?type=note")).items.map((item) => item.id)).toEqual([noteId]);
+    expect((await listBin(owner, "?type=document")).items.map((item) => item.id)).toEqual([document.id]);
+    expect((await request("/bin?type=folder", {}, owner)).status).toBe(400);
+
+    // The original folder is gone: the item reports no folder and will restore to Default.
+    expect((await request(`/folders/${folderId}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    expect((await listBin(owner, "?type=note")).items[0]).toMatchObject({ folder_id: null, folder_name: null });
+    expect((await request("/bin", {}, undefined)).status).toBe(401);
+  });
+
+  test("restore returns items to their folder or Default, reports visibility, and reactivates shares", async () => {
+    const owner = await createUser("Restore owner");
+    const recipient = await createUser("Restore recipient");
+    const stranger = await createUser("Restore stranger");
+    const folderId = await createFolder(owner, "Restore target");
+    const shared = await createNote(owner, "# Shared note", { publish: true, folderId });
+    const shareResponse = await request(`/notes/${shared}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [recipient.userId] }) }, owner);
+    expect(shareResponse.status).toBe(200);
+    expect((await request(`/notes/${shared}`, {}, recipient)).status).toBe(200);
+    await deleteNote(owner, shared);
+    expect((await request(`/notes/${shared}`, {}, recipient)).status).toBe(404);
+
+    expect((await restore(stranger, "note", shared)).status).toBe(404);
+    expect((await restore(recipient, "note", shared)).status).toBe(404);
+    const restored = await restore(owner, "note", shared);
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toEqual({ ok: true, folderId, folderName: "Restore target", visibility: "selected" });
+    expect((await request(`/notes/${shared}`, {}, recipient)).status).toBe(200);
+    const again = await restore(owner, "note", shared);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ ok: true, alreadyRestored: true, folderId, folderName: "Restore target" });
+    expect(db.query("SELECT event_type FROM audit_log WHERE note_id = ? AND event_type = 'note.restore'").all(shared)).toHaveLength(1);
+
+    // Default fallback: the original folder is deleted and Default is shared with everyone.
+    const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
+    expect((await request(`/folders/${defaultFolder}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "all_users", userIds: [] }) }, owner)).status).toBe(200);
+    const document = await uploadDocument(owner, "inheriting file", "inherit.txt", folderId);
+    const draftNote = await createNote(owner, "Draft only, never published", { folderId });
+    await deleteDocument(owner, document.id);
+    await discardDraft(owner, draftNote);
+    expect((await request(`/folders/${folderId}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    const documentRestore = await restore(owner, "document", document.id);
+    expect(await documentRestore.json()).toEqual({ ok: true, folderId: defaultFolder, folderName: "Default", visibility: "all_users" });
+    expect((await request(`/files/${document.id}/content`, {}, stranger)).status).toBe(200);
+    expect(db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'document.restore' AND metadata_json LIKE ?").all(`%${document.id}%`)).toHaveLength(1);
+
+    const noteRestore = await restore(owner, "note", draftNote);
+    expect(await noteRestore.json()).toMatchObject({ ok: true, folderId: defaultFolder, folderName: "Default" });
+    const reopened = await json<{ note: { markdown: string; folder_id: string; current_version: number } }>(await request(`/notes/${draftNote}`, {}, owner));
+    expect(reopened.note).toMatchObject({ markdown: "Draft only, never published", folder_id: defaultFolder, current_version: 0 });
+
+    expect((await restore(owner, "folder", document.id)).status).toBe(400);
+    expect((await restore(owner, "note", "not-a-uuid")).status).toBe(400);
+    expect((await restore(owner, "note", crypto.randomUUID())).status).toBe(404);
+  });
+
+  test("delete forever removes bytes, rows, and cascades, audits the purge, and is idempotent", async () => {
+    const owner = await createUser("Purge owner");
+    const recipient = await createUser("Purge recipient");
+    const noteId = await createNote(owner, "# Forever", { publish: true });
+    await request(`/notes/${noteId}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [recipient.userId] }) }, owner);
+    const document = await uploadDocument(owner, "forever file", "forever.txt");
+    await request(`/files/${document.id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [recipient.userId] }) }, owner);
+
+    expect((await purge(owner, "note", noteId)).status).toBe(409);
+    const live = await purge(owner, "document", document.id);
+    expect(live.status).toBe(409);
+    expect(((await live.json()) as { code: string }).code).toBe("NOT_IN_BIN");
+
+    await deleteNote(owner, noteId);
+    await deleteDocument(owner, document.id);
+    expect((await purge(recipient, "note", noteId)).status).toBe(404);
+    expect(noteRow(noteId)).not.toBeNull();
+
+    for (const [type, id] of [["note", noteId], ["document", document.id]] as const) {
+      const response = await purge(owner, type, id);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect((await purge(owner, type, id)).status).toBe(404);
+      expect((await restore(owner, type, id)).status).toBe(404);
+    }
+    expect(noteRow(noteId)).toBeNull();
+    expect(existsSync(noteDir(noteId))).toBe(false);
+    expect(db.query("SELECT 1 FROM note_versions WHERE note_id = ?").all(noteId)).toHaveLength(0);
+    expect(db.query("SELECT 1 FROM note_shares WHERE note_id = ?").all(noteId)).toHaveLength(0);
+    expect(db.query("SELECT 1 FROM documents WHERE id = ?").get(document.id)).toBeNull();
+    expect(db.query("SELECT 1 FROM document_shares WHERE document_id = ?").all(document.id)).toHaveLength(0);
+    expect(existsSync(objectPath(document.id))).toBe(false);
+    const audits = db.query("SELECT event_type, actor_id, note_id, metadata_json FROM audit_log WHERE event_type IN ('note.purge', 'document.purge') AND (metadata_json LIKE ? OR metadata_json LIKE ?) ORDER BY event_type")
+      .all(`%${noteId}%`, `%${document.id}%`) as Array<{ event_type: string; actor_id: string; note_id: string | null; metadata_json: string }>;
+    expect(audits.map((row) => [row.event_type, row.actor_id, row.note_id, JSON.parse(row.metadata_json)])).toEqual([
+      ["document.purge", owner.userId, null, { documentId: document.id, reason: "user" }],
+      ["note.purge", owner.userId, null, { noteId, reason: "user" }]
+    ]);
+    // Earlier audit rows for the note survive with their note_id nulled by the FK.
+    expect((db.query("SELECT COUNT(*) AS count FROM audit_log WHERE note_id = ?").get(noteId) as { count: number }).count).toBe(0);
+    expect(JSON.stringify(audits)).not.toContain("forever.txt");
+  });
+
+  test("a tombstoned item is unreadable, cannot be restored, and is finished by the sweeper", async () => {
+    const owner = await createUser("Tombstone owner");
+    const noteId = await createNote(owner, "# Tombstoned", { publish: true });
+    const document = await uploadDocument(owner, "tombstoned bytes", "tomb.txt");
+    await deleteNote(owner, noteId);
+    await deleteDocument(owner, document.id);
+    const startedAt = new Date().toISOString();
+    db.query("UPDATE notes SET purge_started_at = ? WHERE id = ?").run(startedAt, noteId);
+    db.query("UPDATE documents SET purge_started_at = ? WHERE id = ?").run(startedAt, document.id);
+    expect(existsSync(join(noteDir(noteId), "versions", "000001.md"))).toBe(true);
+
+    expect((await request(`/notes/${noteId}`, {}, owner)).status).toBe(404);
+    expect((await request(`/files/${document.id}/content`, {}, owner)).status).toBe(404);
+    expect((await deleteDocument(owner, document.id)).status).toBe(404);
+    expect((await listBin(owner)).items.every((item) => item.purging)).toBe(true);
+    for (const [type, id] of [["note", noteId], ["document", document.id]] as const) {
+      const response = await restore(owner, type, id);
+      expect(response.status).toBe(409);
+      expect(((await response.json()) as { code: string }).code).toBe("PURGING");
+    }
+    await runSweep();
+    expect(noteRow(noteId)).toBeNull();
+    expect(existsSync(noteDir(noteId))).toBe(false);
+    expect(db.query("SELECT 1 FROM documents WHERE id = ?").get(document.id)).toBeNull();
+    expect(existsSync(objectPath(document.id))).toBe(false);
+  });
+
+  test("a failed byte removal answers 202 pending and the next sweep finishes", async () => {
+    const owner = await createUser("Pending owner");
+    const noteId = await createNote(owner, "# Pending", { publish: true });
+    await deleteNote(owner, noteId);
+    const original = bin.binStorage.removeBytes;
+    bin.binStorage.removeBytes = async () => { throw Object.assign(new Error("injected"), { code: "EBUSY" }); };
+    try {
+      const response = await purge(owner, "note", noteId);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ ok: true, pending: true });
+    } finally {
+      bin.binStorage.removeBytes = original;
+    }
+    expect(noteRow(noteId)!.purge_started_at).not.toBeNull();
+    expect(existsSync(noteDir(noteId))).toBe(true);
+    expect((await restore(owner, "note", noteId)).status).toBe(409);
+    await runSweep();
+    expect(noteRow(noteId)).toBeNull();
+    expect(existsSync(noteDir(noteId))).toBe(false);
+    expect((await purge(owner, "note", noteId)).status).toBe(404);
+  });
+
+  test("Empty Bin purges only the caller's items and reports counts", async () => {
+    const owner = await createUser("Empty owner");
+    const other = await createUser("Empty other");
+    const ownerNotes = [await createNote(owner, "# One", { publish: true }), await createNote(owner, "Two draft")];
+    const ownerDocument = await uploadDocument(owner, "empty me", "empty.txt");
+    const keepLive = await createNote(owner, "# Live", { publish: true });
+    const othersNote = await createNote(other, "# Theirs", { publish: true });
+    for (const id of ownerNotes) await deleteNote(owner, id);
+    await deleteDocument(owner, ownerDocument.id);
+    await deleteNote(other, othersNote);
+
+    const response = await emptyBin(owner);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, purged: 3, pending: 0 });
+    expect((await listBin(owner)).items).toHaveLength(0);
+    for (const id of ownerNotes) expect(existsSync(noteDir(id))).toBe(false);
+    expect(existsSync(objectPath(ownerDocument.id))).toBe(false);
+    expect(noteRow(keepLive)!.deleted_at).toBeNull();
+    expect((await listBin(other)).items.map((item) => item.id)).toEqual([othersNote]);
+    expect(existsSync(noteDir(othersNote))).toBe(true);
+    expect(await json(await emptyBin(owner))).toEqual({ ok: true, purged: 0, pending: 0 });
+  });
+
+  test("parallel restore and delete forever: exactly one wins with no half state", async () => {
+    const owner = await createUser("Race owner");
+    for (let round = 0; round < 6; round += 1) {
+      const noteId = await createNote(owner, `# Race ${round}`, { publish: true });
+      await deleteNote(owner, noteId);
+      const [restored, purged] = round % 2 === 0
+        ? await Promise.all([restore(owner, "note", noteId), purge(owner, "note", noteId)])
+        : (await Promise.all([purge(owner, "note", noteId), restore(owner, "note", noteId)])).reverse() as [Response, Response];
+      const pair = [restored.status, purged.status];
+      const row = noteRow(noteId);
+      if (row) {
+        expect(pair).toEqual([200, 409]);
+        expect(row).toMatchObject({ deleted_at: null, purge_started_at: null });
+        expect(existsSync(join(noteDir(noteId), "versions", "000001.md"))).toBe(true);
+      } else {
+        expect(pair).toEqual([404, 200]);
+        expect(existsSync(noteDir(noteId))).toBe(false);
+      }
+    }
+  });
+
+  test("purging a binned document frees its quota", async () => {
+    const owner = await createUser("Quota owner");
+    const chunk = "q".repeat(4_000_000);
+    const documents = [];
+    for (let index = 0; index < 3; index += 1) documents.push(await uploadDocument(owner, chunk, `quota-${index}.bin`));
+    const upload = () => {
+      const form = new FormData();
+      form.append("file", new Blob([chunk]), "extra.bin");
+      return request("/files", { method: "POST", body: form }, owner);
+    };
+    expect((await upload()).status).toBe(507);
+    await deleteDocument(owner, documents[0]!.id);
+    expect((await upload()).status).toBe(507);
+    expect((await purge(owner, "document", documents[0]!.id)).status).toBe(200);
+    expect((await upload()).status).toBe(201);
+  }, 20_000);
+});
