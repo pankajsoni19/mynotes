@@ -238,7 +238,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
 
 function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
   const [section, setSection] = useState<"security" | "mcp" | "about">("security");
-  const [appInfo, setAppInfo] = useState({ version: "0.2.5", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState({ version: "0.3.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
