@@ -1,63 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { dataDir, db, origin, register, request, tailscaleOrigin, type Session } from "./support/harness";
 
-const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
-const origin = "http://localhost:22026";
-const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
-process.env.DATA_DIR = dataDir;
-process.env.APP_ORIGIN = origin;
-process.env.APP_ORIGINS = `${origin},${tailscaleOrigin}`;
-process.env.COOKIE_SECURE = "false";
-process.env.PORT = "22026";
-process.env.NODE_ENV = "test";
-process.env.ALLOW_REGISTRATION = "true";
-process.env.TOTP_POLICY = "optional";
-process.env.TOTP_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
-const allowedTestEmails = Array.from({ length: 10 }, (_, index) => `allowed-${index + 1}@example.test`);
-process.env.ALLOWED_EMAILS = allowedTestEmails.join(",");
-
-const serverOptions = (await import("../server/index")).default;
-const { db } = await import("../server/db");
 const { totpCodeAt, totpCounter } = await import("../server/totp");
-const server = Bun.serve(serverOptions);
-
-type Session = { cookie: string; setCookie: string; csrf: string; userId: string; email: string; password: string };
-let registrationIndex = 0;
-
-async function request(path: string, options: RequestInit = {}, session?: Session) {
-  const headers = new Headers(options.headers);
-  if (options.body) headers.set("Content-Type", "application/json");
-  if (!headers.has("Origin")) headers.set("Origin", origin);
-  if (session) {
-    headers.set("Cookie", session.cookie);
-    if (options.method && options.method !== "GET") headers.set("X-CSRF-Token", session.csrf);
-  }
-  return fetch(`${origin}/api${path}`, { ...options, headers });
-}
-
-async function register(label: string, requestOrigin = origin): Promise<Session> {
-  const allowedEmail = allowedTestEmails[registrationIndex++];
-  if (!allowedEmail) throw new Error("Test email allowlist exhausted");
-  const password = "correct horse battery staple";
-  const response = await request("/auth/register", {
-    method: "POST",
-    headers: { Origin: requestOrigin },
-    body: JSON.stringify({ email: allowedEmail, displayName: label, password })
-  });
-  expect(response.status).toBe(201);
-  const body = await response.json() as { csrfToken: string; user: { id: string } };
-  const setCookie = response.headers.get("set-cookie") ?? "";
-  const cookie = setCookie.split(";", 1)[0];
-  expect(cookie).toBeTruthy();
-  return { cookie: cookie!, setCookie, csrf: body.csrfToken, userId: body.user.id, email: allowedEmail, password };
-}
-
-afterAll(() => {
-  server.stop(true);
-  rmSync(dataDir, { recursive: true, force: true });
-});
 
 describe("authorization and version workflow", () => {
   test("enforces restrictive data and database permissions", () => {

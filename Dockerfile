@@ -15,6 +15,7 @@ COPY public ./public
 COPY src ./src
 COPY server ./server
 COPY tests ./tests
+COPY bunfig.toml ./
 RUN bun run typecheck && bun test && bun run build
 
 FROM oven/bun:1.2.22-alpine@sha256:ab596b6d0dcad05d23799b89451e92f4cdc16da184a9a4d240c42eaf3c4b9278 AS production-dependencies
