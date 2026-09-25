@@ -143,12 +143,12 @@ Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09
 **Chosen and planned (Waves 7 → 9 → 8, [docs/plan/WAVES_7-9.md](docs/plan/WAVES_7-9.md), director-reviewed with four required changes):** full-text search in notes (v0.5.0); Task Boards module with sharing, draggable cards, comments, attachments (v0.6.0, four runnable stages); MCP coverage across notes, files, and tasks with per-key scopes and draft-only writes (v0.7.0). Start after Wave 6.
 
 **New standalone modules, ranked by value for effort (operator: "look good, keep for later"):**
-- [ ] Today dashboard (S/M) — read-only home pulling due tasks, recent notes/files, Bin warnings; natural mobile landing page
+- [ ] Today dashboard (S/M) — **chosen 2026-09-25, planned as Wave 10 in [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md)** — read-only home pulling due tasks, recent notes/files, Bin warnings; natural mobile landing page
 - [ ] Journal (S) — note engine plus date key, mood, prompts, streaks; habits fold in
 - [ ] Agent inbox and routines (M) — stored routines run by outside AI clients over MCP; results return as proposals to approve
 - [ ] Bookmarks and read-later (M) — snapshots stored through Files, never rendered as HTML; fetching off by default with strict server-request protections
-- [ ] Calendar and reminders (M, staged) — subscription feed first, push reminders next, CalDAV only on demand
-- [ ] Collections (L) — generic typed tables with templates (inventory, recipes, subscriptions, expenses); see the report for downsides
+- [ ] Calendar and reminders (M, staged) — **chosen 2026-09-25, planned as Wave 12** — events, Web Push reminders on HTTPS origins, read-only iCalendar feed; CalDAV out of scope
+- [ ] Collections (L) — **chosen 2026-09-25, planned as Wave 11** — generic typed tables with templates (inventory, recipes, subscriptions, expenses, contacts-lite); see the report for downsides
 - Next in line if wanted: whiteboard/canvas stored as files. Rejected for now: password vault, scanning/OCR, photo gallery, transcription, chat, RSS (reasons in the report).
 
 **Enhancements to existing modules (not chosen yet):** tags, wikilinks/backlinks, daily notes and templates, cross-note task list, Markdown export and Obsidian/Notion/Joplin import, passkeys, installable offline app with share target, web clipper, document OCR, encrypted vault notes.
