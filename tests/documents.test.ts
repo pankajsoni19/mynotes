@@ -885,3 +885,121 @@ describe("document content", () => {
     await waitFor(() => openDescriptorsFor(path) === 0);
   });
 });
+
+const { config } = await import("../server/config");
+
+/** A multipart upload whose body is held after the part header until `release()` is called. */
+function gatedUpload(session: Session, filename: string, size: number, headers: Record<string, string> = {}) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const head = encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n\r\n`);
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
+  let step = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(stream) {
+      if (step === 0) {
+        stream.enqueue(head);
+        stream.enqueue(new Uint8Array(1024).fill(0x64));
+      } else if (step === 1) {
+        await gate;
+        stream.enqueue(new Uint8Array(size - 1024).fill(0x64));
+      } else {
+        stream.enqueue(tail);
+        stream.close();
+      }
+      step += 1;
+    }
+  });
+  const response = request("/files", { method: "POST", body, headers: { "Content-Type": multipartType, ...headers }, duplex: "half" } as RequestInit, session);
+  return { response, release };
+}
+
+const stagedCount = () => listDir(stagingDir).filter((name) => name.endsWith(".part")).length;
+const ownerObjectsOnDisk = (userId: string) =>
+  (db.query("SELECT id FROM documents WHERE owner_id = ?").all(userId) as Array<{ id: string }>).filter((row) => existsSync(objectPath(row.id))).length;
+
+describe("upload limit races", () => {
+  test("refuses an upload with 507 DISK_FULL when free space would drop below the floor", async () => {
+    const owner = await createUser("Disk full owner");
+    const baseline = { staging: stagedCount(), objects: listDir(objectsDir).length };
+    const previous = config.minFreeDiskBytes;
+    config.minFreeDiskBytes = Number.MAX_SAFE_INTEGER;
+    try {
+      const response = await upload(owner, "some bytes", "disk.txt");
+      expect(response.status).toBe(507);
+      expect(await response.json()).toEqual({ error: "Storage is full", code: "DISK_FULL" });
+    } finally {
+      config.minFreeDiskBytes = previous;
+    }
+    expect(stagedCount()).toBe(baseline.staging);
+    expect(listDir(objectsDir).length).toBe(baseline.objects);
+    expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?").get(owner.userId)).toEqual({ count: 0 });
+    // The slot and reservation were released: a normal upload still works.
+    await uploadOk(owner, "some bytes", "disk.txt");
+  });
+
+  test("parallel uploads never exceed the quota together", async () => {
+    const owner = await createUser("Parallel quota owner");
+    const quota = config.userStorageQuotaBytes;
+    const used = 5 * 1_048_576;
+    insertDocumentRow(owner.userId, crypto.randomUUID(), used);
+    const size = 3 * 1_048_576;
+    const responses = await Promise.all([1, 2, 3].map((index) => upload(owner, new Uint8Array(size).fill(index), `part-${index}.bin`)));
+    const statuses = responses.map((response) => response.status);
+    const accepted = statuses.filter((status) => status === 201).length;
+    expect(accepted).toBeGreaterThanOrEqual(1);
+    expect(used + accepted * size).toBeLessThanOrEqual(quota);
+    for (const response of responses) {
+      const body = (await response.json()) as { code?: string };
+      if (response.status !== 201) {
+        expect(response.status).toBe(507);
+        expect(body.code).toBe("QUOTA_EXCEEDED");
+      }
+    }
+    const stored = (db.query("SELECT COALESCE(SUM(size_bytes), 0) AS total FROM documents WHERE owner_id = ?").get(owner.userId) as { total: number }).total;
+    expect(stored).toBe(used + accepted * size);
+    expect(stored).toBeLessThanOrEqual(quota);
+    expect(ownerObjectsOnDisk(owner.userId)).toBe(accepted);
+    await waitFor(() => stagedCount() === 0);
+  });
+
+  test("the in-transaction quota re-check rejects an upload overtaken by other usage", async () => {
+    const owner = await createUser("Overtaken quota owner");
+    const quota = config.userStorageQuotaBytes;
+    insertDocumentRow(owner.userId, crypto.randomUUID(), quota - 4 * 1_048_576);
+    const objectsBefore = listDir(objectsDir).length;
+    const size = 3 * 1_048_576;
+    const pending = gatedUpload(owner, "overtaken.bin", size);
+    await waitFor(() => stagedCount() > 0);
+    // Usage grows while the upload streams (the pre-check already admitted it).
+    insertDocumentRow(owner.userId, crypto.randomUUID(), 2 * 1_048_576);
+    pending.release();
+    const response = await pending.response;
+    expect(response.status).toBe(507);
+    expect(((await response.json()) as { code: string }).code).toBe("QUOTA_EXCEEDED");
+    expect(listDir(objectsDir).length).toBe(objectsBefore);
+    expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ? AND name = 'overtaken.bin'").get(owner.userId)).toEqual({ count: 0 });
+    await waitFor(() => stagedCount() === 0);
+  });
+
+  test("two concurrent uploads with one Idempotency-Key keep one document", async () => {
+    const owner = await createUser("Concurrent key owner");
+    const key = crypto.randomUUID();
+    const objectsBefore = listDir(objectsDir).length;
+    const first = gatedUpload(owner, "twin.bin", 200_000, { "Idempotency-Key": key });
+    const second = gatedUpload(owner, "twin.bin", 200_000, { "Idempotency-Key": key });
+    // Both requests are past the pre-stream replay check before either can insert.
+    await waitFor(() => stagedCount() >= 2);
+    first.release();
+    second.release();
+    const responses = await Promise.all([first.response, second.response]);
+    const bodies = await Promise.all(responses.map((response) => response.json() as Promise<{ document: UploadedDocument; idempotentReplay?: boolean }>));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 201]);
+    expect(bodies[0]!.document.id).toBe(bodies[1]!.document.id);
+    expect(bodies.filter((body) => body.idempotentReplay === true)).toHaveLength(1);
+    expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ? AND upload_key = ?").get(owner.userId, key)).toEqual({ count: 1 });
+    expect(listDir(objectsDir).length).toBe(objectsBefore + 1);
+    expect(existsSync(objectPath(bodies[0]!.document.id))).toBe(true);
+    await waitFor(() => stagedCount() === 0);
+  });
+});
