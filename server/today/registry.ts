@@ -12,6 +12,8 @@
  * `upcoming`) call `registerTodayProvider` from their own code.
  */
 
+import { hasScope, type McpScope } from "../mcpScopes";
+
 export const TODAY_LIMIT = 10;
 export const TODAY_FETCH = TODAY_LIMIT + 1;
 
@@ -29,6 +31,11 @@ export type TodayPage<T = unknown> = { items: T[]; more: boolean };
 export type TodayProvider = {
   /** Where "View all" goes: the owning app's list. */
   href: string;
+  /**
+   * The module read scope an MCP key also needs for this section in get_today
+   * (D70, T74). Omitted: `today:read` alone is enough (Bin and storage).
+   */
+  mcpScope?: McpScope;
   load: (context: TodayContext) => TodayPage | Promise<TodayPage>;
   /** Whether the module is installed; omitted means it is. Uninstalled sections are absent. */
   available?: () => boolean;
@@ -49,6 +56,15 @@ export function registerTodayProvider(name: string, provider: TodayProvider) {
 /** Installed section names, in registration order. */
 export function todaySectionNames() {
   return [...providers].filter(([, provider]) => provider.available?.() ?? true).map(([name]) => name);
+}
+
+/** Installed sections an MCP key may see: `today:read` plus each section's module scope. */
+export function todaySectionsForScopes(scopes: readonly McpScope[]) {
+  if (!hasScope(scopes, "today:read")) return [];
+  return todaySectionNames().filter((name) => {
+    const needed = providers.get(name)!.mcpScope;
+    return !needed || hasScope(scopes, needed);
+  });
 }
 
 /** Bounds a fetched page of up to TODAY_FETCH rows to TODAY_LIMIT items plus `more`. */

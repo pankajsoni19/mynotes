@@ -6,7 +6,7 @@
  * Scopes come in `<module>:read` / `<module>:write…` pairs. A write scope
  * implies its read scope. Scopes are fixed when a key is created.
  */
-export const MCP_SCOPES = ["notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write"] as const;
+export const MCP_SCOPES = ["notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read"] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 
 export const DEFAULT_MCP_SCOPES: readonly McpScope[] = ["notes:read"];

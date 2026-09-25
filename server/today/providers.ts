@@ -33,6 +33,7 @@ const taskItem = (row: TaskRow, today: string) => ({
 });
 
 registerTodayProvider("tasksDue", {
+  mcpScope: "tasks:read",
   href: "/tasks",
   load: ({ userId, today }) => page((db.query(`${taskSelect} AND k.due_on IS NOT NULL AND k.due_on <= $horizon
       ORDER BY k.due_on, k.updated_at DESC, k.id LIMIT $limit`)
@@ -40,6 +41,7 @@ registerTodayProvider("tasksDue", {
 });
 
 registerTodayProvider("tasksMine", {
+  mcpScope: "tasks:read",
   href: "/tasks",
   load: ({ userId, today }) => page((db.query(`${taskSelect} AND (k.assignee_id = $userId OR k.created_by = $userId)
       ORDER BY k.due_on IS NULL, k.due_on, k.updated_at DESC, k.id LIMIT $limit`)
@@ -53,6 +55,7 @@ registerTodayProvider("tasksMine", {
  * published title and time, so the owner's draft activity stays private.
  */
 registerTodayProvider("notesRecent", {
+  mcpScope: "notes:read",
   href: "/notes",
   load: ({ userId }) => page((db.query(`
       SELECT n.id, CASE WHEN n.owner_id = $userId THEN n.title ELSE v.title END AS title, u.display_name AS owner_name,
@@ -68,6 +71,7 @@ const EMPTY_CHECKSUM = checksum("");
 
 /** The caller's own drafts that differ from what is published (blank never-published drafts are not drafts). */
 registerTodayProvider("drafts", {
+  mcpScope: "notes:read",
   href: "/notes",
   load: ({ userId }) => page((db.query(`
       SELECT n.id, n.title, n.updated_at, n.current_version = 0 AS neverPublished
@@ -83,6 +87,7 @@ registerTodayProvider("drafts", {
 const hasAgentDrafts = () => (db.query("PRAGMA table_info(notes)").all() as Array<{ name: string }>).some((column) => column.name === "draft_mcp_key_id");
 
 registerTodayProvider("agentDrafts", {
+  mcpScope: "notes:read",
   href: "/notes",
   available: hasAgentDrafts,
   load: ({ userId }) => page(db.query(`
@@ -93,6 +98,7 @@ registerTodayProvider("agentDrafts", {
 });
 
 registerTodayProvider("files", {
+  mcpScope: "files:read",
   href: "/files",
   load: ({ userId }) => page(recentListableDocuments(userId, TODAY_FETCH).map((document) => ({
     id: document.id, name: document.name, mime_type: document.mime_type, preview_kind: document.preview_kind, size_bytes: document.size_bytes,
