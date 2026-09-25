@@ -75,3 +75,47 @@ describe("get_today MCP tool", () => {
     expect(audits.count).toBe(0);
   });
 });
+
+describe("get_today Bin items follow the key's module scopes (T74)", () => {
+  test("each Bin type needs its module's read scope; collections never reach MCP; the web sees all", async () => {
+    const { newCollection, addRow, call: collections } = await import("./support/collections");
+    const user = await createUser("MCP today bin");
+    const soon = new Date(Date.now() + 86_400_000).toISOString();
+    const noteResponse = await request("/notes", { method: "POST", body: JSON.stringify({ folderId: null }) }, user);
+    const noteId = ((await noteResponse.json()) as { note: { id: string } }).note.id;
+    await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ markdown: "# Binned note title", revision: 1 }) }, user);
+    await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, user);
+    expect((await request(`/notes/${noteId}`, { method: "DELETE", body: "{}" }, user)).status).toBe(200);
+    const form = new FormData();
+    form.append("file", new Blob(["x"]), "binned-file.txt");
+    const documentId = ((await (await request("/files", { method: "POST", body: form }, user)).json()) as { document: { id: string } }).document.id;
+    expect((await request(`/files/${documentId}`, { method: "DELETE", body: "{}" }, user)).status).toBe(200);
+    const tasks = async (method: string, path: string, body?: unknown) => (await (await request(`/tasks${path}`, { method, body: JSON.stringify(body ?? {}) }, user)).json()) as Record<string, any>;
+    const created = await tasks("POST", "/boards", { name: "Binned board" });
+    const card = (await tasks("POST", `/boards/${created.board.id}/cards`, { columnId: created.columns[0].id, title: "Binned card" })).card;
+    await tasks("DELETE", `/cards/${card.id}`);
+    const other = await tasks("POST", "/boards", { name: "Board in bin" });
+    await tasks("DELETE", `/boards/${other.board.id}`);
+    const collection = await newCollection(user, { name: "Binned collection", fields: [{ name: "Name", type: "text" }] });
+    const keep = await newCollection(user, { name: "Kept collection", fields: [{ name: "Name", type: "text" }] });
+    const row = await addRow(user, keep.id, { [keep.fields[0]!.id]: "Binned row" });
+    expect((await collections(user, "DELETE", `/rows/${row.id}`)).status).toBe(200);
+    expect((await collections(user, "DELETE", `/${collection.id}`)).status).toBe(200);
+    for (const table of ["notes", "documents", "cards", "boards", "collections", "collection_rows"]) db.query(`UPDATE ${table} SET purge_after = ? WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after > ?`).run(soon, soon);
+
+    const types = (value: Record<string, any>) => (value.sections.binSoon.items as Array<{ type: string }>).map((item) => item.type).sort();
+    expect(types((await getToday(user, ["today:read"])).value)).toEqual([]);
+    expect(types((await getToday(user, ["today:read", "notes:read"])).value)).toEqual(["note"]);
+    expect(types((await getToday(user, ["today:read", "files:read"])).value)).toEqual(["document"]);
+    expect(types((await getToday(user, ["today:read", "tasks:read"])).value)).toEqual(["board", "card"]);
+    const all = (await getToday(user, ["today:read", "notes:read", "files:read", "tasks:write"])).value;
+    expect(types(all)).toEqual(["board", "card", "document", "note"]);
+    expect(JSON.stringify(all)).not.toContain("Binned collection");
+    expect(JSON.stringify(all)).not.toContain("Binned row");
+    // The web (a session) sees every type, as the Bin does.
+    const { resetTodayRateLimit } = await import("../server/today/routes");
+    resetTodayRateLimit();
+    const web = (await (await request("/today?tz=UTC", {}, user)).json()) as Record<string, any>;
+    expect(types(web)).toEqual(["board", "card", "collection", "collection_row", "document", "note"]);
+  });
+});

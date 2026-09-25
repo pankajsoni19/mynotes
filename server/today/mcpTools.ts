@@ -22,7 +22,7 @@ export const todayTools: McpToolSpec[] = [
       if (!zone) throw new McpToolError("INVALID", "tz must be an IANA time zone");
       const allowed = todaySectionsForScopes(key.scopes);
       if (allowed.length === 0) return { generatedAt: new Date().toISOString(), date: todayContext(key.userId, zone).today, sections: {} };
-      return loadToday(todayContext(key.userId, zone), allowed);
+      return loadToday(todayContext(key.userId, zone, new Date(), key.scopes), allowed);
     }
   })
 ];

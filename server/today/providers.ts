@@ -3,6 +3,7 @@ import { listBin } from "../bin";
 import { db } from "../db";
 import { recentListableDocuments } from "../documentAccess";
 import { storageUsage } from "../documents";
+import { hasScope, type McpScope } from "../mcpScopes";
 import { checksum } from "../storage";
 import { readableBoardPredicate } from "../tasks/access";
 import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
@@ -106,13 +107,26 @@ registerTodayProvider("files", {
   })))
 });
 
+/**
+ * The module read scope an MCP key needs to see a Bin item of each type in get_today (T74).
+ * Types without an entry (Collections: there is no collections:read scope yet) are left out
+ * for MCP callers. A signed-in session sees every type, as in the Bin itself.
+ */
+export const BIN_TYPE_MCP_SCOPE: Partial<Record<string, McpScope>> = { note: "notes:read", document: "files:read", card: "tasks:read", board: "tasks:read" };
+
+export function binItemVisible(type: string, scopes: readonly McpScope[] | undefined) {
+  if (!scopes) return true;
+  const needed = BIN_TYPE_MCP_SCOPE[type];
+  return needed !== undefined && hasScope(scopes, needed);
+}
+
 /** Items in the caller's Bin that are purged within three days, soonest first. */
 registerTodayProvider("binSoon", {
   href: "/bin",
-  load: ({ userId, now }) => {
+  load: ({ userId, now, scopes }) => {
     const cutoff = new Date(now.getTime() + BIN_SOON_MS).toISOString();
     return page(listBin(userId, null)
-      .filter((item) => !item.purging && item.purge_after <= cutoff)
+      .filter((item) => !item.purging && item.purge_after <= cutoff && binItemVisible(item.type, scopes))
       .sort((a, b) => a.purge_after.localeCompare(b.purge_after) || (a.id < b.id ? -1 : 1))
       .slice(0, TODAY_FETCH)
       .map((item) => ({ type: item.type, id: item.id, title: item.title, purge_after: item.purge_after })));

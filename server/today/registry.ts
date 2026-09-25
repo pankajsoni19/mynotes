@@ -24,6 +24,11 @@ export type TodayContext = {
   /** Today's date in `tz`, as YYYY-MM-DD. */
   today: string;
   now: Date;
+  /**
+   * The MCP key's scopes when get_today is the caller; undefined for a signed-in session.
+   * Sections that mix modules (binSoon) filter their items by these (T74).
+   */
+  scopes?: readonly McpScope[];
 };
 
 export type TodayPage<T = unknown> = { items: T[]; more: boolean };
@@ -131,6 +136,6 @@ export function addDays(date: string, days: number) {
   return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
 }
 
-export function todayContext(userId: string, tz: string, now = new Date()): TodayContext {
-  return { userId, tz, today: dateInZone(now, tz), now };
+export function todayContext(userId: string, tz: string, now = new Date(), scopes?: readonly McpScope[]): TodayContext {
+  return { userId, tz, today: dateInZone(now, tz), now, ...(scopes ? { scopes } : {}) };
 }
