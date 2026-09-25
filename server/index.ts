@@ -46,6 +46,13 @@ import {
 
 const app = new Hono<AppEnv>();
 
+/** Error class and errno code for logs. Messages can carry paths or constraint text, so they are never logged. */
+function errorClass(error: unknown) {
+  if (!(error instanceof Error)) return "Unknown error";
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === "string" ? `${error.name} (${code})` : error.name;
+}
+
 function hasDraftDelta(note: NoteRow, draftChecksum: string) {
   if (note.current_version === 0) return draftChecksum !== checksum("");
   const published = db.query("SELECT checksum FROM note_versions WHERE note_id = ? AND version_number = ?")
@@ -670,7 +677,7 @@ app.delete("/api/notes/:id/draft", async (c) => {
     const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
     db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
       .run(versionTitle?.title ?? note.title, now(), id, userId);
-    await storage.discardDraft(id).catch((error) => console.error("Could not remove discarded draft", error instanceof Error ? error.message : "Unknown error"));
+    await storage.discardDraft(id).catch((error) => console.error(`Could not remove discarded draft for note ${id}`, errorClass(error)));
     audit(userId, id, "draft.discard");
     return c.json({ ok: true });
   });
@@ -699,7 +706,7 @@ app.post("/api/notes/:id/publish", async (c) => {
         .run(nextVersion, timestamp, id, userId, note.current_version, note.draft_revision);
       if (updated.changes !== 1) throw new Error("Concurrent note update detected");
     })();
-    await storage.finalizePublished(id, markdown).catch((error) => console.error("Could not refresh current Markdown mirror", error instanceof Error ? error.message : "Unknown error"));
+    await storage.finalizePublished(id, markdown).catch((error) => console.error(`Could not refresh current Markdown mirror for note ${id}`, errorClass(error)));
     audit(userId, id, "note.publish", { version: nextVersion });
     return c.json({ version: nextVersion, publishedAt: timestamp });
   });
@@ -809,7 +816,7 @@ app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
   if (error instanceof ZodError) return c.json({ error: "Invalid request", details: error.issues.map((issue) => issue.message) }, 400);
   if (error instanceof SyntaxError) return c.json({ error: "Invalid JSON" }, 400);
-  console.error("Request failed", error instanceof Error ? error.message : "Unknown error");
+  console.error("Request failed", errorClass(error));
   return c.json({ error: "Something went wrong" }, 500);
 });
 
@@ -833,7 +840,7 @@ async function reconcilePublishedMirrors() {
       await storage.writeCurrentMirror(note.id, markdown);
       if (note.draft_revision === null) await storage.discardDraft(note.id);
     } catch (error) {
-      console.error(`Could not reconcile note ${note.id}`, error instanceof Error ? error.message : "Unknown error");
+      console.error(`Could not reconcile note ${note.id}`, errorClass(error));
     }
   }
 }
