@@ -130,10 +130,18 @@ function receiveSingleFile(request: Request, id: string): Promise<ReceivedFile> 
       // Tear down after the current busboy callback returns: busboy keeps using its part
       // state after emitting events such as "limit", so destroying it synchronously throws.
       queueMicrotask(() => {
-        source.unpipe(parser);
-        source.destroy();
-        fileStream?.destroy();
-        parser.destroy();
+        // Each step is guarded: a throw here would be uncaught and take the process down.
+        const guarded = (step: () => void) => {
+          try {
+            step();
+          } catch (teardownError) {
+            console.error("Upload teardown step failed", teardownError instanceof Error ? teardownError.name : "Unknown error");
+          }
+        };
+        guarded(() => source.unpipe(parser));
+        guarded(() => source.destroy());
+        guarded(() => fileStream?.destroy());
+        guarded(() => parser.destroy());
         // Wait for the staging handle to close before the caller discards the file.
         void (filePromise ?? Promise.resolve()).catch(() => undefined).finally(() => reject(failure));
       });
