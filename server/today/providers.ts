@@ -114,7 +114,9 @@ registerTodayProvider("files", {
  * Types without an entry (Collections: there is no collections:read scope yet) are left out
  * for MCP callers. A signed-in session sees every type, as in the Bin itself.
  */
-export const BIN_TYPE_MCP_SCOPE: Partial<Record<string, McpScope>> = { note: "notes:read", document: "files:read", card: "tasks:read", board: "tasks:read" };
+export const BIN_TYPE_MCP_SCOPE: Partial<Record<string, McpScope>> = {
+  note: "notes:read", document: "files:read", card: "tasks:read", board: "tasks:read", calendar: "calendar:read", event: "calendar:read"
+};
 
 export function binItemVisible(type: string, scopes: readonly McpScope[] | undefined) {
   if (!scopes) return true;
@@ -138,13 +140,13 @@ registerTodayProvider("binSoon", {
 export const UPCOMING_DAYS = 7;
 
 /**
- * The caller's next event occurrences over seven local days (Calendar, W12). There is no
- * calendar MCP scope yet, so get_today leaves the section out for MCP callers (T74).
+ * The caller's next event occurrences over seven local days (Calendar, W12). get_today includes
+ * it only for keys that also hold calendar:read (T74).
  */
 registerTodayProvider("upcoming", {
   href: "/calendar",
   available: () => true,
-  sessionOnly: true,
+  mcpScope: "calendar:read",
   load: ({ userId, tz, now }) => {
     const { items, more } = listUpcoming(userId, tz, UPCOMING_DAYS, now.getTime());
     return {

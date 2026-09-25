@@ -41,7 +41,7 @@ export type TodayProvider = {
    * (D70, T74). Omitted: `today:read` alone is enough (Bin and storage).
    */
   mcpScope?: McpScope;
-  /** Signed-in sessions only: get_today leaves the section out (a module with no MCP read scope yet, like Calendar). */
+  /** Signed-in sessions only: get_today leaves the section out (for a module that has no MCP read scope yet). */
   sessionOnly?: boolean;
   load: (context: TodayContext) => TodayPage | Promise<TodayPage>;
   /** Whether the module is installed; omitted means it is. Uninstalled sections are absent. */

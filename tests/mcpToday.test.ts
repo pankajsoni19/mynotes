@@ -60,6 +60,9 @@ describe("get_today MCP tool", () => {
     expect(Object.keys((await getToday(user, ["today:read", "files:read"])).value.sections)).toEqual(["files", "binSoon", "storage"]);
     // A write scope implies its read scope.
     expect(Object.keys((await getToday(user, ["today:read", "tasks:write"])).value.sections)).toEqual(["tasksDue", "tasksMine", "binSoon", "storage"]);
+    // Upcoming events need calendar:read (calendar:write implies it).
+    expect(Object.keys((await getToday(user, ["today:read", "calendar:read"])).value.sections)).toEqual(["binSoon", "upcoming", "storage"]);
+    expect(Object.keys((await getToday(user, ["today:read", "calendar:write"])).value.sections)).toEqual(["binSoon", "upcoming", "storage"]);
     const all = await getToday(user, ["today:read", "notes:read", "files:read", "tasks:read"]);
     expect(Object.keys(all.value.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "binSoon", "storage"]);
   });
@@ -115,7 +118,7 @@ describe("get_today Bin items follow the key's module scopes (T74)", () => {
     const row = await addRow(user, keep.id, { [keep.fields[0]!.id]: "Binned row" });
     expect((await collections(user, "DELETE", `/rows/${row.id}`)).status).toBe(200);
     expect((await collections(user, "DELETE", `/${collection.id}`)).status).toBe(200);
-    // Calendar items: there is no calendar scope yet, so MCP callers never see them.
+    // Calendar items need calendar:read.
     const calendarId = ((await (await request("/calendars", { method: "POST", body: JSON.stringify({ name: "Binned calendar" }) }, user)).json()) as { calendar: { id: string } }).calendar.id;
     expect((await request(`/calendars/${calendarId}`, { method: "DELETE", body: "{}" }, user)).status).toBe(200);
     for (const table of ["notes", "documents", "cards", "boards", "collections", "collection_rows", "calendars"]) db.query(`UPDATE ${table} SET purge_after = ? WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after > ?`).run(soon, soon);
@@ -125,6 +128,7 @@ describe("get_today Bin items follow the key's module scopes (T74)", () => {
     expect(types((await getToday(user, ["today:read", "notes:read"])).value)).toEqual(["note"]);
     expect(types((await getToday(user, ["today:read", "files:read"])).value)).toEqual(["document"]);
     expect(types((await getToday(user, ["today:read", "tasks:read"])).value)).toEqual(["board", "card"]);
+    expect(types((await getToday(user, ["today:read", "calendar:read"])).value)).toEqual(["calendar"]);
     const all = (await getToday(user, ["today:read", "notes:read", "files:read", "tasks:write"])).value;
     expect(types(all)).toEqual(["board", "card", "document", "note"]);
     expect(JSON.stringify(all)).not.toContain("Binned collection");

@@ -6,7 +6,10 @@
  * Scopes come in `<module>:read` / `<module>:write…` pairs. A write scope
  * implies its read scope. Scopes are fixed when a key is created.
  */
-export const MCP_SCOPES = ["notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read"] as const;
+export const MCP_SCOPES = [
+  "notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read",
+  "calendar:read", "calendar:write"
+] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 
 export const DEFAULT_MCP_SCOPES: readonly McpScope[] = ["notes:read"];
@@ -14,7 +17,8 @@ export const DEFAULT_MCP_SCOPES: readonly McpScope[] = ["notes:read"];
 /** Each write scope and the read scope it implies. Later modules add their pair here (D70). */
 export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
   "notes:write-draft": "notes:read",
-  "tasks:write": "tasks:read"
+  "tasks:write": "tasks:read",
+  "calendar:write": "calendar:read"
 };
 
 export const isMcpScope = (value: unknown): value is McpScope => typeof value === "string" && (MCP_SCOPES as readonly string[]).includes(value);

@@ -75,7 +75,7 @@ export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, o
       {event.location && <div><dt><MapPin aria-label="Where" /></dt><dd>{event.location}</dd></div>}
     </dl>
     {event.description && <p className="calendar-event-description">{event.description}</p>}
-    {event.changedByKey && <p className="calendar-note">Last changed by an MCP key.</p>}
+    {event.changedByKey && <p className="calendar-note">Changed by {event.changedByKeyName ? `the MCP key “${event.changedByKeyName}”` : "an MCP key"}{canEdit && event.canUndo ? " · use Undo last change to revert it." : "."}</p>}
 
     {canEdit && <div className="calendar-event-actions">
       <button className="primary-button" onClick={() => onEdit(data)}><Pencil />Edit</button>

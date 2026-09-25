@@ -23,6 +23,9 @@ export type McpErrorCode =
   | "LIMIT_REACHED"
   | "CARD_CHANGED"
   | "OWNER_ONLY"
+  | "READ_ONLY"
+  | "EVENT_CHANGED"
+  | "REMINDER_EXISTS"
   | "INTERNAL";
 
 export class McpToolError extends Error {
@@ -53,7 +56,7 @@ export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
   /** Writes count against the per-minute write limit. */
   write: boolean;
   /** An extra daily bucket this tool counts against. */
-  dailyBucket?: Extract<McpLimitBucket, "create_note" | "task_write">;
+  dailyBucket?: Exclude<McpLimitBucket, "call" | "write">;
   inputSchema: Schema;
   handler: (args: z.infer<Schema>, key: McpKeyContext) => Promise<unknown> | unknown;
 };

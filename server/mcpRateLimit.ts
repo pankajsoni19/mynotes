@@ -9,7 +9,7 @@
  * bucket it touches has room, and then all of them are charged, so a refused
  * call costs nothing.
  */
-export type McpLimitBucket = "call" | "write" | "create_note" | "task_write";
+export type McpLimitBucket = "call" | "write" | "create_note" | "task_write" | "event_write" | "reminder_write";
 type Limit = { limit: number; windowMs: number };
 
 const MINUTE = 60_000;
@@ -20,7 +20,10 @@ export const MCP_LIMITS: Record<McpLimitBucket, Limit> = {
   write: { limit: 30, windowMs: MINUTE },
   create_note: { limit: 200, windowMs: DAY },
   // create_card, move_card, and comment_on_card (tasks:write).
-  task_write: { limit: 500, windowMs: DAY }
+  task_write: { limit: 500, windowMs: DAY },
+  // create_event and update_event (calendar:write), and create_reminder (WAVES_10-12.md §4.5).
+  event_write: { limit: 200, windowMs: DAY },
+  reminder_write: { limit: 100, windowMs: DAY }
 };
 
 /** Per user, across every key. Buckets without an entry are limited per key only. */
@@ -28,7 +31,9 @@ export const MCP_USER_LIMITS: Partial<Record<McpLimitBucket, Limit>> = {
   call: { limit: 1000, windowMs: MINUTE },
   write: { limit: 60, windowMs: MINUTE },
   create_note: { limit: 400, windowMs: DAY },
-  task_write: { limit: 1000, windowMs: DAY }
+  task_write: { limit: 1000, windowMs: DAY },
+  event_write: { limit: 400, windowMs: DAY },
+  reminder_write: { limit: 200, windowMs: DAY }
 };
 
 type Window = { count: number; resetAt: number };

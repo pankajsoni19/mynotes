@@ -12,6 +12,8 @@ test("write implies read, never the other way", () => {
   expect(hasScope(["notes:read"], "notes:write-draft")).toBe(false);
   expect(hasScope(["tasks:write"], "tasks:read")).toBe(true);
   expect(hasScope(["tasks:read"], "tasks:write")).toBe(false);
+  expect(hasScope(["calendar:write"], "calendar:read")).toBe(true);
+  expect(hasScope(["calendar:read"], "calendar:write")).toBe(false);
   expect(hasScope(["files:read"], "notes:read")).toBe(false);
   expect(hasAnyScope(["files:read"], ["notes:read", "files:read"])).toBe(true);
   expect(hasAnyScope([], ["notes:read"])).toBe(false);
@@ -22,7 +24,8 @@ test("stored scopes read leniently and never grant more than stored", () => {
   expect(parseStoredScopes(null)).toEqual(["notes:read"]);
   expect(parseStoredScopes("not json")).toEqual(["notes:read"]);
   expect(parseStoredScopes('{"notes:read":true}')).toEqual(["notes:read"]);
-  expect(parseStoredScopes('["files:read","admin","calendar:write"]')).toEqual(["files:read"]);
+  expect(parseStoredScopes('["files:read","admin","future:write"]')).toEqual(["files:read"]);
+  expect(parseStoredScopes('["calendar:write"]')).toEqual(["calendar:read", "calendar:write"]);
   expect(parseStoredScopes('["tasks:write"]')).toEqual(["tasks:read", "tasks:write"]);
   expect(parseStoredScopes("[]")).toEqual([]);
 });

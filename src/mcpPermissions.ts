@@ -3,7 +3,8 @@
  * server/mcpScopes.ts (tests/mcpPermissions.test.ts keeps them in step).
  * Pure, so the checkbox rules are unit-tested.
  */
-export type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read";
+export type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read"
+  | "calendar:read" | "calendar:write";
 
 export type McpPermission = { scope: McpScope; label: string; help: string; implies?: McpScope };
 
@@ -13,7 +14,9 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "files:read", label: "Read files", help: "File details and the text of text files up to 1 MiB." },
   { scope: "tasks:read", label: "Read tasks", help: "Read boards and cards" },
   { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards: never deletes", implies: "tasks:read" },
-  { scope: "today:read", label: "Read Today", help: "The Today summary, limited to the other read permissions this key has" }
+  { scope: "today:read", label: "Read Today", help: "The Today summary, limited to the other read permissions this key has" },
+  { scope: "calendar:read", label: "Read calendar", help: "Calendars, events, and their links you can open" },
+  { scope: "calendar:write", label: "Write calendar", help: "Create and change events, and set your own reminders: never deletes", implies: "calendar:read" }
 ];
 
 /** The permissions offered when creating a key: every scope that has tools. */

@@ -7,14 +7,14 @@ import "./providers";
 /**
  * get_today (docs/plan/WAVES_10-12.md §2.3, D70, T74): the Today aggregate as
  * plain JSON with titles and ids only. A section is returned only when the key
- * also holds its module's read scope (notes, files, tasks); binSoon and storage
+ * also holds its module's read scope (notes, files, tasks, calendar); binSoon and storage
  * need today:read alone. Reads are not audited, like the other read tools.
  */
 export const todayTools: McpToolSpec[] = [
   defineTool({
     name: "get_today",
     title: "Get Today",
-    description: "The user's Today summary: tasks due within seven days and their open cards, recent notes and drafts, recent files, Bin items deleted soon, and storage. Only sections this key may read are included; each has at most ten items and `more`.",
+    description: "The user's Today summary: tasks due within seven days and their open cards, recent notes and drafts, recent files, upcoming events, Bin items deleted soon, and storage. Only sections this key may read are included; each has at most ten items and `more`.",
     scopes: ["today:read"],
     write: false,
     inputSchema: z.object({ tz: z.string().max(64).optional().describe("IANA time zone for today's date and overdue flags; defaults to UTC") }),

@@ -228,6 +228,8 @@ export type EventDetail = {
   revision: number;
   canUndo: boolean;
   changedByKey: boolean;
+  /** The MCP key that made the last change, while the key exists. */
+  changedByKeyName: string | null;
   created_by_name: string | null;
   updated_by_name: string | null;
   created_at: string;
@@ -237,6 +239,8 @@ export type EventDetail = {
 const parseRule = (json: string | null) => json === null ? null : JSON.parse(json) as RecurrenceRule;
 const parseExdates = (json: string) => JSON.parse(json) as string[];
 const userName = (id: string | null) => id === null ? null : (db.query("SELECT display_name FROM users WHERE id = ?").get(id) as { display_name: string } | null)?.display_name ?? null;
+
+const keyName = (id: string | null) => id === null ? null : (db.query("SELECT name FROM mcp_api_keys WHERE id = ?").get(id) as { name: string } | null)?.name ?? null;
 
 export function eventDetail(event: EventRow): EventDetail {
   return {
@@ -256,6 +260,7 @@ export function eventDetail(event: EventRow): EventDetail {
     revision: event.revision,
     canUndo: event.prev_json !== null,
     changedByKey: event.updated_via_key_id !== null,
+    changedByKeyName: keyName(event.updated_via_key_id),
     created_by_name: userName(event.created_by),
     updated_by_name: userName(event.updated_by),
     created_at: event.created_at,
@@ -323,7 +328,10 @@ function eventResponse(event: EventRow, calendar: CalendarRow, userId: string) {
   };
 }
 
-export function createEvent(userId: string, calendarId: string, input: EventInput) {
+/** Who made a write: `keyId` marks it as made through that MCP key (T73's "Changed by key"). */
+export type WriteOptions = { keyId?: string | null };
+
+export function createEvent(userId: string, calendarId: string, input: EventInput, options: WriteOptions = {}) {
   writableCalendar(calendarId, userId);
   const columns = timingColumns(input, []);
   const id = crypto.randomUUID();
@@ -332,10 +340,10 @@ export function createEvent(userId: string, calendarId: string, input: EventInpu
     const count = (db.query("SELECT COUNT(*) AS count FROM events WHERE calendar_id = ? AND deleted_at IS NULL").get(calendarId) as { count: number }).count;
     if (count >= MAX_EVENTS_PER_CALENDAR) throw new CalendarError(409, `A calendar holds at most ${MAX_EVENTS_PER_CALENDAR} events`, "LIMIT_REACHED");
     db.query(`INSERT INTO events (id, calendar_id, title, description, location, all_day, start_date, end_date, start_local, tz, duration_minutes,
-        start_utc, series_end_utc, rrule_json, exdates_json, created_by, updated_by, created_at, updated_at)
+        start_utc, series_end_utc, rrule_json, exdates_json, updated_via_key_id, created_by, updated_by, created_at, updated_at)
       VALUES ($id, $calendarId, $title, $description, $location, $all_day, $start_date, $end_date, $start_local, $tz, $duration_minutes,
-        $start_utc, $series_end_utc, $rrule_json, $exdates_json, $userId, $userId, $timestamp, $timestamp)`)
-      .run({ id, calendarId, title: input.title, description: input.description ?? "", location: input.location ?? "", ...columns, userId, timestamp });
+        $start_utc, $series_end_utc, $rrule_json, $exdates_json, $keyId, $userId, $userId, $timestamp, $timestamp)`)
+      .run({ id, calendarId, title: input.title, description: input.description ?? "", location: input.location ?? "", ...columns, keyId: options.keyId ?? null, userId, timestamp });
     audit(userId, null, "event.create", { eventId: id, calendarId });
   })();
   const found = readableEvent(id, userId)!;
@@ -354,21 +362,21 @@ const changed = (event: EventRow) => new CalendarError(409, "This event was chan
  * Applies new column values with a compare-and-swap on `revision`, keeping
  * the previous values for one-step undo (D61). Returns the updated row.
  */
-function applyChange(event: EventRow, userId: string, baseRevision: number, values: Partial<Snapshot>, eventType: string, metadata: Record<string, unknown> = {}) {
+function applyChange(event: EventRow, userId: string, baseRevision: number, values: Partial<Snapshot>, eventType: string, metadata: Record<string, unknown> = {}, keyId: string | null = null) {
   const next = { ...snapshotOf(event), ...values };
   const timestamp = now();
   const result = db.query(`UPDATE events SET title = $title, description = $description, location = $location, all_day = $all_day,
       start_date = $start_date, end_date = $end_date, start_local = $start_local, tz = $tz, duration_minutes = $duration_minutes,
       start_utc = $start_utc, series_end_utc = $series_end_utc, rrule_json = $rrule_json, exdates_json = $exdates_json,
-      prev_json = $prev, prev_revision = revision, revision = revision + 1, updated_by = $userId, updated_via_key_id = NULL, updated_at = $timestamp
+      prev_json = $prev, prev_revision = revision, revision = revision + 1, updated_by = $userId, updated_via_key_id = $keyId, updated_at = $timestamp
     WHERE id = $id AND revision = $revision AND deleted_at IS NULL`)
-    .run({ ...next, prev: JSON.stringify(snapshotOf(event)), userId, timestamp, id: event.id, revision: baseRevision });
+    .run({ ...next, prev: JSON.stringify(snapshotOf(event)), userId, keyId, timestamp, id: event.id, revision: baseRevision });
   if (result.changes !== 1) throw changed(eventById(event.id));
   audit(userId, null, eventType, { eventId: event.id, ...metadata });
   return eventById(event.id);
 }
 
-export function patchEvent(userId: string, eventId: string, patch: EventPatch) {
+export function patchEvent(userId: string, eventId: string, patch: EventPatch, options: WriteOptions = {}) {
   const { event, calendar } = writableEvent(eventId, userId);
   if (event.revision !== patch.revision) throw changed(event);
   const current = eventDetail(event);
@@ -385,7 +393,7 @@ export function patchEvent(userId: string, eventId: string, patch: EventPatch) {
   if (patch.title !== undefined) values.title = patch.title;
   if (patch.description !== undefined) values.description = patch.description;
   if (patch.location !== undefined) values.location = patch.location;
-  const updated = db.transaction(() => applyChange(event, userId, patch.revision, values, "event.update"))();
+  const updated = db.transaction(() => applyChange(event, userId, patch.revision, values, "event.update", {}, options.keyId ?? null))();
   rescheduleEventReminders(eventId);
   return eventResponse(updated, calendar, userId);
 }

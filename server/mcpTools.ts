@@ -15,6 +15,7 @@ import { checksum, storage, withNoteLock } from "./storage";
 import { defineTool, errorResult, McpToolError, notFound, textResult, type McpKeyContext, type McpToolSpec, type ToolResult } from "./mcpToolKit";
 import { taskTools } from "./tasks/mcpTools";
 import { todayTools } from "./today/mcpTools";
+import { calendarTools } from "./calendar/mcpTools";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -326,6 +327,7 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...noteWriteTools,
   ...fileTools,
   ...taskTools,
+  ...calendarTools,
   ...todayTools
 ];
 

@@ -38,6 +38,7 @@ export type EventDetail = {
   revision: number;
   canUndo: boolean;
   changedByKey: boolean;
+  changedByKeyName: string | null;
   created_by_name: string | null;
   updated_by_name: string | null;
   created_at: string;
