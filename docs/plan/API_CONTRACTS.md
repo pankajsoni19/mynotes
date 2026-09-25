@@ -253,6 +253,79 @@ type NoteSearchHit = {
 
 Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT`: a note's owner searches their draft when one exists and the published version otherwise; everyone else searches the published version of notes they can read. Binned notes never match; restoring one makes it searchable again, and purging removes its index rows. The index holds the published version and the owner's draft, built from checksum-verified files in the same transaction as each change.
 
+## Calendar (Wave 12)
+
+Calendars, events, and links ([WAVES_10-12.md](WAVES_10-12.md) §4, D54, D61–D63). JSON only. Stage A covers the endpoints below; reminders, notifications, push, and feeds arrive in stages B–D.
+
+**Roles (D54).** The owner does everything. Everyone the calendar is shared with (`visibility` `selected` with a member row, or `all_users`) gets the calendar's single audience role `share_role`: `viewer` reads, `editor` also creates, edits, undoes, skips dates on, links, and bins events. Only the owner renames, recolours, shares, or bins the calendar.
+
+| Caller | Response |
+| --- | --- |
+| Cannot read the calendar (stranger, removed member, binned calendar) | **404** |
+| Viewer calling an event write | 403 `{ code: "READ_ONLY" }` |
+| Viewer or editor calling an owner-only action | 403 `{ code: "OWNER_ONLY" }` |
+
+```ts
+type CalendarColor = "blue" | "green" | "amber" | "red" | "violet" | "slate";
+type CalendarSummary = {
+  id: string; owner_id: string; owner_name: string; is_owner: 0 | 1;
+  role: "owner" | "editor" | "viewer";
+  name: string; color: CalendarColor; visibility: Visibility; share_role: "viewer" | "editor";
+  created_at: string; updated_at: string;
+};
+type RepeatRule = {
+  freq: "daily" | "weekly" | "monthly" | "yearly";
+  interval: number;                 // 1–99, default 1
+  byDay?: ("MO"|"TU"|"WE"|"TH"|"FR"|"SA"|"SU")[];  // weekly only; must include the start's weekday
+  until?: string;                   // yyyy-mm-dd, inclusive, local to the event
+  count?: number;                   // 1–730; not with until
+};
+type EventDetail = {
+  id: string; calendar_id: string; title: string; description: string; location: string;
+  all_day: boolean;
+  start_date: string | null; end_date: string | null;          // all-day: yyyy-mm-dd, end exclusive
+  start_local: string | null; tz: string | null; duration_minutes: number | null;  // timed: yyyy-mm-ddTHH:MM, IANA zone, 1–10080
+  repeat: RepeatRule | null; exdates: string[];                // skipped local start dates, ≤ 200
+  revision: number; canUndo: boolean; changedByKey: boolean;
+  created_by_name: string | null; updated_by_name: string | null; created_at: string; updated_at: string;
+};
+type EventLink = { targetType: "note" | "card" | "collection_row"; targetId: string; title: string | null; restricted: boolean };
+type EventResponse = { event: EventDetail; calendar: CalendarSummary; role: CalendarSummary["role"]; links: EventLink[] };
+type Occurrence = {
+  eventId: string; calendarId: string; title: string; location: string; color: CalendarColor;
+  allDay: boolean;
+  date: string;                     // local start date of the occurrence (what an exdate names)
+  start: string; end: string;       // timed: UTC ISO instants; all-day: yyyy-mm-dd, end exclusive
+  recurring: boolean;
+};
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/calendars` | any | 200 `{ calendars: CalendarSummary[] }`, owned first. A user who has never had a calendar gets "Personal" (blue) on this call. | — |
+| `POST /api/calendars {name, color?}` | any | 201 `{ calendar }` | 400; 409 `LIMIT_REACHED` (20 live calendars per owner) |
+| `PATCH /api/calendars/:k {name?, color?}` | owner | 200 `{ calendar }` | 400, 403, 404 |
+| `DELETE /api/calendars/:k` (to the Bin) | owner | 200 `{ ok, purgeAfter }` | 403, 404 |
+| `GET /api/calendars/:k/sharing` | owner | 200 `{ visibility, shareRole, users: [{ id, display_name }] }` | 403, 404 |
+| `PUT /api/calendars/:k/sharing {visibility, shareRole?, userIds≤100}` | owner | 200 `{ ok }`. Same rules as folder sharing: the owner is never a recipient, `selected` needs at least one enabled user. | 400, 403, 404 |
+| `POST /api/calendars/:k/events` | editor | 201 `EventResponse` | 400, 403, 404; 409 `LIMIT_REACHED` (20k live events per calendar) |
+| `GET /api/events?from&to&tz&calendars` | reader | 200 `{ occurrences: Occurrence[], truncated }` | 400 |
+| `GET /api/events/:e` | reader | 200 `EventResponse` | 404 |
+| `PATCH /api/events/:e {…fields, revision}` | editor | 200 `EventResponse` | 400, 403, 404, 409 `EVENT_CHANGED` |
+| `POST /api/events/:e/undo {revision}` | editor | 200 `EventResponse` | 403, 404, 409 `EVENT_CHANGED` or `NOTHING_TO_UNDO` |
+| `POST /api/events/:e/exdates {date, revision?}` | editor | 200 `EventResponse` (idempotent) | 400 (not a repeating event, or not an occurrence date), 403, 404, 409 |
+| `DELETE /api/events/:e` (to the Bin) | editor | 200 `{ ok, purgeAfter }` | 403, 404 |
+| `POST /api/events/:e/links {targetType, targetId}` | editor | 201 `{ link }`, or 200 if already linked | 400, 403, 404 (target not readable by the linker); 409 `LIMIT_REACHED` (50 links) |
+| `DELETE /api/events/:e/links {targetType, targetId}` | editor | 200 `{ ok }` | 403, 404 |
+
+**Event bodies.** Create takes `{ title (1–200), description? (≤ 8 KiB, line breaks kept), location? (≤ 200), allDay, startDate+endDate | startLocal+tz+durationMinutes, repeat? }`. Titles, names, and locations reject control and bidi-override characters. Dates must be real (no 2026-02-30) and zones must be accepted by `Intl` (T71). PATCH takes any subset plus `revision`; timing fields are merged with the stored ones and validated together, and switching `allDay` needs the other mode's fields. Every successful change (PATCH, exdate) keeps the previous values for **one-step undo** (D61); undo itself cannot be undone. A stale `revision` returns 409 `{ code: "EVENT_CHANGED", revision, event }` with the current event.
+
+**Range listing.** `from` and `to` are whole local days (`yyyy-mm-dd`, `to` exclusive) in the viewer's zone `tz` (default `UTC`), at most **100 days** apart (400 otherwise). Occurrences are expanded server-side: timed occurrences keep their wall time in the event's zone across DST (a gap shifts forward, an overlap takes the earlier instant); monthly repeats use the start's day of the month and skip months without it. An occurrence that started before `from` but overlaps the range is included. At most **1000** occurrences are returned per request; `truncated` is true when more existed (T66). `calendars` is an optional comma-separated list of up to 50 calendar ids; ids the caller cannot read are ignored.
+
+**Links.** The linker must be able to read the target, and an unreadable target returns the same 404 as a missing one. Links are resolved per viewer on every read: the title when the viewer can read the target, otherwise `{ title: null, restricted: true }` (T59). Links never grant access. `note` targets use the live note ACL. `card` and `collection_row` targets are validated as UUIDs only and resolve as restricted until the Tasks and Collections modules register a resolver (`server/calendar/links.ts`).
+
+**Audit.** `calendar.create`, `calendar.update`, `calendar.delete`, `calendar.sharing_changed { calendarId, visibility, shareRole, recipientCount }`, `event.create { eventId, calendarId }`, `event.update`, `event.undo`, `event.exdate`, `event.delete { eventId }`, `event.link` / `event.unlink { eventId, targetType, targetId }`. Ids only: titles, descriptions, and locations are never audited.
+
 ## Changes to existing note endpoints (Wave 4)
 
 - `DELETE /api/notes/:id`:
