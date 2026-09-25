@@ -1,3 +1,5 @@
+import { readHistorySnapshot } from "./mobileNavigation";
+
 export type AppSection = "home" | "notes" | "files" | "bin";
 
 const historyKey = "mynotes.app-shell";
@@ -23,4 +25,9 @@ export function readAppHistorySection(state: unknown, userId: string): AppSectio
   const entry = value as { version?: unknown; userId?: unknown; section?: unknown };
   if (entry.version !== historyVersion || entry.userId !== userId) return null;
   return entry.section === "home" || entry.section === "notes" || entry.section === "files" || entry.section === "bin" ? entry.section : null;
+}
+
+// Entries written before the app shell existed carry only a Notes panel snapshot.
+export function resolveAppHistorySection(state: unknown, userId: string): AppSection | null {
+  return readAppHistorySection(state, userId) ?? (readHistorySnapshot(state, userId) ? "notes" : null);
 }

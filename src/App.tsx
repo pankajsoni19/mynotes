@@ -37,7 +37,8 @@ import { api, ApiError, setCsrfToken } from "./api";
 import { AppHome, AppPlaceholder } from "./AppShell";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
-import { createAppHistoryState, readAppHistorySection, type AppSection } from "./appShellNavigation";
+import { createAppHistoryState, resolveAppHistorySection, type AppSection } from "./appShellNavigation";
+import { finalizeOpenNote } from "./noteFinalization";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
@@ -793,6 +794,10 @@ export function App() {
     return true;
   }
 
+  function finalizeCurrentNote(reloadCurrent = false) {
+    return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta, publish: () => publish(reloadCurrent) });
+  }
+
   async function createFolder() {
     const name = window.prompt("Folder name");
     if (!name?.trim()) return;
@@ -804,8 +809,7 @@ export function App() {
     if (switchingRef.current) return;
     switchingRef.current = true;
     try {
-      const removedEmptyNote = await removeEmptyNewNote();
-      if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+      await finalizeCurrentNote();
       const selected = folders.find((folder) => folder.id === selectedFolder);
       const folderId = selected?.is_owner === 1 ? selected.id : null;
       const { note: created } = await api<{ note: { id: string } }>("/notes", { method: "POST", body: JSON.stringify({ folderId }) });
@@ -873,8 +877,7 @@ export function App() {
     if (switchingRef.current) return;
     switchingRef.current = true;
     try {
-      const removedEmptyNote = await removeEmptyNewNote();
-      if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+      await finalizeCurrentNote();
       setSelectedNoteId(nextId);
       setMobilePanel("editor");
       writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: nextId });
@@ -894,8 +897,7 @@ export function App() {
     if (switchingRef.current) return;
     switchingRef.current = true;
     try {
-      const removedEmptyNote = await removeEmptyNewNote();
-      if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+      await finalizeCurrentNote();
       setSelectedFolder(nextFolder);
       setSelectedNoteId(null);
       setNote(null);
@@ -942,8 +944,7 @@ export function App() {
     switchingRef.current = true;
     try {
       if (selectionChanged) {
-        const removedEmptyNote = await removeEmptyNewNote();
-        if (!removedEmptyNote && hasPublishableDelta) await publish(false);
+        await finalizeCurrentNote();
         setSelectedFolder(targetFolder);
         setSelectedNoteId(targetNoteId);
         if (!targetNoteId) {
@@ -977,10 +978,43 @@ export function App() {
     setActiveApp(section);
   }
 
-  function openHome() {
+  async function leaveNotes() {
+    if (switchingRef.current) return false;
+    switchingRef.current = true;
+    try {
+      // The note stays selected for when Notes reopens, so a published note is reloaded to clear its draft state.
+      if (await finalizeCurrentNote(true) === "removed-empty") {
+        setSelectedNoteId(null);
+        setMarkdown("");
+      }
+      setPanel(null);
+      setSharingFolder(null);
+      setMobileActions(false);
+      return true;
+    } catch (reason) {
+      flash(`${reason instanceof Error ? reason.message : "Could not save this note"}. Your note is still open.`);
+      return false;
+    } finally {
+      switchingRef.current = false;
+    }
+  }
+
+  async function openHome() {
     if (!session) return;
+    if (activeApp === "notes" && !await leaveNotes()) return;
     if (isMobileViewport()) window.history.pushState(createAppHistoryState(session.user.id, "home", window.history.state), "");
     setActiveApp("home");
+  }
+
+  async function leaveNotesFromHistory(section: AppSection) {
+    if (!session) return;
+    if (await leaveNotes()) {
+      setActiveApp(section);
+      return;
+    }
+    // Browser Back already moved off the Notes entry; put it back so the history matches the open note.
+    const snapshot: MobileNavigationSnapshot = { panel: mobilePanel, folder: selectedFolder, noteId: selectedNoteId };
+    window.history.pushState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, snapshot, window.history.state)), "");
   }
 
   function mobileBack(fallback: MobilePanel) {
@@ -991,19 +1025,25 @@ export function App() {
     showMobilePanel(fallback);
   }
 
+  // Re-registered every render so the handler never finalizes a note from a stale editor snapshot.
   useEffect(() => {
     if (!session) return;
     const onPopState = (event: PopStateEvent) => {
       if (!isMobileViewport()) return;
-      const section = readAppHistorySection(event.state, session.user.id);
-      if (section && section !== activeApp) setActiveApp(section);
-      if (section && section !== "notes") return;
+      const section = resolveAppHistorySection(event.state, session.user.id);
+      if (!section) return;
+      if (activeApp === "notes" && section !== "notes") {
+        void leaveNotesFromHistory(section);
+        return;
+      }
+      if (section !== activeApp) setActiveApp(section);
+      if (section !== "notes") return;
       const snapshot = readHistorySnapshot(event.state, session.user.id);
       if (snapshot) void restoreMobileHistory(snapshot);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [activeApp, folders, hasPublishableDelta, notes, selectedFolder, selectedNoteId, session, flash]);
+  });
 
   async function logout() {
     await api("/auth/logout", { method: "POST", body: "{}" });
@@ -1048,13 +1088,13 @@ export function App() {
   }} />;
 
   if (activeApp === "home" && !session.totp.setupRequired) return <AppHome displayName={session.user.displayName} onOpen={openApp} />;
-  if ((activeApp === "files" || activeApp === "bin") && !session.totp.setupRequired) return <AppPlaceholder section={activeApp} onHome={openHome} onOpenNotes={() => openApp("notes")} />;
+  if ((activeApp === "files" || activeApp === "bin") && !session.totp.setupRequired) return <AppPlaceholder section={activeApp} onHome={() => { void openHome(); }} onOpenNotes={() => openApp("notes")} />;
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
         <header className="sidebar-header">
-          <button className="sidebar-brand sidebar-home-button" onClick={openHome} aria-label="Open MyNotes home"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></button>
+          <button className="sidebar-brand sidebar-home-button" onClick={() => { void openHome(); }} aria-label="Open MyNotes home"><span className="brand-dot"><Sparkles /></span><strong>MyNotes</strong></button>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
