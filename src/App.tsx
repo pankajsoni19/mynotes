@@ -37,8 +37,10 @@ import { api, ApiError, setCsrfToken } from "./api";
 import { AppHome, AppPlaceholder } from "./AppShell";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
-import { createAppHistoryState, resolveAppHistorySection, type AppSection } from "./appShellNavigation";
+import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, withHistoryDepth, type AppSection } from "./appShellNavigation";
 import { finalizeOpenNote } from "./noteFinalization";
+import { formatRoute, parseRoute, type Route } from "./router";
+import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
@@ -564,10 +566,31 @@ function FolderSharePanel({ folder, onClose, onChanged }: { folder: Folder; onCl
   );
 }
 
+function historyStateFor(userId: string, route: Route, panel: MobilePanel) {
+  const notesState = route.app === "notes" ? createHistoryState(userId, { panel, folder: route.folder, noteId: route.noteId }, null) : null;
+  return createAppHistoryState(userId, route.app, notesState);
+}
+
+// The URL carries the app, folder, and item; the state payload adds the phone panel hint (and the
+// folder a note was opened from). A change that keeps the URL is a pure panel step: phones get a Back
+// entry for it, desktops just update the current entry.
+function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push") {
+  const url = formatRoute(route);
+  const current: unknown = window.history.state;
+  const samePath = url === window.location.pathname;
+  const currentSnapshot = readHistorySnapshot(current, userId);
+  const sameEntry = samePath && resolveAppHistorySection(current, userId) === route.app
+    && (route.app !== "notes" || (currentSnapshot !== null && sameSnapshot(currentSnapshot, { panel, folder: route.folder, noteId: route.noteId })));
+  if (sameEntry && mode === "push") return;
+  const depth = readHistoryDepth(current);
+  if (mode === "push" && !(samePath && !isMobileViewport())) window.history.pushState(withHistoryDepth(historyStateFor(userId, route, panel), depth + 1), "", url);
+  else window.history.replaceState(withHistoryDepth(historyStateFor(userId, route, panel), depth), "", url);
+}
+
 export function App() {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [checking, setChecking] = useState(true);
-  const [activeApp, setActiveApp] = useState<AppSection>("home");
+  const [activeApp, setActiveApp] = useState<AppSection>(() => parseRoute(window.location.pathname).app);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<FolderSelection>("all");
@@ -596,8 +619,9 @@ export function App() {
   const savingPromiseRef = useRef<Promise<boolean> | null>(null);
   const switchingRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
-  const historyInitialisedRef = useRef(false);
-  const appHistoryInitialisedRef = useRef(false);
+  // The route requested before the workspace was ready (deep link, or the URL shown on the login page).
+  const pendingRouteRef = useRef<Route | null>(parseRoute(window.location.pathname));
+  const routeAppliedUserRef = useRef<string | null>(null);
   const newlyCreatedNoteIdRef = useRef<string | null>(null);
 
   const flash = useCallback((message: string) => {
@@ -636,38 +660,48 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!session || appHistoryInitialisedRef.current || !isMobileViewport()) return;
-    window.history.replaceState(createAppHistoryState(session.user.id, "home", window.history.state), "");
-    appHistoryInitialisedRef.current = true;
-  }, [session]);
-
-  useEffect(() => {
     if (!session) return;
     if (session.totp.setupRequired) setSettingsOpen(true);
     else {
-      loadNavigation(session.user.id).then(({ folders: folderRows, notes: noteRows, stale }) => {
-        if (stale || sessionUserRef.current !== session.user.id) return;
-        let remembered: { folder?: string; noteId?: string } = {};
-        try { remembered = JSON.parse(localStorage.getItem(`mynotes:last:${session.user.id}`) ?? "{}"); } catch { /* use defaults */ }
-        const folder = remembered.folder;
-        const restoredFolder = folder && (folder === "all" || folder === "shared" || folderRows.some((item) => item.id === folder)) ? folder : "all";
-        setSelectedFolder(restoredFolder);
-        const restoredNote = remembered.noteId ? noteRows.find((item) => item.id === remembered.noteId) : undefined;
-        const noteInSection = restoredNote && (restoredFolder === "all" || (restoredFolder === "shared" ? restoredNote.is_owner === 0 : restoredNote.folder_id === restoredFolder));
-        setSelectedNoteId(noteInSection ? restoredNote.id : null);
-        setSelectionOwner(session.user.id);
+      const userId = session.user.id;
+      // Later session updates (for example a two-factor change) only refresh data; the route was already applied.
+      const applyRoute = routeAppliedUserRef.current !== userId;
+      loadNavigation(userId).then(({ folders: folderRows, notes: noteRows, stale }) => {
+        if (stale || sessionUserRef.current !== userId || !applyRoute) return;
+        const route = pendingRouteRef.current ?? parseRoute(window.location.pathname);
+        pendingRouteRef.current = null;
+        routeAppliedUserRef.current = userId;
+        const snapshot = readHistorySnapshot(window.history.state, userId);
+        let selection: { folder: FolderSelection; noteId: string | null };
+        let panel: MobilePanel = "folders";
+        if (route.app === "notes" && (route.noteId || route.folder !== "all")) {
+          const resolved = resolveNotesRoute(route, { folders: folderRows, notes: noteRows }, { snapshot, lastFolder: "all" });
+          if (resolved.missing) flash(resolved.missing === "note" ? "Note not found" : "Folder not found");
+          selection = resolved;
+          panel = resolveNotesPanel(resolved, snapshot);
+        } else {
+          // Resume the last folder and note only when the URL does not name one.
+          let remembered: { folder?: string; noteId?: string } = {};
+          try { remembered = JSON.parse(localStorage.getItem(`mynotes:last:${userId}`) ?? "{}"); } catch { /* use defaults */ }
+          const folder = remembered.folder;
+          const restoredFolder = folder && (folder === "all" || folder === "shared" || folderRows.some((item) => item.id === folder)) ? folder : "all";
+          const restoredNote = remembered.noteId ? noteRows.find((item) => item.id === remembered.noteId) : undefined;
+          selection = { folder: restoredFolder, noteId: restoredNote && noteInFolder(restoredNote, restoredFolder) ? restoredNote.id : null };
+          if (snapshot && snapshot.folder === selection.folder && snapshot.noteId === selection.noteId) panel = snapshot.panel === "editor" && !selection.noteId ? "notes" : snapshot.panel;
+        }
+        setSelectedFolder(selection.folder);
+        setSelectedNoteId(selection.noteId);
+        setSelectionOwner(userId);
+        setMobilePanel(panel);
+        setActiveApp(route.app);
+        const target: Route = route.app === "notes" ? notesRoute(selection.folder, selection.noteId) : route;
+        writeHistory(userId, target, panel, "replace");
       }).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not open your notes"));
     }
   }, [flash, session, loadNavigation]);
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
-  }, [activeApp, selectedFolder, selectedNoteId, selectionOwner, session]);
-  useEffect(() => {
-    if (!session || activeApp !== "notes" || selectionOwner !== session.user.id || historyInitialisedRef.current || !isMobileViewport()) return;
-    const snapshot: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
-    window.history.replaceState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, snapshot, window.history.state)), "");
-    historyInitialisedRef.current = true;
   }, [activeApp, selectedFolder, selectedNoteId, selectionOwner, session]);
   useEffect(() => {
     if (selectedNoteId) loadNote(selectedNoteId);
@@ -754,28 +788,22 @@ export function App() {
     autosaveTimerRef.current = null;
   }
 
-  function writeMobileHistory(snapshot: MobileNavigationSnapshot, mode: "push" | "replace" = "push") {
-    if (!session || !isMobileViewport()) return;
-    let current = readHistorySnapshot(window.history.state, session.user.id);
-    if (!current) {
-      const initial: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
-      window.history.replaceState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, initial, window.history.state)), "");
-      current = initial;
-    }
-    if (current && sameSnapshot(current, snapshot)) return;
-    const state = createHistoryState(session.user.id, snapshot, window.history.state);
-    if (mode === "replace") window.history.replaceState(state, "");
-    else window.history.pushState(state, "");
-    historyInitialisedRef.current = true;
+  function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel } = {}) {
+    if (!session) return;
+    writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push");
+  }
+
+  function currentNotesRoute(): NotesRoute {
+    return notesRoute(selectedFolder, selectedNoteId);
   }
 
   function showMobilePanel(panel: MobilePanel, mode: "push" | "replace" = "push") {
     const current = session ? readHistorySnapshot(window.history.state, session.user.id) : null;
     if (panel === "editor" && current?.panel === "folders" && selectedNoteId) {
-      writeMobileHistory({ panel: "notes", folder: selectedFolder, noteId: null });
+      navigate(currentNotesRoute(), { panel: "notes" });
     }
     setMobilePanel(panel);
-    writeMobileHistory({ panel, folder: selectedFolder, noteId: selectedNoteId }, mode);
+    navigate(currentNotesRoute(), { panel, replace: mode === "replace" });
   }
 
   async function removeEmptyNewNote() {
@@ -810,7 +838,7 @@ export function App() {
     if (switchingRef.current) return;
     switchingRef.current = true;
     try {
-      await finalizeCurrentNote();
+      const finalized = await finalizeCurrentNote();
       const selected = folders.find((folder) => folder.id === selectedFolder);
       const folderId = selected?.is_owner === 1 ? selected.id : null;
       const { note: created } = await api<{ note: { id: string } }>("/notes", { method: "POST", body: JSON.stringify({ folderId }) });
@@ -818,7 +846,8 @@ export function App() {
       setSelectedNoteId(created.id);
       newlyCreatedNoteIdRef.current = created.id;
       setMobilePanel("editor");
-      writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: created.id });
+      // A blank note that was just removed should not stay behind as a Back target.
+      navigate(notesRoute(selectedFolder, created.id), { panel: "editor", replace: finalized === "removed-empty" });
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : "Could not create note");
     } finally {
@@ -833,7 +862,7 @@ export function App() {
     setDraggingNoteId(null);
     setDropFolderId(null);
     await loadNavigation();
-    if (selectedNoteId === noteId) writeMobileHistory({ panel: mobilePanel, folder: folder.id, noteId });
+    if (selectedNoteId === noteId) navigate(notesRoute(folder.id, noteId), { replace: true });
     flash(`Moved to ${folder.name}`);
   }
 
@@ -852,7 +881,7 @@ export function App() {
       loadedRef.current = "";
       if (newlyCreatedNoteIdRef.current === noteId) newlyCreatedNoteIdRef.current = null;
       setMobilePanel("notes");
-      writeMobileHistory({ panel: "notes", folder: selectedFolder, noteId: null });
+      navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
     }
     await loadNavigation();
     flash("Note deleted");
@@ -872,16 +901,16 @@ export function App() {
   async function selectNote(nextId: string) {
     if (nextId === selectedNoteId) {
       setMobilePanel("editor");
-      writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: nextId });
+      navigate(notesRoute(selectedFolder, nextId), { panel: "editor" });
       return;
     }
     if (switchingRef.current) return;
     switchingRef.current = true;
     try {
-      await finalizeCurrentNote();
+      const finalized = await finalizeCurrentNote();
       setSelectedNoteId(nextId);
       setMobilePanel("editor");
-      writeMobileHistory({ panel: "editor", folder: selectedFolder, noteId: nextId });
+      navigate(notesRoute(selectedFolder, nextId), { panel: "editor", replace: finalized === "removed-empty" });
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : "Could not switch notes");
     } finally {
@@ -891,14 +920,15 @@ export function App() {
 
   async function selectFolder(nextFolder: FolderSelection) {
     if (nextFolder === selectedFolder) {
+      // Same folder: only the phone panel changes; an open note stays open (and in the URL).
       setMobilePanel("notes");
-      writeMobileHistory({ panel: "notes", folder: nextFolder, noteId: null });
+      navigate(notesRoute(nextFolder, selectedNoteId), { panel: "notes" });
       return;
     }
     if (switchingRef.current) return;
     switchingRef.current = true;
     try {
-      await finalizeCurrentNote();
+      const finalized = await finalizeCurrentNote();
       setSelectedFolder(nextFolder);
       setSelectedNoteId(null);
       setNote(null);
@@ -906,7 +936,7 @@ export function App() {
       revisionRef.current = null;
       loadedRef.current = "";
       setMobilePanel("notes");
-      writeMobileHistory({ panel: "notes", folder: nextFolder, noteId: null });
+      navigate(notesRoute(nextFolder, null), { panel: "notes", replace: finalized === "removed-empty" });
     } catch (reason) {
       flash(reason instanceof Error ? reason.message : "Could not switch folders");
     } finally {
@@ -927,7 +957,7 @@ export function App() {
       loadedRef.current = "";
       await loadNavigation();
       setMobilePanel("notes");
-      writeMobileHistory({ panel: "notes", folder: selectedFolder, noteId: null });
+      navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
       flash("Unpublished note removed");
     } else {
       await Promise.all([loadNote(note.id), loadNavigation()]);
@@ -935,20 +965,24 @@ export function App() {
     }
   }
 
-  async function restoreMobileHistory(snapshot: MobileNavigationSnapshot) {
-    if (switchingRef.current) return;
-    const targetFolder: FolderSelection = snapshot.folder === "all" || snapshot.folder === "shared" || folders.some((folder) => folder.id === snapshot.folder) ? snapshot.folder : "all";
-    const candidate = snapshot.noteId ? notes.find((item) => item.id === snapshot.noteId) : undefined;
-    const targetNoteId = candidate && (targetFolder === "all" || (targetFolder === "shared" ? candidate.is_owner === 0 : candidate.folder_id === targetFolder)) ? candidate.id : null;
-    const targetPanel: MobilePanel = snapshot.panel === "editor" && !targetNoteId ? "notes" : snapshot.panel;
-    const selectionChanged = targetFolder !== selectedFolder || targetNoteId !== selectedNoteId;
+  // Applies a Notes URL reached through Back/Forward. The browser has already moved, so on failure
+  // the entry is rewritten to the note that is still open.
+  async function restoreNotesRoute(route: NotesRoute, snapshot: MobileNavigationSnapshot | null) {
+    if (!session) return;
+    if (switchingRef.current) {
+      navigate(routeForApp(activeApp), { replace: true });
+      return;
+    }
+    const resolved = resolveNotesRoute(route, { folders, notes }, { snapshot, lastFolder: selectedFolder });
+    const targetPanel = resolveNotesPanel(resolved, snapshot);
+    const selectionChanged = resolved.folder !== selectedFolder || resolved.noteId !== selectedNoteId;
     switchingRef.current = true;
     try {
       if (selectionChanged) {
         await finalizeCurrentNote();
-        setSelectedFolder(targetFolder);
-        setSelectedNoteId(targetNoteId);
-        if (!targetNoteId) {
+        setSelectedFolder(resolved.folder);
+        setSelectedNoteId(resolved.noteId);
+        if (!resolved.noteId) {
           setNote(null);
           setMarkdown("");
           revisionRef.current = null;
@@ -956,27 +990,23 @@ export function App() {
         }
       }
       setMobilePanel(targetPanel);
+      setActiveApp("notes");
+      if (resolved.missing) flash(resolved.missing === "note" ? "Note not found" : "Folder not found");
+      if (resolved.missing || formatRoute(notesRoute(resolved.folder, resolved.noteId)) !== window.location.pathname) {
+        navigate(notesRoute(resolved.folder, resolved.noteId), { panel: targetPanel, replace: true });
+      }
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not restore this view");
+      flash(`${reason instanceof Error ? reason.message : "Could not save this note"}. Your note is still open.`);
+      navigate(routeForApp(activeApp), { replace: true });
     } finally {
       switchingRef.current = false;
     }
   }
 
-  function openApp(section: AppSection) {
-    if (!session) return;
-    if (section === "notes") {
-      setMobilePanel("folders");
-      historyInitialisedRef.current = false;
-      if (isMobileViewport()) {
-        const snapshot: MobileNavigationSnapshot = { panel: "folders", folder: selectedFolder, noteId: selectedNoteId };
-        window.history.pushState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, snapshot, window.history.state)), "");
-        historyInitialisedRef.current = true;
-      }
-    } else if (isMobileViewport()) {
-      window.history.pushState(createAppHistoryState(session.user.id, section, window.history.state), "");
-    }
-    setActiveApp(section);
+  function routeForApp(section: AppSection): Route {
+    if (section === "notes") return currentNotesRoute();
+    if (section === "files") return { app: "files", folder: "all", documentId: null };
+    return { app: section };
   }
 
   async function leaveNotes() {
@@ -1003,47 +1033,63 @@ export function App() {
     }
   }
 
-  async function openHome() {
-    if (!session) return;
+  async function openApp(section: AppSection) {
+    if (!session || section === activeApp) return;
     if (activeApp === "notes" && !await leaveNotes()) return;
-    if (isMobileViewport()) window.history.pushState(createAppHistoryState(session.user.id, "home", window.history.state), "");
-    setActiveApp("home");
+    if (section === "notes") {
+      setMobilePanel("folders");
+      navigate(currentNotesRoute(), { panel: "folders" });
+    } else {
+      navigate(routeForApp(section));
+    }
+    setActiveApp(section);
   }
 
-  async function leaveNotesFromHistory(section: AppSection) {
+  function openHome() {
+    return openApp("home");
+  }
+
+  async function leaveNotesFromHistory(route: Route) {
     if (!session) return;
     if (await leaveNotes()) {
-      setActiveApp(section);
+      setActiveApp(route.app);
+      if (formatRoute(route) !== window.location.pathname) navigate(route, { replace: true });
       return;
     }
-    // Browser Back already moved off the Notes entry; put it back so the history matches the open note.
-    const snapshot: MobileNavigationSnapshot = { panel: mobilePanel, folder: selectedFolder, noteId: selectedNoteId };
-    window.history.pushState(createAppHistoryState(session.user.id, "notes", createHistoryState(session.user.id, snapshot, window.history.state)), "");
+    // Browser Back already moved off the note; rewrite this entry so the URL matches the open note.
+    navigate(currentNotesRoute(), { replace: true });
   }
 
   function mobileBack(fallback: MobilePanel) {
-    if (session && isMobileViewport() && readHistorySnapshot(window.history.state, session.user.id)) {
+    // Only step back through entries this visit pushed, so the in-app Back never leaves MyNotes.
+    if (session && isMobileViewport() && readHistoryDepth(window.history.state) > 0 && readHistorySnapshot(window.history.state, session.user.id)) {
       window.history.back();
       return;
     }
-    showMobilePanel(fallback);
+    showMobilePanel(fallback, "replace");
   }
 
   // Re-registered every render so the handler never finalizes a note from a stale editor snapshot.
   useEffect(() => {
     if (!session) return;
     const onPopState = (event: PopStateEvent) => {
-      if (!isMobileViewport()) return;
-      const section = resolveAppHistorySection(event.state, session.user.id);
-      if (!section) return;
-      if (activeApp === "notes" && section !== "notes") {
-        void leaveNotesFromHistory(section);
+      const route = parseRoute(window.location.pathname);
+      if (session.totp.setupRequired) return;
+      if (routeAppliedUserRef.current !== session.user.id) {
+        // The workspace is still loading; apply the newest URL once it is ready.
+        pendingRouteRef.current = route;
         return;
       }
-      if (section !== activeApp) setActiveApp(section);
-      if (section !== "notes") return;
-      const snapshot = readHistorySnapshot(event.state, session.user.id);
-      if (snapshot) void restoreMobileHistory(snapshot);
+      if (route.app !== "notes") {
+        if (activeApp === "notes") {
+          void leaveNotesFromHistory(route);
+          return;
+        }
+        setActiveApp(route.app);
+        if (formatRoute(route) !== window.location.pathname) navigate(route, { replace: true });
+        return;
+      }
+      void restoreNotesRoute(route, readHistorySnapshot(event.state, session.user.id));
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -1074,9 +1120,10 @@ export function App() {
     setSelectionOwner(null);
     revisionRef.current = null;
     loadedRef.current = "";
-    historyInitialisedRef.current = false;
-    appHistoryInitialisedRef.current = false;
     newlyCreatedNoteIdRef.current = null;
+    routeAppliedUserRef.current = null;
+    pendingRouteRef.current = { app: "home" };
+    window.history.replaceState(null, "", "/");
     setActiveApp("home");
     setSession(null);
   }
@@ -1096,7 +1143,9 @@ export function App() {
     revisionRef.current = null;
     loadedRef.current = "";
     newlyCreatedNoteIdRef.current = null;
-    setActiveApp("home");
+    routeAppliedUserRef.current = null;
+    // Land on the URL that was requested before signing in (kept in memory only).
+    setActiveApp((pendingRouteRef.current ?? parseRoute(window.location.pathname)).app);
     setSession(result);
     setChecking(false);
   }} />;
