@@ -73,6 +73,8 @@ export type BinItem = {
   board_name?: string | null;
   /** A document that was a card attachment. */
   attachment?: boolean;
+  /** The live card it is still attached to, when there is one. */
+  attachment_of?: string | null;
   /** False for a card the caller deleted on someone else's board: they may only restore it. */
   can_purge?: boolean;
 };

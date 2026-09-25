@@ -9,7 +9,7 @@ async function call(session: Session | undefined, method: string, path: string, 
   return { status: response.status, body: (text ? JSON.parse(text) : null) as Record<string, any> };
 }
 const tasks = (session: Session, method: string, path: string, body?: unknown) => call(session, method, `/tasks${path}`, body);
-type Item = { type: string; id: string; title: string; board_id: string | null; board_name: string | null; can_purge: boolean; attachment: boolean };
+type Item = { type: string; id: string; title: string; board_id: string | null; board_name: string | null; can_purge: boolean; attachment: boolean; attachment_of?: string | null };
 const binItems = async (session: Session, query = "") => (await call(session, "GET", `/bin${query}`)).body.items as Item[];
 
 async function setup(label: string) {
@@ -179,6 +179,8 @@ describe("restoring attachments", () => {
     const now = new Date().toISOString();
     db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(now, owner.userId, now, linked);
     expect((await request(`/files/${linked}/content`, {}, member)).status).toBe(404);
+    // While a live card links it, the Bin names that card.
+    expect((await binItems(owner)).find((item) => item.id === linked)).toMatchObject({ attachment: true, attachment_of: "Keeps its file" });
     const restored = await call(owner, "POST", `/bin/document/${linked}/restore`);
     expect(restored.status).toBe(200);
     expect(restored.body).toMatchObject({ ok: true, folderId: null, folderName: null });
@@ -190,6 +192,7 @@ describe("restoring attachments", () => {
     // Unlinked: back in Files, in Default.
     await tasks(owner, "DELETE", `/cards/${card.id}/attachments/${linked}`);
     expect(documentRow(linked)!.deleted_at).toBeTruthy();
+    expect((await binItems(owner)).find((item) => item.id === linked)).toMatchObject({ attachment: true, attachment_of: null });
     const back = await call(owner, "POST", `/bin/document/${linked}/restore`);
     expect(back.body.folderName).toBe("Default");
     expect(documentRow(linked)).toMatchObject({ deleted_at: null, purpose: "file" });

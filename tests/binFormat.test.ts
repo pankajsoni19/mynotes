@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { binFolderLabel, binItemLabel, binKindLabel, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage, restoreResultMessage } from "../src/bin/binFormat";
+import { attachmentLabel, binFolderLabel, binItemLabel, binKindLabel, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage, restoreResultMessage } from "../src/bin/binFormat";
 import type { BinItem } from "../src/types";
 
 const DAY = 86_400_000;
@@ -93,4 +93,9 @@ describe("Tasks items in the Bin", () => {
 test("a restored linked attachment returns to its card", () => {
   expect(restoreResultMessage({ type: "document", attachment: true }, { ok: true, folderId: null, folderName: null })).toBe("Restored to its card");
   expect(restoreResultMessage({ type: "document", attachment: true }, { ok: true, folderId: "f", folderName: "Default" })).toBe("Restored to Default");
+});
+
+test("attachment rows name their card while it exists", () => {
+  expect(attachmentLabel({ attachment_of: "Ship it" })).toBe("Attachment of Ship it");
+  expect(attachmentLabel({ attachment_of: null })).toBe("Card attachment");
 });

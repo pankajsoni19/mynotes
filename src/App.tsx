@@ -1443,7 +1443,7 @@ export function App() {
   if (activeApp !== "notes" && !session.totp.setupRequired) return <>
     {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
-      : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
+      : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}

@@ -40,6 +40,11 @@ export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
   return item.title.trim() || untitled[item.type];
 }
 
+/** Row meta for an attachment: the card it still belongs to, or a generic label. */
+export function attachmentLabel(item: Pick<BinItem, "attachment_of">) {
+  return item.attachment_of ? `Attachment of ${item.attachment_of}` : "Card attachment";
+}
+
 /** The kind shown to screen readers and in the row meta. */
 export function binKindLabel(item: Pick<BinItem, "type" | "attachment">) {
   if (item.type === "note") return "Note";

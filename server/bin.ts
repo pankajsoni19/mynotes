@@ -2,6 +2,7 @@ import { audit, db, ensureDefaultFolder, now } from "./db";
 import { removeObject } from "./documentStorage";
 import { storage, withResourceLock } from "./storage";
 import { emptyTaskBin, listTaskBin, sweepTaskBin, type TaskBinType } from "./tasks/bin";
+import { readableBoardPredicate } from "./tasks/access";
 
 /** Bin retention is a constant (D11), not configurable. */
 export const BIN_RETENTION_MS = 30 * 86_400_000;
@@ -193,6 +194,8 @@ export type BinItem = {
   board_name: string | null;
   /** A document that was a card attachment (it returns to Files when restored). */
   attachment: boolean;
+  /** For an attachment still linked to a live card on a board the caller can read: that card's title. */
+  attachment_of: string | null;
   /** Whether the caller may delete it forever (a card's deleter may only restore it). */
   can_purge: boolean;
 };
@@ -206,11 +209,15 @@ export const BIN_LIST_LIMIT = 500;
  */
 export function listBin(ownerId: string, type: BinListType | null) {
   const notes = `SELECT 'note' AS type, n.id, n.title, f.id AS folder_id, f.name AS folder_name, NULL AS size_bytes,
-      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 0 AS attachment
+      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 0 AS attachment, NULL AS attachment_of
     FROM notes n LEFT JOIN folders f ON f.id = n.folder_id AND f.owner_id = n.owner_id
     WHERE n.owner_id = $ownerId AND n.deleted_at IS NOT NULL`;
   const documents = `SELECT 'document' AS type, d.id, d.name AS title, f.id AS folder_id, f.name AS folder_name, d.size_bytes,
-      d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging, CASE WHEN d.purpose = 'file' THEN 0 ELSE 1 END AS attachment
+      d.deleted_at, d.purge_after, d.purge_started_at IS NOT NULL AS purging, CASE WHEN d.purpose = 'file' THEN 0 ELSE 1 END AS attachment,
+      CASE WHEN d.purpose = 'file' THEN NULL ELSE (
+        SELECT k.title FROM card_attachments ca JOIN cards k ON k.id = ca.card_id AND k.deleted_at IS NULL JOIN boards b ON b.id = k.board_id
+        WHERE ca.document_id = d.id AND ${readableBoardPredicate.replaceAll("$userId", "$ownerId")} ORDER BY ca.created_at LIMIT 1
+      ) END AS attachment_of
     FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
     WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
   const items: BinItem[] = [];
@@ -224,7 +231,7 @@ export function listBin(ownerId: string, type: BinListType | null) {
   if (type === null || type === "card" || type === "board") {
     items.push(...listTaskBin(ownerId, type === "card" || type === "board" ? type : null, BIN_LIST_LIMIT).map((row): BinItem => ({
       type: row.type, id: row.id, title: row.title, folder_id: null, folder_name: null, size_bytes: null,
-      deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purging, attachment: false,
+      deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purging, attachment: false, attachment_of: null,
       board_id: row.board_id, board_name: row.board_name, can_purge: row.can_purge
     })));
   }
