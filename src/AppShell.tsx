@@ -1,4 +1,4 @@
-import { Archive, ArrowRight, FileText, LogOut, Settings, Sparkles, Trash2 } from "lucide-react";
+import { Archive, ArrowRight, FileText, KanbanSquare, LogOut, Settings, Sparkles, Trash2 } from "lucide-react";
 import "./appShell.css";
 import type { AppSection } from "./appShellNavigation";
 
@@ -23,6 +23,7 @@ export function AccountActions({ displayName, onSettings, onSignOut }: AccountPr
 const cards: Array<{ section: Exclude<AppSection, "home">; icon: typeof Archive; eyebrow: string; title: string; copy: string; status: string }> = [
   { section: "notes", icon: Archive, eyebrow: "Your workspace", title: "Notes", copy: "Write fluid Markdown notes, keep versions, and share with the people you choose.", status: "Open Notes" },
   { section: "files", icon: FileText, eyebrow: "Your workspace", title: "Files", copy: "Upload, preview, and organize documents next to your notes.", status: "Open Files" },
+  { section: "tasks", icon: KanbanSquare, eyebrow: "Your workspace", title: "Tasks", copy: "Plan work on shared boards with draggable cards", status: "Open Tasks" },
   { section: "bin", icon: Trash2, eyebrow: "Your workspace", title: "Bin", copy: "Restore deleted notes and files for 30 days", status: "Open Bin" }
 ];
 

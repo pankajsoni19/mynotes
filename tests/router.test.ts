@@ -14,6 +14,9 @@ const rows: Array<[string, Route]> = [
   ["/files/shared", { app: "files", folder: "shared", documentId: null }],
   [`/files/folder/${folderId}`, { app: "files", folder: folderId, documentId: null }],
   [`/files/${noteId}`, { app: "files", folder: "all", documentId: noteId }],
+  ["/tasks", { app: "tasks", boardId: null, cardId: null }],
+  [`/tasks/${folderId}`, { app: "tasks", boardId: folderId, cardId: null }],
+  [`/tasks/${folderId}/card/${noteId}`, { app: "tasks", boardId: folderId, cardId: noteId }],
   ["/bin", { app: "bin" }]
 ];
 
@@ -65,13 +68,15 @@ test("uppercase ids normalise", () => {
 
 test("format never escapes origin", () => {
   const hostile = ["//evil", "javascript:x", "../x", "/\\evil.example", "%2F%2Fevil", `${noteId}/../../x`, "https://evil.example"];
-  const shape = /^\/(notes|files|bin)?(\/[a-z0-9/-]*)?$/;
+  const shape = /^\/(notes|files|tasks|bin)?(\/[a-z0-9/-]*)?$/;
   for (const value of hostile) {
     const routes: Route[] = [
       { app: "notes", folder: value, noteId: value },
       { app: "notes", folder: value, noteId: null },
       { app: "files", folder: value, documentId: value },
-      { app: "files", folder: value, documentId: null }
+      { app: "files", folder: value, documentId: null },
+      { app: "tasks", boardId: value, cardId: value },
+      { app: "tasks", boardId: noteId, cardId: value }
     ];
     for (const route of routes) {
       const url = formatRoute(route);

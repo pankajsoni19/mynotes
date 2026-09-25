@@ -39,6 +39,8 @@ import { api, ApiError, setCsrfToken } from "./api";
 import { AppHome } from "./AppShell";
 import { BinApp } from "./bin/BinApp";
 import { FilesApp } from "./files/FilesApp";
+import { TasksApp } from "./tasks/TasksApp";
+import { carriedTasksState } from "./tasksNavigation";
 import { popStateClosedDialog } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
@@ -588,7 +590,8 @@ function filesSnapshotFor(userId: string, route: Extract<Route, { app: "files" }
 // return to the results a note was opened from, with the query kept.
 function historyStateFor(userId: string, route: Route, panel: MobilePanel, filesPanel?: FilesPanel, search: SearchHint | null = null) {
   const appState = route.app === "notes" ? withSearchHint(userId, search, createHistoryState(userId, { panel, folder: route.folder, noteId: route.noteId }, null))
-    : route.app === "files" ? createFilesHistoryState(userId, filesSnapshotFor(userId, route, filesPanel), null) : null;
+    : route.app === "files" ? createFilesHistoryState(userId, filesSnapshotFor(userId, route, filesPanel), null)
+    : route.app === "tasks" ? carriedTasksState(userId, route.boardId, window.history.state) : null;
   return createAppHistoryState(userId, route.app, appState);
 }
 
@@ -748,7 +751,7 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", bin: "Bin" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", bin: "Bin" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session]);
@@ -1154,6 +1157,7 @@ export function App() {
   function routeForApp(section: AppSection): Route {
     if (section === "notes") return currentNotesRoute();
     if (section === "files") return { app: "files", folder: "all", documentId: null };
+    if (section === "tasks") return { app: "tasks", boardId: null, cardId: null };
     return { app: section };
   }
 
@@ -1410,6 +1414,7 @@ export function App() {
   if (activeApp !== "notes" && !session.totp.setupRequired) return <>
     {activeApp === "home" ? <AppHome {...account} onOpen={openApp} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
+      : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}

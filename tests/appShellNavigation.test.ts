@@ -51,3 +51,7 @@ test("route changes wait for the first load, and retry it after a failure", () =
   expect(startupRouteState("user-1", null, "user-1")).toBe("retry");
   expect(startupRouteState("user-1", "user-2", "user-2")).toBe("loading");
 });
+
+test("Tasks is a valid app section", () => {
+  expect(readAppHistorySection(createAppHistoryState("user-1", "tasks", null), "user-1")).toBe("tasks");
+});

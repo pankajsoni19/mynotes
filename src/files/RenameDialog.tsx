@@ -13,12 +13,14 @@ type NameDialogProps = {
   submitLabel: string;
   /** Characters selected when the dialog opens. */
   selection?: [number, number];
+  /** Help shown under the field while it is valid. */
+  hint?: string;
   validate: (value: string) => NameCheck;
   onSubmit: (name: string) => Promise<void> | void;
   onCancel: () => void;
 };
 
-export function NameDialog({ title, eyebrow, label, initialValue, submitLabel, selection, validate, onSubmit, onCancel }: NameDialogProps) {
+export function NameDialog({ title, eyebrow, label, initialValue, submitLabel, selection, hint = "Slashes, backslashes, and colons become dashes.", validate, onSubmit, onCancel }: NameDialogProps) {
   const [value, setValue] = useState(initialValue);
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,7 @@ export function NameDialog({ title, eyebrow, label, initialValue, submitLabel, s
         disabled={busy}
       />
       <p id={hintId} className={shown ? "file-dialog-error" : "file-dialog-hint"} role={shown ? "alert" : undefined}>
-        {shown ?? (willStore ? `Will be saved as “${willStore}”.` : "Slashes, backslashes, and colons become dashes.")}
+        {shown ?? (willStore ? `Will be saved as “${willStore}”.` : hint)}
       </p>
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
