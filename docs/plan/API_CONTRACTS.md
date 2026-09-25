@@ -1,4 +1,4 @@
-# API contracts: Files, content, and Bin
+# API contracts: Files, content, Bin, and Search
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every endpoint lives under `/api` and inherits the existing middleware:
 
@@ -216,6 +216,40 @@ Clients treat a 404 on a **retry** as success.
 > **Implementation notes (shipped in v0.3.1):**
 > - Purge audit events (`note.purge`, `document.purge`) record `reason`: `user`, `blank`, `retention`, or `resumed`. `resumed` marks a purge the sweeper finished after an interruption; the original reason is not stored.
 > - The sweeper's Bin step has two separate budgets per table and run: up to 50 interrupted purges resumed, then up to 100 items past `purge_after`. Retention is re-checked under the lock, so an item restored and deleted again mid-run is not purged. Remaining items wait for the next hourly run.
+
+## Search (Wave 7)
+
+`GET /api/search?q=&scope=notes&folder=all|shared|<uuid>&limit=20` searches note titles and bodies ([WAVES_7-9.md](WAVES_7-9.md) §2).
+
+| Parameter | Default | Rule |
+| --- | --- | --- |
+| `q` | `""` | At most 200 characters. It is never passed to FTS5 as syntax: it is NFKC-normalized and lowercased, up to 4 `"quoted phrases"` are kept, the rest is split into up to 8 words of 2–64 letters, numbers, or combining marks, and every word must match (implicit AND). The last word matches as a prefix unless `q` ends in a space or punctuation. A `q` with nothing searchable returns no results. |
+| `scope` | `notes` | Only `notes` |
+| `folder` | `all` | `all`, `shared` (notes owned by others), or a folder id. A folder id matches the masked `folder_id` below. |
+| `limit` | `20` | Integer 1–50 |
+
+```ts
+type Segment = { text: string; hit: boolean };  // plain text, never HTML
+type NoteSearchHit = {
+  id: string;
+  source: "published" | "draft";  // draft only for the owner, when a draft exists
+  title: Segment[];                // highlighted title
+  snippet: Segment[];              // body excerpt around the hits, "…" where cut
+  folder_id: string | null;        // masked as in GET /api/notes
+  owner_name: string;
+  is_owner: 0 | 1;
+  visibility: Visibility;          // effective, as in GET /api/notes
+  updated_at: string;
+};
+```
+
+| Status | When | Body |
+| --- | --- | --- |
+| 200 | Always, including no matches | `{ results: NoteSearchHit[], truncated: boolean }`, ordered by relevance (title matches weigh 8×) then `updated_at DESC`. `truncated` means more than `limit` notes matched. Scores are never returned. |
+| 400 | Bad `scope`, `folder`, or `limit`, or `q` over 200 characters | `{ error: "Invalid request", details }` |
+| 429 | More than 20 searches in 10 seconds by this user | `{ error, code: "RATE_LIMITED" }` with `Retry-After` in seconds |
+
+Access is the live `GET /api/notes/:id` rule, applied in the query before `LIMIT`: a note's owner searches their draft when one exists and the published version otherwise; everyone else searches the published version of notes they can read. Binned notes never match; restoring one makes it searchable again, and purging removes its index rows. The index holds the published version and the owner's draft, built from checksum-verified files in the same transaction as each change.
 
 ## Changes to existing note endpoints (Wave 4)
 
