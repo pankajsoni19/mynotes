@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Download, ExternalLink, FolderInput, Pencil, Share2, Trash2 } from "lucide-react";
+import { ChevronLeft, Download, Ellipsis, ExternalLink, FolderInput, Pencil, Share2, Trash2 } from "lucide-react";
 import type { DocumentSummary } from "../types";
 import { contentUrl, fetchTextPreview, formatBytes, TEXT_PREVIEW_BYTES } from "./filesApi";
 import { formatDateTime, kindIcon, kindLabel, visibilityLabels } from "./format";
@@ -56,9 +56,11 @@ type FilePreviewProps = {
   onBack: () => void;
   /** Owner-only actions; null for files other people shared, which get Download (and Open preview) only. */
   actions?: FilePreviewActions | null;
+  /** Opens the phone action sheet. */
+  onMore?: (trigger: HTMLElement) => void;
 };
 
-export function FilePreview({ document, folderName, onBack, actions = null }: FilePreviewProps) {
+export function FilePreview({ document, folderName, onBack, actions = null, onMore }: FilePreviewProps) {
   const Icon = kindIcon(document.preview_kind);
   return <>
     <header className="editor-toolbar file-preview-toolbar">
@@ -72,6 +74,7 @@ export function FilePreview({ document, folderName, onBack, actions = null }: Fi
         <button className="secondary-button file-action" onClick={actions.share} aria-label={`Share ${document.name}`} title="Share"><Share2 /><span>Share</span></button>
         <button className="secondary-button file-action danger" onClick={actions.remove} aria-label={`Delete ${document.name}`} aria-keyshortcuts="Delete" title="Delete"><Trash2 /><span>Delete</span></button>
       </div>}
+      {onMore && <button className="icon-button file-preview-more" onClick={(event) => onMore(event.currentTarget)} aria-haspopup="dialog" aria-label={`Actions for ${document.name}`}><Ellipsis /></button>}
     </header>
     <div className="file-preview-body">
       <section className="file-preview-stage" aria-label="Preview"><PreviewBody key={document.id} document={document} /></section>

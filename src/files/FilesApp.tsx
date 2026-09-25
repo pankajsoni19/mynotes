@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
+import { popStateClosedDialog, registerHistoryDialogGuard } from "../historyDialogs";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
 import { isMobileViewport } from "../mobileNavigation";
@@ -33,6 +34,7 @@ import {
   type FileSort
 } from "./fileActions";
 import { deleteFile, formatBytes, getFile, listFiles, moveFile, renameFile, uploadFile, UploadRequestError } from "./filesApi";
+import { FileActionSheet, type FileSheetAction } from "./FileActionSheet";
 import { FilePreview } from "./FilePreview";
 import { FileSharePanel } from "./FileSharePanel";
 import { MoveSheet } from "./MoveSheet";
@@ -75,7 +77,7 @@ const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payl
   : undefined;
 const errorMessage = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
 
-type FilesDialog = { kind: "rename" | "move" | "share" | "delete"; documentId: string } | { kind: "newFolder" };
+type FilesDialog = { kind: "actions" | "rename" | "move" | "share" | "delete"; documentId: string } | { kind: "newFolder" };
 
 // localStorage can be missing (server render) or throw (blocked storage).
 function browserStorage(): Storage | null {
@@ -191,6 +193,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
+      if (popStateClosedDialog(event)) return;
       const route = parseRoute(window.location.pathname);
       if (route.app !== "files" || !dataRef.current) return;
       void applyRoute(route, readFilesHistorySnapshot(event.state, userId), dataRef.current);
@@ -198,6 +201,21 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [applyRoute, userId]);
+
+  // D18: browser Back (or Forward) while a dialog or sheet is open only closes it. Dialogs have no
+  // history entry of their own, so the entry the browser just left is pushed again and the panel stays.
+  const dialogOpenRef = useRef(false);
+  dialogOpenRef.current = dialog !== null;
+  const placeRef = useRef({ folder, documentId, panel });
+  placeRef.current = { folder, documentId, panel };
+  useEffect(() => registerHistoryDialogGuard(() => {
+    if (!dialogOpenRef.current) return false;
+    const place = placeRef.current;
+    dialogOpenRef.current = false;
+    setDialog(null);
+    navigate(filesRoute(place.folder, place.documentId), { filesPanel: place.panel });
+    return true;
+  }), [navigate]);
 
   // Leaving Files cancels whatever is still uploading.
   useEffect(() => {
@@ -237,10 +255,21 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     });
   }
 
-  function openDialog(kind: FilesDialog["kind"], document: DocumentSummary) {
+  function openDialog(kind: Exclude<FilesDialog["kind"], "newFolder" | "actions">, document: DocumentSummary) {
     if (!canManage(document)) return;
     returnFocusRef.current = document.id;
     setDialog({ kind, documentId: document.id });
+  }
+
+  // The ⋯ sheet is open to everyone (Download, Open preview); it hands off to the owner dialogs.
+  function openActions(document: DocumentSummary, trigger: HTMLElement) {
+    returnFocusRef.current = trigger;
+    setDialog({ kind: "actions", documentId: document.id });
+  }
+
+  function chooseSheetAction(document: DocumentSummary, action: FileSheetAction) {
+    if (!canManage(document)) return;
+    setDialog({ kind: action, documentId: document.id });
   }
 
   const closeDialog = useCallback(() => {
@@ -594,7 +623,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       <div className="note-list file-list" role="list" aria-label={folderTitle} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
           const Icon = kindIcon(item.preview_kind);
-          return <div role="listitem" key={item.id}>
+          return <div role="listitem" className="file-row-item" key={item.id}>
             <button
               className={`file-row${documentId === item.id ? " selected" : ""}${draggingId === item.id ? " dragging" : ""}`}
               draggable={canManage(item)}
@@ -608,6 +637,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
               </span>
               {item.visibility !== "private" && <Users className="file-row-shared" aria-label="Shared" />}
             </button>
+            <button className="icon-button file-row-more" onClick={(event) => openActions(item, event.currentTarget)} aria-haspopup="dialog" aria-label={`Actions for ${item.name}`}><Ellipsis /></button>
           </div>;
         })}
         {data && inFolder.length > 0 && !visible.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>No file names here match “{query.trim()}”.</p><button onClick={() => setQuery("")}>Clear filter</button></div>}
@@ -615,7 +645,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         {!data && <p className="file-preview-note">Loading files…</p>}
       </div>
       <p className="sr-only" aria-live="polite">{summary}</p>
-      {queue.items.length > 0 && <section className="upload-queue" aria-label="Uploads">
+      {queue.items.length > 0 && <section className={`upload-queue${pendingUploads ? " active" : ""}`} aria-label="Uploads">
         <header className="upload-queue-header">
           <button className="upload-queue-toggle" onClick={() => setQueueOpen((open) => !open)} aria-expanded={queueOpen} aria-controls="upload-queue-items">{queueOpen ? <ChevronDown /> : <ChevronUp />}<span>{summary}</span></button>
           {queue.items.some((item) => item.status === "done" || item.status === "canceled") && <button className="text-action" onClick={clearFinished}>Clear</button>}
@@ -642,6 +672,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           document={selected}
           folderName={folderLabel(selected)}
           onBack={() => back("files")}
+          onMore={(trigger) => openActions(selected, trigger)}
           actions={canManage(selected) ? {
             rename: () => openDialog("rename", selected),
             move: () => openDialog("move", selected),
@@ -652,6 +683,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         : <div className="editor-empty"><div className="empty-glyph"><Files /></div><h2>Select a file</h2><p>Choose one from the list to preview it and see its details.</p></div>}
     </section>
 
+    {dialog?.kind === "actions" && dialogDocument && <FileActionSheet document={dialogDocument} onAction={(action) => chooseSheetAction(dialogDocument, action)} onClose={closeDialog} />}
     {dialog?.kind === "newFolder" && <NameDialog
       title="New folder"
       eyebrow="Files"

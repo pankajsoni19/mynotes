@@ -39,6 +39,7 @@ import { api, ApiError, setCsrfToken } from "./api";
 import { AppHome } from "./AppShell";
 import { BinApp } from "./bin/BinApp";
 import { FilesApp } from "./files/FilesApp";
+import { popStateClosedDialog } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
@@ -1185,6 +1186,8 @@ export function App() {
   useEffect(() => {
     if (!session) return;
     const onPopState = (event: PopStateEvent) => {
+      // Back/Forward while a Files dialog is open only closes the dialog (D18).
+      if (popStateClosedDialog(event)) return;
       const route = parseRoute(window.location.pathname);
       if (session.totp.setupRequired) return;
       const startup = startupRouteState(session.user.id, routeAppliedUserRef.current, startupFailedUserRef.current);
