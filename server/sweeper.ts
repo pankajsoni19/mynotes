@@ -1,8 +1,10 @@
+import { sweepBin, type BinSweepCounts } from "./bin";
 import { db } from "./db";
 import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
-let running: Promise<SweepCounts | null> | null = null;
+export type SweepResult = SweepCounts & { bin: BinSweepCounts };
+let running: Promise<SweepResult | null> | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 
 const hasDocumentRow = (id: string) => Boolean(db.query("SELECT 1 FROM documents WHERE id = ?").get(id));
@@ -14,22 +16,36 @@ async function countIntegrityErrors() {
   return broken;
 }
 
-/** Runs one sweep. Overlapping calls share the run already in flight. Logs counts only. */
+/**
+ * Runs one sweep: staging and orphan cleanup, then Bin purges (resume
+ * interrupted ones, then retention). Overlapping calls share the run already
+ * in flight. Logs counts only.
+ */
 export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
   running ??= (async () => {
     try {
-      const counts = await sweepDocumentFiles({ boot: options.boot ?? false, nowMs: options.nowMs, hasDocumentRow });
-      if (counts.stagingRemoved || counts.orphansRemoved || counts.ignored) {
-        console.info(`Document sweep: ${counts.stagingRemoved} staging removed, ${counts.orphansRemoved} orphans removed, ${counts.ignored} unexpected entries ignored`);
+      let counts: SweepCounts | null = null;
+      try {
+        counts = await sweepDocumentFiles({ boot: options.boot ?? false, nowMs: options.nowMs, hasDocumentRow });
+        if (counts.stagingRemoved || counts.orphansRemoved || counts.ignored) {
+          console.info(`Document sweep: ${counts.stagingRemoved} staging removed, ${counts.orphansRemoved} orphans removed, ${counts.ignored} unexpected entries ignored`);
+        }
+        if (options.boot) {
+          const broken = await countIntegrityErrors();
+          if (broken) console.error(`Document integrity check: ${broken} stored documents are missing or have the wrong size`);
+        }
+      } catch (error) {
+        console.error("Document sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
-      if (options.boot) {
-        const broken = await countIntegrityErrors();
-        if (broken) console.error(`Document integrity check: ${broken} stored documents are missing or have the wrong size`);
+      // Bin purges run even when the file sweep failed, so retention never stalls on it.
+      let bin: BinSweepCounts | null = null;
+      try {
+        bin = await sweepBin({ nowMs: options.nowMs });
+        if (bin.purged || bin.pending) console.info(`Bin sweep: ${bin.purged} purged, ${bin.pending} pending retry`);
+      } catch (error) {
+        console.error("Bin sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
-      return counts;
-    } catch (error) {
-      console.error("Document sweep failed", error instanceof Error ? error.name : "Unknown error");
-      return null;
+      return counts && bin ? { ...counts, bin } : null;
     } finally {
       running = null;
     }

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createUser, dataDir, db, origin, request, type Session } from "./support/harness";
 
 const { createMcpApiKey } = await import("../server/mcp");
+const bin = await import("../server/bin");
+const { runSweep } = await import("../server/sweeper");
 
 const noteDir = (id: string) => join(dataDir, "notes", id);
 const objectPath = (id: string) => join(dataDir, "documents", "objects", id);
@@ -205,5 +207,99 @@ describe("moving notes and documents to the Bin", () => {
       expect(list.documents.some((item) => item.id === document.id)).toBe(false);
     }
     expect((await request(`/files/${document.id}/sharing`, {}, owner)).status).toBe(404);
+  });
+});
+
+/** Inserts a binned, never-published note row with a directory on disk, bypassing the API. */
+function insertBinnedNote(ownerId: string, purgeAfter: string, options: { purgeStartedAt?: string | null } = {}) {
+  const id = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+  db.query(`INSERT INTO notes (id, owner_id, folder_id, title, current_version, created_at, updated_at, deleted_at, deleted_by, purge_after, purge_started_at)
+    VALUES (?, ?, NULL, 'Fixture', 0, ?, ?, ?, ?, ?, ?)`)
+    .run(id, ownerId, timestamp, timestamp, timestamp, ownerId, purgeAfter, options.purgeStartedAt ?? null);
+  mkdirSync(noteDir(id), { recursive: true, mode: 0o700 });
+  writeFileSync(join(noteDir(id), "draft.md"), "fixture", { mode: 0o600 });
+  return id;
+}
+
+const past = () => new Date(Date.now() - 60_000).toISOString();
+const future = () => new Date(Date.now() + 86_400_000).toISOString();
+const dueCount = () => (db.query("SELECT COUNT(*) AS count FROM notes WHERE deleted_at IS NOT NULL AND (purge_after <= ? OR purge_started_at IS NOT NULL)").get(new Date().toISOString()) as { count: number }).count;
+
+describe("restore, purge, and the retention sweeper", () => {
+  test("restore returns an item to its original folder, or to Default when the folder is gone", async () => {
+    const owner = await createUser("Restore module owner");
+    const folderId = await createFolder(owner, "Original");
+    const kept = await createNote(owner, "Kept folder", { publish: true, folderId });
+    const orphaned = await createNote(owner, "Folder deleted", { publish: true, folderId });
+    await deleteNote(owner, kept);
+    await deleteNote(owner, orphaned);
+    expect(await bin.restoreItem("note", kept, owner.userId)).toEqual({ status: "restored", folderId, folderName: "Original", visibility: "private" });
+    await deleteNote(owner, kept);
+    expect((await request(`/folders/${folderId}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
+    expect(await bin.restoreItem("note", orphaned, owner.userId)).toEqual({ status: "restored", folderId: defaultFolder, folderName: "Default", visibility: "private" });
+    expect(await bin.restoreItem("note", orphaned, owner.userId)).toEqual({ status: "already_restored", folderId: defaultFolder, folderName: "Default" });
+    expect(noteRow(orphaned)).toMatchObject({ deleted_at: null, deleted_by: null, purge_after: null });
+  });
+
+  test("the sweeper purges items whose retention ended and keeps the rest, one batch per run", async () => {
+    const owner = await createUser("Retention owner");
+    await runSweep();
+    expect(dueCount()).toBe(0);
+    const due = Array.from({ length: bin.SWEEP_BATCH_SIZE + 5 }, () => insertBinnedNote(owner.userId, past()));
+    const keep = insertBinnedNote(owner.userId, future());
+    const liveDocument = await uploadDocument(owner, "retention doc", "keep.txt");
+    const dueDocument = await uploadDocument(owner, "expired doc", "expired.txt");
+    await deleteDocument(owner, dueDocument.id);
+    db.query("UPDATE documents SET purge_after = ? WHERE id = ?").run(past(), dueDocument.id);
+
+    const first = await runSweep();
+    expect(first!.bin.purged).toBe(bin.SWEEP_BATCH_SIZE + 1);
+    expect(dueCount()).toBe(5);
+    const second = await runSweep();
+    expect(second!.bin.purged).toBe(5);
+    expect(dueCount()).toBe(0);
+
+    for (const id of due) {
+      expect(noteRow(id)).toBeNull();
+      expect(existsSync(noteDir(id))).toBe(false);
+    }
+    expect(noteRow(keep)).not.toBeNull();
+    expect(existsSync(noteDir(keep))).toBe(true);
+    expect(db.query("SELECT id FROM documents WHERE id = ?").get(dueDocument.id)).toBeNull();
+    expect(existsSync(objectPath(dueDocument.id))).toBe(false);
+    expect(existsSync(objectPath(liveDocument.id))).toBe(true);
+    const audits = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'document.purge' AND metadata_json LIKE ?").all(`%${dueDocument.id}%`) as Array<{ metadata_json: string }>;
+    expect(audits.map((row) => JSON.parse(row.metadata_json))).toEqual([{ documentId: dueDocument.id, reason: "retention" }]);
+  }, 20_000);
+
+  test("the sweeper finishes interrupted purges", async () => {
+    const owner = await createUser("Interrupted owner");
+    const id = insertBinnedNote(owner.userId, future(), { purgeStartedAt: past() });
+    expect(await bin.restoreItem("note", id, owner.userId)).toEqual({ status: "purging" });
+    await runSweep();
+    expect(noteRow(id)).toBeNull();
+    expect(existsSync(noteDir(id))).toBe(false);
+    const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'note.purge' AND metadata_json LIKE ?").get(`%${id}%`) as { metadata_json: string };
+    expect(JSON.parse(audit.metadata_json)).toEqual({ noteId: id, reason: "user" });
+  });
+
+  test("a byte-removal failure leaves the tombstone for the next sweep", async () => {
+    const owner = await createUser("Failing purge owner");
+    const id = insertBinnedNote(owner.userId, past());
+    const original = bin.binStorage.removeBytes;
+    bin.binStorage.removeBytes = async () => { throw Object.assign(new Error("injected"), { code: "EACCES" }); };
+    try {
+      const counts = await runSweep();
+      expect(counts!.bin.pending).toBeGreaterThanOrEqual(1);
+    } finally {
+      bin.binStorage.removeBytes = original;
+    }
+    expect(noteRow(id)!.purge_started_at).not.toBeNull();
+    expect(existsSync(noteDir(id))).toBe(true);
+    await runSweep();
+    expect(noteRow(id)).toBeNull();
+    expect(existsSync(noteDir(id))).toBe(false);
   });
 });

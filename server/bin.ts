@@ -1,6 +1,6 @@
-import { audit, db } from "./db";
+import { audit, db, ensureDefaultFolder, now } from "./db";
 import { removeObject } from "./documentStorage";
-import { storage } from "./storage";
+import { storage, withResourceLock } from "./storage";
 
 /** Bin retention is a constant (D11), not configurable. */
 export const BIN_RETENTION_MS = 30 * 86_400_000;
@@ -54,4 +54,91 @@ export async function purgeLocked(type: BinType, id: string, options: { reason: 
     }
   })();
   return "purged";
+}
+
+/**
+ * Delete forever (owner only). Distinguishes a live item (409 NOT_IN_BIN)
+ * from a missing one (404). A row already being purged is finished here.
+ */
+export function purgeOwnedItem(type: BinType, id: string, ownerId: string): Promise<PurgeOutcome | "live"> {
+  return withResourceLock(lockKey(type, id), async () => {
+    const row = db.query(`SELECT deleted_at FROM ${tables[type]} WHERE id = ? AND owner_id = ?`).get(id, ownerId) as { deleted_at: string | null } | null;
+    if (!row) return "not_found";
+    if (row.deleted_at === null) return "live";
+    return purgeLocked(type, id, { reason: "user", actorId: ownerId, ownerId });
+  });
+}
+
+export type Visibility = "private" | "selected" | "all_users";
+export type RestoreOutcome =
+  | { status: "restored"; folderId: string; folderName: string; visibility: Visibility }
+  | { status: "already_restored"; folderId: string | null; folderName: string | null }
+  | { status: "purging" }
+  | { status: "not_found" };
+
+type RestorableRow = { folder_id: string | null; visibility: Visibility; sharing_override: number; deleted_at: string | null; purge_started_at: string | null };
+type FolderRow = { id: string; name: string; visibility: Visibility };
+
+const ownedFolder = (folderId: string | null, ownerId: string) => folderId === null
+  ? null
+  : db.query("SELECT id, name, visibility FROM folders WHERE id = ? AND owner_id = ?").get(folderId, ownerId) as FolderRow | null;
+
+/**
+ * Restore (owner only), DEVELOPMENT_PLAN §9.1 and D14. Compare-and-swap under
+ * the resource lock; a row with a purge in progress is never restored. The
+ * item returns to its original folder if the owner still has it, otherwise to
+ * the owner's Default folder. Share rows were kept, so the item's previous
+ * audience regains access; the response reports the effective visibility.
+ */
+export function restoreItem(type: BinType, id: string, ownerId: string): Promise<RestoreOutcome> {
+  const table = tables[type];
+  return withResourceLock(lockKey(type, id), async () => {
+    const row = db.query(`SELECT folder_id, visibility, sharing_override, deleted_at, purge_started_at FROM ${table} WHERE id = ? AND owner_id = ?`)
+      .get(id, ownerId) as RestorableRow | null;
+    if (!row) return { status: "not_found" };
+    if (row.purge_started_at !== null) return { status: "purging" };
+    if (row.deleted_at === null) {
+      const folder = ownedFolder(row.folder_id, ownerId);
+      return { status: "already_restored", folderId: folder?.id ?? null, folderName: folder?.name ?? null };
+    }
+    return db.transaction((): RestoreOutcome => {
+      const folder = ownedFolder(row.folder_id, ownerId) ?? ownedFolder(ensureDefaultFolder(ownerId), ownerId)!;
+      const restored = db.query(`UPDATE ${table} SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = ?, updated_at = ?
+        WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`)
+        .run(folder.id, now(), id, ownerId);
+      if (restored.changes !== 1) return { status: "purging" };
+      if (type === "note") audit(ownerId, id, "note.restore", { folderId: folder.id });
+      else audit(ownerId, null, "document.restore", { documentId: id, folderId: folder.id });
+      const visibility = row.sharing_override ? row.visibility : folder.visibility;
+      return { status: "restored", folderId: folder.id, folderName: folder.name, visibility };
+    })();
+  });
+}
+
+export const SWEEP_BATCH_SIZE = 100;
+export type BinSweepCounts = { purged: number; pending: number };
+
+/**
+ * Sweeper step 3 (DEVELOPMENT_PLAN §6.5). Per table and run: first resume
+ * interrupted purges, then purge rows whose retention has ended, up to one
+ * batch of SWEEP_BATCH_SIZE rows in total. Remaining rows wait for the next run.
+ */
+export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSweepCounts> {
+  const cutoff = new Date(options.nowMs ?? Date.now()).toISOString();
+  const counts: BinSweepCounts = { purged: 0, pending: 0 };
+  for (const type of ["note", "document"] as const) {
+    const table = tables[type];
+    const resumed = db.query(`SELECT id, purge_after FROM ${table} WHERE purge_started_at IS NOT NULL ORDER BY purge_started_at LIMIT ?`)
+      .all(SWEEP_BATCH_SIZE) as Array<{ id: string; purge_after: string | null }>;
+    const due = db.query(`SELECT id, purge_after FROM ${table} WHERE deleted_at IS NOT NULL AND purge_started_at IS NULL AND purge_after <= ? ORDER BY purge_after LIMIT ?`)
+      .all(cutoff, SWEEP_BATCH_SIZE - resumed.length) as Array<{ id: string; purge_after: string | null }>;
+    for (const row of [...resumed, ...due]) {
+      // An interrupted purge that was not due yet was started by its owner.
+      const reason: PurgeReason = row.purge_after !== null && row.purge_after > cutoff ? "user" : "retention";
+      const outcome = await withResourceLock(lockKey(type, row.id), () => purgeLocked(type, row.id, { reason, actorId: null }));
+      if (outcome === "purged") counts.purged += 1;
+      else if (outcome === "pending") counts.pending += 1;
+    }
+  }
+  return counts;
 }
