@@ -22,20 +22,23 @@ export type AutoPublishInput = {
   serverHasDelta: boolean;
   /** The editor holds text that is not saved yet. */
   hasUnsavedChanges: boolean;
+  /** The current draft was written by an MCP key (the "Draft by <key>" badge). */
+  mcpDraft: boolean;
 };
 
 /**
  * Whether leaving a note publishes its draft. Only a draft edited in this
  * session is published on the way out. A draft that was already waiting when
- * the note was opened (from another session, or written by an MCP key) stays
- * a draft until the owner presses Publish.
+ * the note was opened (from another session) stays a draft until the owner
+ * presses Publish. A draft written by an MCP key is never published on the way
+ * out, even after the owner typed in it: only the explicit Publish button does.
  */
-export function shouldAutoPublish({ isOwner, sessionEdited, serverHasDelta, hasUnsavedChanges }: AutoPublishInput) {
-  return isOwner && sessionEdited && (serverHasDelta || hasUnsavedChanges);
+export function shouldAutoPublish({ isOwner, sessionEdited, serverHasDelta, hasUnsavedChanges, mcpDraft }: AutoPublishInput) {
+  return isOwner && sessionEdited && !mcpDraft && (serverHasDelta || hasUnsavedChanges);
 }
 
 /** Whether the explicit Publish button is offered: any owner draft that differs from the published version. */
-export function canPublish({ isOwner, serverHasDelta, hasUnsavedChanges }: Omit<AutoPublishInput, "sessionEdited">) {
+export function canPublish({ isOwner, serverHasDelta, hasUnsavedChanges }: Omit<AutoPublishInput, "sessionEdited" | "mcpDraft">) {
   return isOwner && (serverHasDelta || hasUnsavedChanges);
 }
 

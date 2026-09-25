@@ -922,7 +922,7 @@ export function App() {
 
   function finalizeCurrentNote(reloadCurrent = false) {
     const sessionEdited = note !== null && sessionEditedRef.current === note.id;
-    return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta: shouldAutoPublish({ ...publishInput, sessionEdited }), publish: () => publish(reloadCurrent) });
+    return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta: shouldAutoPublish({ ...publishInput, sessionEdited, mcpDraft: Boolean(note?.draftMcpKeyName) }), publish: () => publish(reloadCurrent) });
   }
 
   async function createFolder() {

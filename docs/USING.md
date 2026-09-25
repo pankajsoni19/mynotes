@@ -97,7 +97,7 @@ Permissions are fixed when the key is created; to change them, create a new key 
 
 Keys created before this release keep exactly what they could do before: Read notes. The task permissions (`tasks:read`, `tasks:write`) are reserved for the Task Boards tools.
 
-**Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Opening such a note and leaving without typing keeps it a draft: only drafts you edited in the current session are published automatically when you leave a note. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
+**Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Leaving such a note never publishes it, even after you edit it; only the Publish button does. (Your own drafts are published automatically when you leave a note only if you edited them in the current session.) If the draft changed after you last saw it, Publish reloads it and asks you to review it first. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
 
 **Limits.** Each key can make 120 tool calls and 30 writes a minute and create 200 notes a day; beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
 

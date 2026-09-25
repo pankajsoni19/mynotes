@@ -179,7 +179,7 @@ Tools reuse the HTTP services as the key's owner:
 - draft writes: `createDraftNote` and `writeDraftLocked` in `server/noteDrafts.ts`, the same revision CAS, title derivation, and same-transaction index sync as `PUT /api/notes/:id/draft`, under the note lock;
 - files: the Files list predicate (`listReadableDocuments`, `listableDocument*`), never `readableDocument*`, which later modules widen for attachments.
 
-An MCP write sets `notes.draft_mcp_key_id`; publish, discard, and restore-to-draft clear it. The editor shows "Draft by <key>" from `draftMcpKeyName`, and the list from `draft_mcp_key_name`. Leaving a note auto-publishes only when the user typed in it this session (`shouldAutoPublish` in `src/noteFinalization.ts`), so an agent's draft always waits for an explicit Publish.
+An MCP write sets `notes.draft_mcp_key_id`; publish, discard, and restore-to-draft clear it. The editor shows "Draft by <key>" from `draftMcpKeyName`, and the list from `draft_mcp_key_name`. Leaving a note auto-publishes only when the user typed in it this session and no MCP key wrote the draft (`shouldAutoPublish` in `src/noteFinalization.ts`), so an agent's draft always waits for an explicit Publish. Publish sends the draft revision the editor last saw; a newer revision (409 `DRAFT_CHANGED`) reloads the note instead of publishing it.
 
 To add a module's tools (the task tools next, then the later scopes in WAVES_10-12 D70): add its scope pair to `MCP_SCOPES` and `IMPLIED_READ_SCOPE` if it is new, write specs with `defineTool`, and spread them into `mcpToolSpecs` at the marked extension point. Writes set `write: true` (and a `dailyBucket` when capped), audit `{via: "mcp", keyId}`, use revision CAS, and never delete.
 

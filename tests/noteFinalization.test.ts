@@ -57,7 +57,7 @@ test("save, publish, and cleanup failures propagate so the caller can keep the n
 });
 
 test("leaving a note auto-publishes only a draft edited in this session", () => {
-  const base = { isOwner: true, sessionEdited: true, serverHasDelta: false, hasUnsavedChanges: false };
+  const base = { isOwner: true, sessionEdited: true, serverHasDelta: false, hasUnsavedChanges: false, mcpDraft: false };
   expect(shouldAutoPublish({ ...base, hasUnsavedChanges: true })).toBe(true);
   expect(shouldAutoPublish({ ...base, serverHasDelta: true })).toBe(true);
   expect(shouldAutoPublish(base)).toBe(false);
@@ -81,9 +81,17 @@ test("an MCP-written draft is labelled with its key", async () => {
   const calls: string[] = [];
   const outcome = await finalizeOpenNote({
     removeEmptyNewNote: async () => false,
-    hasPublishableDelta: shouldAutoPublish({ isOwner: true, sessionEdited: false, serverHasDelta: true, hasUnsavedChanges: false }),
+    hasPublishableDelta: shouldAutoPublish({ isOwner: true, sessionEdited: false, serverHasDelta: true, hasUnsavedChanges: false, mcpDraft: true }),
     publish: async () => { calls.push("publish"); return true; }
   });
   expect(outcome).toBe("unchanged");
   expect(calls).toEqual([]);
+});
+
+test("a draft written by an MCP key is never auto-published, even after the owner types in it", () => {
+  const edited = { isOwner: true, sessionEdited: true, serverHasDelta: true, hasUnsavedChanges: true, mcpDraft: true };
+  expect(shouldAutoPublish(edited)).toBe(false);
+  expect(shouldAutoPublish({ ...edited, mcpDraft: false })).toBe(true);
+  // The explicit Publish button is still offered.
+  expect(canPublish(edited)).toBe(true);
 });
