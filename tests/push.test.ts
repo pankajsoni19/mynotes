@@ -236,6 +236,49 @@ describe("subscriptions and delivery", () => {
     expect(rows()[0]!.failure_count).toBe(0);
   });
 
+  test("a hanging push service cannot pile deliveries up: 4 users at a time, one delivery per user (L9)", async () => {
+    await push.initPush({ setting: "true", keys: await push.createVapidKeys() });
+    const users: Session[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const user = await createUser(`Push slow ${index}`);
+      expect((await send(user, "POST", "/push/subscriptions", subscription(endpoint(`slow-${index}`)))).status).toBe(201);
+      users.push(user);
+    }
+    let inFlight = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    push.pushNet.fetch = async (url, init) => {
+      sent.push({ url, init });
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((resolve) => release.push(resolve));
+      inFlight -= 1;
+      return new Response(null, { status: 201 });
+    };
+    const until = async (condition: () => boolean) => {
+      for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) await Bun.sleep(1);
+      expect(condition()).toBe(true);
+    };
+    const notify = (user: Session) => ({ id: crypto.randomUUID(), userId: user.userId });
+    const drained = push.deliverNotifications(users.map(notify));
+    await until(() => inFlight === 4);
+    // More ticks while the service hangs: nothing new starts, and each user is queued at most once.
+    for (let tick = 0; tick < 5; tick += 1) void push.deliverNotifications([notify(users[0]!), notify(users[0]!), notify(users[5]!)]);
+    await Bun.sleep(5);
+    expect(inFlight).toBe(4);
+    expect(sent.length).toBe(4);
+    while (release.length || inFlight) {
+      release.splice(0).forEach((resolve) => resolve());
+      await Bun.sleep(1);
+    }
+    await drained;
+    expect(peak).toBe(4);
+    // Six first deliveries, then one more for user 0 (re-queued while in flight); user 5 was still queued.
+    expect(sent.length).toBe(7);
+    expect(sent.filter((item) => item.url === endpoint("slow-0")).length).toBe(2);
+    expect(sent.filter((item) => item.url === endpoint("slow-5")).length).toBe(1);
+  });
+
   test("Send test is limited to 5 per hour", async () => {
     await push.initPush({ setting: "true", keys: await push.createVapidKeys() });
     const user = await createUser("Push test limit");

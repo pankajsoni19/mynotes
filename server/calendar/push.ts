@@ -301,21 +301,64 @@ export async function sendPush(row: SubscriptionRow, nowMs = Date.now()): Promis
   return "failed";
 }
 
-async function sendToUser(userId: string) {
+async function sendToUser(userId: string, parallel = true) {
   const rows = db.query("SELECT * FROM push_subscriptions WHERE user_id = ? AND failure_count < ?").all(userId, MAX_FAILURES) as SubscriptionRow[];
-  const outcomes = await Promise.all(rows.map((row) => sendPush(row)));
+  const outcomes: DeliveryOutcome[] = [];
+  if (parallel) outcomes.push(...await Promise.all(rows.map((row) => sendPush(row))));
+  else for (const row of rows) outcomes.push(await sendPush(row));
   return { sent: outcomes.filter((outcome) => outcome === "sent").length, failed: outcomes.filter((outcome) => outcome === "failed" || outcome === "gone").length };
 }
 
-/** Called after a dispatcher tick commits: one wake-up per user, whatever the number of notifications. */
-export async function deliverNotifications(created: NotificationCreated[]) {
-  for (const userId of new Set(created.map((item) => item.userId))) {
-    try {
-      await sendToUser(userId);
-    } catch (error) {
-      console.error("Push delivery failed", error instanceof Error ? error.name : "Unknown error");
-    }
+/** Users whose devices are being woken at once, across every dispatcher tick (L9). */
+export const PUSH_CONCURRENCY = 4;
+const queuedUsers = new Set<string>();
+const activeUsers = new Set<string>();
+let runningWorkers = 0;
+let drainWaiters: Array<() => void> = [];
+
+function nextQueuedUser() {
+  for (const userId of queuedUsers) if (!activeUsers.has(userId)) return userId;
+  return null;
+}
+
+/** Starts workers up to PUSH_CONCURRENCY while a queued user is not already being delivered to. */
+function pumpDeliveries() {
+  while (runningWorkers < PUSH_CONCURRENCY && nextQueuedUser() !== null) {
+    runningWorkers += 1;
+    void (async () => {
+      for (let userId = nextQueuedUser(); userId !== null; userId = nextQueuedUser()) {
+        queuedUsers.delete(userId);
+        activeUsers.add(userId);
+        try {
+          await sendToUser(userId, false);
+        } catch (error) {
+          console.error("Push delivery failed", error instanceof Error ? error.name : "Unknown error");
+        } finally {
+          activeUsers.delete(userId);
+        }
+      }
+    })().finally(() => {
+      runningWorkers -= 1;
+      if (runningWorkers === 0) {
+        const waiters = drainWaiters;
+        drainWaiters = [];
+        for (const resolve of waiters) resolve();
+      }
+    });
   }
+}
+
+/**
+ * Called after a dispatcher tick commits: one wake-up per user, whatever the number of
+ * notifications. Deliveries are single-flight per user (a user already queued is not queued
+ * twice; one being delivered to is queued once more) and at most PUSH_CONCURRENCY users are
+ * served at a time, each device in turn, so a hanging push service cannot pile deliveries up.
+ * Resolves when the queue has drained.
+ */
+export function deliverNotifications(created: NotificationCreated[]): Promise<void> {
+  for (const { userId } of created) queuedUsers.add(userId);
+  pumpDeliveries();
+  return runningWorkers === 0 ? Promise.resolve() : new Promise((resolve) => drainWaiters.push(resolve));
 }
 
 const testSends = new Map<string, number[]>();
