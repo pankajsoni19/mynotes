@@ -10,7 +10,7 @@ Implementation plan: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [API contract
 - [x] Clean up empty new notes during mobile Back
 - [x] Version bump and deploy (running container reports `APP_VERSION=0.2.2`, `GIT_SHA=0efb975`)
 
-### Wave 2 — Authenticated Home app selector (target v0.2.3)
+### Wave 2 — Authenticated Home app selector (released v0.2.3, deployed at `6bfe982`)
 
 - [x] Home with separate Notes and Files apps plus shared Bin cards; placeholders for Files/Bin (`cb59b6a`)
 - [x] Independent review of `cb59b6a` against the DEVELOPMENT_PLAN §4 checklist (2026-09-25)
@@ -31,7 +31,7 @@ Implementation plan: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [API contract
   - [x] Verified at 390 px: Home → Notes folders → list → editor, then Back unwinds editor → list → folders → Home (publishing the edit on the way, v3), Forward re-enters Notes, Back from Home leaves to the previous history entry; Files placeholder pushes one entry and Back returns Home. No loops.
   - Accepted low risks (not blocking, recorded by the reviewer): a failed reload after a successful publish shows a "could not save" toast; a lasting 409 blocks leaving Notes until reload (same as note switches); history can drift by one entry during a concurrent leave/restore.
   - Gates: `bun run typecheck`, `bun test` (25 pass), `git diff --check`, tracked-file secret/personal-data scan, `docker build --target verify`, `docker compose build` all pass at `921fe28`.
-- [ ] Bump to 0.2.3 in every version location, push and deploy, smoke test
+- [x] Released v0.2.3: bump `6bfe982`, pushed to `origin/main`, deployed with Docker Compose; container healthy on port 2026 and `/api/about` reports `0.2.3` / `6bfe9827ae29e3c6707f9c0c413d95f591baea0d` (2026-09-25)
 
 ### Wave 2b — URL routing for every app, view, and item (target v0.2.4)
 
