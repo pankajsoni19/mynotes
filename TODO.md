@@ -152,7 +152,7 @@ The product is a private workspace (Notes, Files, Bin, Tasks next), so "MyNotes"
 | Wave | Where | Status |
 | --- | --- | --- |
 | 9 Task Boards | `main` | Stage A merged (`cc7faa3`…`d7e94d3`, 285 tests: migration 009 with `documents.purpose`, boards/sharing/columns/cards APIs, Tasks routes + Home card, desktop drag and drop, mobile snap columns + Move sheet). Stages B–D (comments, attachments, Bin) in progress. |
-| 8 MCP scopes | branch `wave8-mcp-scopes` | In progress: migration 010, per-scope tools, draft-only writes, document tools, Settings scopes; also changes auto-publish-on-leave to session-edited drafts only. Task tools land after Wave 9 merges. |
+| 8 MCP scopes | branch `wave8-mcp-scopes` | **Done, reviewed** (`9791188`…`633bffa` + review fixes `65a5b77` publish requires the seen draft revision, `29366d6` no auto-publish of MCP drafts, `1b41d5c` per-user limits across keys; 266 tests). Review: releasable after the fixes. Awaiting merge after Task Boards. Task tools land after Wave 9 merges. |
 | 12 Calendar | branch `wave12-calendar` | Stage A in progress: migration 013, recurrence helpers, calendar/event APIs, agenda/month/event routes, links, Bin parity. Reminders/push/feeds/MCP later. |
 | 11 Collections | branch `wave11-collections` | Stages A–D in progress: migration 012, schema/templates, query API, table + mobile UI, sharing, views, attachments, Bin, search, CSV. MCP tools after Wave 8. |
 | 10 Today | not started | After Wave 9 (needs cards for migration 011). |
