@@ -90,9 +90,11 @@ function termSql(term: FilterTerm, compiler: Compiler): string {
     case "creator":
       parts.push(`k.created_by IN (${compiler.list(values.map((value) => compiler.user(value)))})`);
       break;
+    // Positive set filters are `k.id IN (…)` over the join table's (value, card_id) index, so a selective
+    // filter (My work's assignee:me) drives the scan instead of being checked on every readable card.
     case "assignee": {
       const users = ids(["none"]).map((value) => compiler.user(value));
-      if (users.length) parts.push(`EXISTS (SELECT 1 FROM card_assignees ca WHERE ca.card_id = k.id AND ca.user_id IN (${compiler.list(users)}))`);
+      if (users.length) parts.push(`k.id IN (SELECT ca.card_id FROM card_assignees ca WHERE ca.user_id IN (${compiler.list(users)}))`);
       if (values.includes("none")) parts.push("NOT EXISTS (SELECT 1 FROM card_assignees ca WHERE ca.card_id = k.id)");
       break;
     }
@@ -103,13 +105,13 @@ function termSql(term: FilterTerm, compiler: Compiler): string {
       const match: string[] = [];
       if (tagIds.length) match.push(`t.id IN (${compiler.list(tagIds)})`);
       if (names.length) match.push(`t.name COLLATE NOCASE IN (${compiler.list(names)})`);
-      if (match.length) parts.push(`EXISTS (SELECT 1 FROM card_tags ct JOIN board_tags t ON t.id = ct.tag_id WHERE ct.card_id = k.id AND (${match.join(" OR ")}))`);
+      if (match.length) parts.push(`k.id IN (SELECT ct.card_id FROM card_tags ct JOIN board_tags t ON t.id = ct.tag_id WHERE ${match.join(" OR ")})`);
       if (values.includes("none")) parts.push("NOT EXISTS (SELECT 1 FROM card_tags ct WHERE ct.card_id = k.id)");
       break;
     }
     case "flag": {
       const flags = ids(["none"]);
-      if (flags.length) parts.push(`EXISTS (SELECT 1 FROM card_flags fl WHERE fl.card_id = k.id AND fl.flag IN (${compiler.list(flags)}))`);
+      if (flags.length) parts.push(`k.id IN (SELECT fl.card_id FROM card_flags fl WHERE fl.flag IN (${compiler.list(flags)}))`);
       if (values.includes("none")) parts.push("NOT EXISTS (SELECT 1 FROM card_flags fl WHERE fl.card_id = k.id)");
       break;
     }
