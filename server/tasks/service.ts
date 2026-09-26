@@ -4,6 +4,7 @@ import { withResourceLock } from "../storage";
 import { readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardVisibility, type ColumnRow } from "./access";
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
+import { dueAt, resolveDue, type DueInput } from "./dueTime";
 
 /**
  * Task Boards services (WAVES_7-9.md §3). Routes are thin adapters over these
@@ -86,8 +87,14 @@ export type CardSummary = {
   revision: number;
   created_by: string | null;
   creator_name: string | null;
-  /** Calendar date YYYY-MM-DD (migration 011). */
+  /** Calendar date YYYY-MM-DD (migration 011); the civil date in `due_tz` when a time is set. */
   due_on: string | null;
+  /** Optional wall time `HH:MM` in `due_tz` (D100); both NULL or both set. */
+  due_time: string | null;
+  /** The IANA zone the setter's browser sent (D101). */
+  due_tz: string | null;
+  /** The computed UTC instant when `due_time` is set, else null. */
+  due_at: string | null;
   /** Every assignee, in assignment order, at most 20 (D102). */
   assignees: CardAssignee[];
   /** Deprecated (D103): the first assignee's id, kept for one release. */
@@ -104,7 +111,7 @@ const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
          k.revision, k.created_by, cu.display_name AS creator_name,
-         k.due_on,
+         k.due_on, k.due_time, k.due_tz,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
          k.created_at, k.updated_at${extraColumns}
@@ -113,13 +120,20 @@ const cardSelect = (extraColumns = "") => `
 const cardSummarySelect = cardSelect();
 const cardDetailSelect = cardSelect(", k.description");
 
-/** A selected card row before its grouped fields (assignees) are attached. */
-type SelectedCard = Omit<CardSummary, "assignees" | "assignee_id" | "assignee_name">;
+/** A selected card row before its computed and grouped fields (due instant, assignees) are attached. */
+type SelectedCard = Omit<CardSummary, "due_at" | "assignees" | "assignee_id" | "assignee_name">;
 
-/** Adds the grouped fields; the deprecated `assignee_id`/`assignee_name` are the first assignee (D103). */
+/** Adds the computed and grouped fields; the deprecated `assignee_id`/`assignee_name` are the first assignee (D103). */
 function withCardFields<T extends SelectedCard>(card: T, assignees: CardAssignee[]) {
   const first = assignees[0];
-  return { ...card, assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null };
+  return { ...card, due_at: dueAt(card), assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null };
+}
+
+/** The due fields after a change, or 400 with the rule that failed (D100). */
+function requireDue(current: Parameters<typeof resolveDue>[0], input: DueInput) {
+  const resolved = resolveDue(current, input);
+  if ("error" in resolved) throw new TaskError(400, resolved.error);
+  return resolved;
 }
 
 export function listCards(boardId: string): CardSummary[] {
@@ -352,6 +366,7 @@ export function requireReadableCard(cardId: string, userId: string) {
 
 export type CardCreateInput = {
   columnId: string; title: string; description?: string; dueOn?: string | null; afterCardId?: string | null;
+  dueTime?: string | null; dueTz?: string | null;
   assigneeIds?: string[];
 };
 
@@ -362,6 +377,7 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     requireBoardColumn(boardId, input.columnId);
     const assignees = input.assigneeIds === undefined ? undefined : uniqueAssignees(input.assigneeIds);
     for (const assigneeId of assignees ?? []) requireAssignableUser(boardId, assigneeId);
+    const due = requireDue({ due_on: null, due_time: null, due_tz: null }, input).value;
     const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(boardId) as { count: number }).count;
     if (live >= LIMITS.liveCardsPerBoard) throw limitReached(`A board can have up to ${LIMITS.liveCardsPerBoard} cards`);
     const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
@@ -370,8 +386,9 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     db.transaction(() => {
       applyRenumber("cards", plan.renumbered);
       const timestamp = now();
-      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, due_on, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", input.dueOn ?? null, userId, timestamp, timestamp);
+      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, due_on, due_time, due_tz, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", due.due_on, due.due_time, due.due_tz, userId, timestamp, timestamp);
       if (assignees?.length) replaceAssignees(id, assignees, userId, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
       audit(userId, null, "task.card_create", { boardId, cardId: id, ...(assignees?.length ? { assigneesAdded: assignees.length } : {}) });
@@ -388,6 +405,9 @@ export function getCard(userId: string, cardId: string) {
 
 export type CardPatchInput = {
   title?: string; description?: string; dueOn?: string | null;
+  /** `HH:MM` with `dueTz`, or null to clear the time (D100). */
+  dueTime?: string | null;
+  dueTz?: string | null;
   /** Legacy (D103): `id` means `[id]`, `null` means `[]`. Not together with `assigneeIds`. */
   assigneeId?: string | null;
   /** Replaces the whole set; `[]` clears it. */
@@ -464,16 +484,22 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
     }
     const assignees = requestedAssignees(input);
     for (const assigneeId of assignees ? newAssignees(cardId, assignees) : []) requireAssignableUser(board.id, assigneeId);
+    const setDue = input.dueOn !== undefined || input.dueTime !== undefined || input.dueTz !== undefined;
+    const due = setDue ? requireDue(card, input) : null;
     db.transaction(() => {
       const timestamp = now();
       const updated = db.query(`UPDATE cards SET title = COALESCE($title, title), description = COALESCE($description, description),
           due_on = CASE WHEN $setDue THEN $dueOn ELSE due_on END,
+          due_time = CASE WHEN $setDue THEN $dueTime ELSE due_time END,
+          due_tz = CASE WHEN $setDue THEN $dueTz ELSE due_tz END,
           revision = revision + 1, updated_at = $timestamp
         WHERE id = $cardId AND revision = $revision AND deleted_at IS NULL`).run({
         title: input.title ?? null,
         description: input.description ?? null,
-        setDue: input.dueOn !== undefined ? 1 : 0,
-        dueOn: input.dueOn ?? null,
+        setDue: due ? 1 : 0,
+        dueOn: due?.value.due_on ?? null,
+        dueTime: due?.value.due_time ?? null,
+        dueTz: due?.value.due_tz ?? null,
         timestamp,
         cardId,
         revision: input.revision
@@ -484,6 +510,7 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
       audit(userId, null, "task.card_update", {
         boardId: board.id, cardId,
         ...(input.dueOn !== undefined ? { dueOn: input.dueOn } : {}),
+        ...(due?.timeChange ? { dueTime: due.timeChange } : {}),
         ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
         ...(changed ? { assigneesAdded: changed.added.length, assigneesRemoved: changed.removed.length } : {})
       });

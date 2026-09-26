@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
 import { MAX_ASSIGNEES } from "./assignees";
+import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
@@ -48,6 +49,10 @@ export function isCalendarDate(value: string) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 export const dueOnSchema = z.string().refine(isCalendarDate, "Use a real date as YYYY-MM-DD");
+/** `HH:MM`, 00:00–23:59 (D100, T94). */
+export const dueTimeSchema = z.string().refine(isDueTime, "Use a time as HH:MM (00:00 to 23:59)");
+/** An IANA zone, as `isValidTimeZone` accepts it (browser aliases included, T71, T94). */
+export const dueTzSchema = z.string().refine(isDueTimeZone, "Use a known time zone");
 
 export const DESCRIPTION_MAX_BYTES = 65_536;
 const description = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= DESCRIPTION_MAX_BYTES, `Descriptions can be at most ${DESCRIPTION_MAX_BYTES} bytes`);
@@ -58,6 +63,8 @@ export const cardCreateSchema = z.object({
   title: label(200),
   description: description.optional(),
   dueOn: dueOnSchema.nullable().optional(),
+  dueTime: dueTimeSchema.nullable().optional(),
+  dueTz: dueTzSchema.nullable().optional(),
   assigneeIds: assigneeIdsSchema.optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
@@ -65,14 +72,17 @@ export const cardPatchSchema = z.object({
   title: label(200).optional(),
   description: description.optional(),
   dueOn: dueOnSchema.nullable().optional(),
+  dueTime: dueTimeSchema.nullable().optional(),
+  dueTz: dueTzSchema.nullable().optional(),
   /** Legacy (D103), kept for the Wave 10 client and MCP; 400 together with assigneeIds. */
   assigneeId: uuid.nullable().optional(),
   assigneeIds: assigneeIdsSchema.optional(),
   revision: z.number().int().positive()
 }).strict()
   .refine((value) => value.assigneeId === undefined || value.assigneeIds === undefined, "Send assigneeIds or the legacy assigneeId, not both")
-  .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined,
-    "Provide a title, description, dueOn, or assigneeIds");
+  .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.dueTime !== undefined
+    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined,
+  "Provide a title, description, dueOn, dueTime, or assigneeIds");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
 export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();

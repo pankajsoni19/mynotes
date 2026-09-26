@@ -50,6 +50,10 @@ export type CardRow = {
   revision: number;
   created_by: string | null;
   due_on: string | null;
+  /** Migration 015 (D100). */
+  due_time: string | null;
+  due_tz: string | null;
+  /** Legacy mirror of the first assignee (D102); read `card_assignees` instead. */
   assignee_id: string | null;
   created_at: string;
   updated_at: string;

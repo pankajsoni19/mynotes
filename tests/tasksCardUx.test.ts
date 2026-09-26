@@ -167,3 +167,56 @@ describe("the assignee picker: GET /boards/:b/readers?q= (T92)", () => {
     expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
   });
 });
+
+describe("optional due time with a time zone (D100, D101, T94)", () => {
+  test("set, move, and clear a due time; responses carry due_at", async () => {
+    const { owner, member, boardId, columns, card } = await setup("Due time");
+    let patched = await call(member, "PATCH", `/cards/${card.id}`, { dueOn: "2026-10-01", dueTime: "17:30", dueTz: "Europe/Berlin", revision: 1 });
+    expect(patched.status).toBe(200);
+    expect(patched.body.card).toMatchObject({ due_on: "2026-10-01", due_time: "17:30", due_tz: "Europe/Berlin", due_at: "2026-10-01T15:30:00.000Z", revision: 2 });
+    expect(lastAudit(member.userId, "task.card_update")).toMatchObject({ dueOn: "2026-10-01", dueTime: "set" });
+    const board = (await call(owner, "GET", `/boards/${boardId}`)).body;
+    expect(board.cards[0]).toMatchObject({ due_time: "17:30", due_tz: "Europe/Berlin", due_at: "2026-10-01T15:30:00.000Z" });
+
+    // Moving the date keeps the wall time and zone.
+    patched = await call(owner, "PATCH", `/cards/${card.id}`, { dueOn: "2026-10-30", revision: 2 });
+    expect(patched.body.card).toMatchObject({ due_on: "2026-10-30", due_time: "17:30", due_tz: "Europe/Berlin", due_at: "2026-10-30T16:30:00.000Z" });
+    // A browser alias is stored as sent.
+    patched = await call(owner, "PATCH", `/cards/${card.id}`, { dueTime: "09:00", dueTz: "Asia/Calcutta", revision: 3 });
+    expect(patched.body.card).toMatchObject({ due_time: "09:00", due_tz: "Asia/Calcutta", due_at: "2026-10-30T03:30:00.000Z" });
+    // Clearing only the time keeps the date.
+    patched = await call(owner, "PATCH", `/cards/${card.id}`, { dueTime: null, revision: 4 });
+    expect(patched.body.card).toMatchObject({ due_on: "2026-10-30", due_time: null, due_tz: null, due_at: null });
+    expect(lastAudit(owner.userId, "task.card_update")).toMatchObject({ dueTime: "cleared" });
+    // Clearing the date also clears the time.
+    await call(owner, "PATCH", `/cards/${card.id}`, { dueTime: "08:00", dueTz: "UTC", revision: 5 });
+    patched = await call(owner, "PATCH", `/cards/${card.id}`, { dueOn: null, revision: 6 });
+    expect(patched.body.card).toMatchObject({ due_on: null, due_time: null, due_tz: null, due_at: null, revision: 7 });
+
+    const created = await call(member, "POST", `/boards/${boardId}/cards`, { columnId: columns[0].id, title: "Timed", dueOn: "2026-10-01", dueTime: "23:30", dueTz: "Pacific/Kiritimati" });
+    expect(created.status).toBe(201);
+    expect(created.body.card).toMatchObject({ due_time: "23:30", due_tz: "Pacific/Kiritimati", due_at: "2026-10-01T09:30:00.000Z" });
+  });
+
+  test("400 for a time without a zone or date, a bad zone, 24:00, or 9:5; nothing is written", async () => {
+    const { owner, boardId, columns, card } = await setup("Due time bad");
+    const bodies = [
+      { dueOn: "2026-10-01", dueTime: "17:00" },
+      { dueTime: "17:00", dueTz: "UTC" },
+      { dueOn: "2026-10-01", dueTime: "17:00", dueTz: "Mars/Olympus" },
+      { dueOn: "2026-10-01", dueTime: "24:00", dueTz: "UTC" },
+      { dueOn: "2026-10-01", dueTime: "9:5", dueTz: "UTC" },
+      { dueOn: "2026-10-01", dueTz: "UTC" },
+      { dueOn: "2026-10-01", dueTime: 1700, dueTz: "UTC" }
+    ];
+    for (const body of bodies) {
+      expect((await call(owner, "PATCH", `/cards/${card.id}`, { ...body, revision: 1 })).status).toBe(400);
+      expect((await call(owner, "POST", `/boards/${boardId}/cards`, { columnId: columns[0].id, title: "Bad", ...body })).status).toBe(400);
+    }
+    expect((await call(owner, "GET", `/cards/${card.id}`)).body.card).toMatchObject({ revision: 1, due_on: null, due_time: null });
+    expect((db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ?").get(boardId) as { count: number }).count).toBe(1);
+    // A timed card cannot lose its date while keeping the time.
+    await call(owner, "PATCH", `/cards/${card.id}`, { dueOn: "2026-10-01", dueTime: "10:00", dueTz: "UTC", revision: 1 });
+    expect((await call(owner, "PATCH", `/cards/${card.id}`, { dueOn: null, dueTime: "10:00", dueTz: "UTC", revision: 2 })).status).toBe(400);
+  });
+});
