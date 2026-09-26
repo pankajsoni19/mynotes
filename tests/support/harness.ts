@@ -49,7 +49,8 @@ process.env.MAX_UPLOAD_BYTES = "4194304";
 process.env.USER_STORAGE_QUOTA_BYTES = "12582912";
 process.env.MIN_FREE_DISK_BYTES = "0";
 
-export const serverOptions = (await import("../../server/index")).default;
+const serverModule = await import("../../server/index");
+export const serverOptions = serverModule.default;
 export const { db } = await import("../../server/db");
 export const server = Bun.serve(serverOptions);
 
@@ -78,8 +79,13 @@ export async function request(path: string, options: RequestInit = {}, session?:
   return fetch(`${origin}/api${path}`, { ...options, headers });
 }
 
-/** Registers through the HTTP API. Registration is rate limited to 10 per minute across the whole run. */
+/**
+ * Registers through the HTTP API. Registration is limited to 10 per minute server-wide, and every
+ * test file shares one server, so the bucket is cleared first: a new `register()` call anywhere in
+ * the run cannot push a later one into a 429. The limit itself is covered in tests/api.test.ts.
+ */
 export async function register(label: string, requestOrigin = origin): Promise<Session> {
+  serverModule.resetRegistrationRateLimit();
   const email = nextEmail();
   const password = "correct horse battery staple";
   const response = await request("/auth/register", {

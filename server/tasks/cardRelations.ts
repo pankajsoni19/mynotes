@@ -70,11 +70,12 @@ function resolveRow(row: RelationRow, cardId: string): CardRelation | null {
 
 /**
  * The relations of a card the caller has already been authorized to read, newest first. At most
- * 50 rows exist per card (both ends are capped), so nothing is cut off.
+ * 50 rows exist per card (both ends are capped), so nothing is cut off. Two relations made in the
+ * same millisecond share `created_at`; rowid (insertion order) breaks the tie, not the random id.
  */
 export function listRelations(userId: string, cardId: string): CardRelation[] {
   const rows = db.query(`${relationSelect} WHERE r.source_card_id = $cardId OR r.target_card_id = $cardId
-    ORDER BY r.created_at DESC, r.id DESC LIMIT ${MAX_RELATIONS_PER_CARD}`).all({ cardId, userId }) as RelationRow[];
+    ORDER BY r.created_at DESC, r.rowid DESC LIMIT ${MAX_RELATIONS_PER_CARD}`).all({ cardId, userId }) as RelationRow[];
   return rows.map((row) => resolveRow(row, cardId)).filter((relation): relation is CardRelation => relation !== null);
 }
 

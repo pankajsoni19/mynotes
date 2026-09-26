@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, RotateCcw, TriangleAlert } from "lucide-react";
-import { addDays, monthGridDays, monthOf, weekdayLabels } from "../calendarRoute";
+import { Plus, RotateCcw, TriangleAlert } from "lucide-react";
+import { addDays, monthGridDays } from "../calendarRoute";
+import { MonthGrid } from "../ui/calendarGrid/MonthGrid";
 import { listOccurrences, viewerTimeZone, type Occurrence, type OccurrenceList } from "./calendarApi";
-import { dayHeading, groupByDay, monthHeading, tasksByDay } from "./calendarFormat";
+import { dayHeading, groupByDay, tasksByDay } from "./calendarFormat";
 import { OccurrenceRow, TaskRow } from "./AgendaView";
 
 type MonthViewProps = {
@@ -26,6 +27,7 @@ const CHIPS_PER_DAY = 3;
 /**
  * The month grid (desktop) or a dot grid with the selected day's list (phones). Six Monday-first
  * weeks; prev/next replace the history entry (the caller decides), so Back never walks months.
+ * This container loads the month's occurrences; the grid itself is `src/ui/calendarGrid/MonthGrid`.
  */
 export function MonthView(props: MonthViewProps) {
   const { month, today, compact, selectedDay, calendarIds, showTasks, reloadKey, canCreate, onSelectDay, onOpen, onCreate, onShiftMonth, onToday } = props;
@@ -60,57 +62,35 @@ export function MonthView(props: MonthViewProps) {
   const dayTasks = dueByDay.get(day) ?? [];
   const stale = loadedMonth !== month;
 
-  return <section className={`calendar-month${compact ? " compact" : ""}`} aria-labelledby="calendar-month-title">
-    <div className="calendar-month-bar">
-      <button className="icon-button calendar-nav-button" onClick={() => onShiftMonth(-1)} aria-label="Previous month"><ChevronLeft /></button>
-      <h2 id="calendar-month-title" aria-live="polite">{monthHeading(month)}</h2>
-      <button className="icon-button calendar-nav-button" onClick={() => onShiftMonth(1)} aria-label="Next month"><ChevronRight /></button>
-      {monthOf(today) !== month && <button className="secondary-button calendar-today-button" onClick={onToday}>Today</button>}
-    </div>
-
-    {error && <div className="calendar-state" role="alert">
+  return <MonthGrid month={month} today={today} selectedDay={day} compact={compact} busy={stale}
+    countFor={(cell) => (byDay.get(cell)?.length ?? 0) + (dueByDay.get(cell)?.length ?? 0)}
+    onSelectDay={onSelectDay} onShiftMonth={onShiftMonth} onToday={onToday}
+    status={error ? <div className="calendar-state" role="alert">
       <TriangleAlert />
       <h2>Could not load this month</h2>
       <p>{error}</p>
       <button className="primary-button" onClick={() => setAttempt((value) => value + 1)}><RotateCcw />Try again</button>
-    </div>}
-
-    {!error && <div className={`calendar-grid${stale ? " loading" : ""}`} role="grid" aria-label={monthHeading(month)} aria-busy={stale || undefined}>
-      <div className="calendar-grid-row calendar-weekdays" role="row">
-        {weekdayLabels.map((label) => <span key={label} role="columnheader">{compact ? label.slice(0, 1) : label}</span>)}
-      </div>
-      {Array.from({ length: 6 }, (_, week) => <div key={week} className="calendar-grid-row" role="row">
-        {days.slice(week * 7, week * 7 + 7).map((cell) => {
-          const items = byDay.get(cell) ?? [];
-          const due = dueByDay.get(cell)?.length ?? 0;
-          const markers = items.length + due;
-          const outside = !cell.startsWith(month);
-          const label = `${dayHeading(cell, today)}${markers ? `, ${markers === 1 ? "1 item" : `${markers} items`}` : ""}`;
-          const className = `calendar-cell${outside ? " outside" : ""}${cell === today ? " today" : ""}${cell === day ? " selected" : ""}`;
-          if (compact) {
-            return <button key={cell} role="gridcell" className={className} aria-selected={cell === day} aria-label={label} onClick={() => onSelectDay(cell)}>
-              <span className="calendar-cell-number">{Number(cell.slice(8))}</span>
-              <span className="calendar-cell-dots" aria-hidden="true">
-                {items.slice(0, 3).map((item) => <span key={`${item.eventId}:${item.date}`} className={`calendar-dot color-${item.color}`} />)}
-                {due > 0 && items.length < 3 && <span className="calendar-dot task" />}
-              </span>
-            </button>;
-          }
-          return <div key={cell} role="gridcell" className={className} aria-selected={cell === day}>
-            <button className="calendar-cell-number" onClick={() => onSelectDay(cell)} aria-label={label}>{Number(cell.slice(8))}</button>
-            <div className="calendar-cell-chips">
-              {items.slice(0, CHIPS_PER_DAY).map((item) => <button key={`${item.eventId}:${item.date}`} className={`calendar-chip color-${item.color}`} onClick={() => onOpen(item)} title={item.title}>
-                {!item.allDay && <span>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: zone }).format(new Date(item.start))}</span>}
-                {item.title}
-              </button>)}
-              {items.length > CHIPS_PER_DAY && <button className="calendar-more" onClick={() => onSelectDay(cell)}>+{items.length - CHIPS_PER_DAY} more</button>}
-              {due > 0 && <button className="calendar-more calendar-due" onClick={() => onSelectDay(cell)}>{due === 1 ? "1 task due" : `${due} tasks due`}</button>}
-            </div>
-          </div>;
-        })}
-      </div>)}
-    </div>}
-
+    </div> : undefined}
+    renderDots={(cell) => {
+      const items = byDay.get(cell) ?? [];
+      const due = dueByDay.get(cell)?.length ?? 0;
+      return <>
+        {items.slice(0, 3).map((item) => <span key={`${item.eventId}:${item.date}`} className={`calendar-dot color-${item.color}`} />)}
+        {due > 0 && items.length < 3 && <span className="calendar-dot task" />}
+      </>;
+    }}
+    renderDay={(cell) => {
+      const items = byDay.get(cell) ?? [];
+      const due = dueByDay.get(cell)?.length ?? 0;
+      return <>
+        {items.slice(0, CHIPS_PER_DAY).map((item) => <button key={`${item.eventId}:${item.date}`} className={`calendar-chip color-${item.color}`} onClick={() => onOpen(item)} title={item.title}>
+          {!item.allDay && <span>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: zone }).format(new Date(item.start))}</span>}
+          {item.title}
+        </button>)}
+        {items.length > CHIPS_PER_DAY && <button className="calendar-more" onClick={() => onSelectDay(cell)}>+{items.length - CHIPS_PER_DAY} more</button>}
+        {due > 0 && <button className="calendar-more calendar-due" onClick={() => onSelectDay(cell)}>{due === 1 ? "1 task due" : `${due} tasks due`}</button>}
+      </>;
+    }}>
     {!error && <section className="calendar-day-list" aria-labelledby="calendar-day-title">
       <header>
         <h3 id="calendar-day-title">{dayHeading(day, today)}</h3>
@@ -123,5 +103,5 @@ export function MonthView(props: MonthViewProps) {
       </ul>
       {data?.truncated && <p className="calendar-note">Showing the first 1000 events. Hide some calendars to see the rest.</p>}
     </section>}
-  </section>;
+  </MonthGrid>;
 }

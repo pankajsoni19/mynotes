@@ -181,6 +181,11 @@ function rateLimited(key: string, limit = 10) {
   return item.count > limit;
 }
 
+/** Test hook: `bun test` runs every file on one server, so the run-wide register:global bucket is shared. */
+export function resetRegistrationRateLimit() {
+  authAttempts.delete("register:global");
+}
+
 app.post("/api/auth/register", async (c) => {
   const userCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
   if (!config.allowRegistration && userCount > 0) return c.json({ error: "Registration is disabled" }, 403);
