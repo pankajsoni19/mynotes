@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "./auth";
 import { audit, db, now } from "./db";
+import { MODULE_IDS, type ModuleId } from "./moduleIds";
 import { parseJson } from "./validation";
 
 /**
@@ -10,12 +11,7 @@ import { parseJson } from "./validation";
  * reminders, and push never read them, so a hidden module is not a security boundary (T97).
  */
 
-/**
- * Every module id a client may turn off. `team` is reserved for Wave 14 so its UI can plug in
- * without a server change. Keep in step with `MODULE_IDS` in src/modules.ts (tests/modules.test.ts).
- */
-export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications", "team"] as const;
-export type ModuleId = (typeof MODULE_IDS)[number];
+export { MODULE_IDS, type ModuleId } from "./moduleIds";
 
 export type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null };
 

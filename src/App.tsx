@@ -19,6 +19,7 @@ import {
   History,
   Info,
   KeyRound,
+  LayoutGrid,
   Lock,
   LogOut,
   Menu,
@@ -67,9 +68,16 @@ import { SearchResults, searchListId, searchOptionId } from "./search/SearchResu
 import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
+import { ModulesSettings } from "./ModulesSettings";
+import { parsePreferences, type ModuleId } from "./modules";
+import { usePreferences, type PreferencesStatus } from "./usePreferences";
+import { useHistoryDialogGuard } from "./tasks/useHistoryDialogGuard";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
+// `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown };
+type SettingsSection = "security" | "modules" | "mcp" | "notifications" | "about";
+type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 
@@ -262,8 +270,8 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   </section>;
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
-  const [section, setSection] = useState<"security" | "mcp" | "notifications" | "about">("security");
+function SettingsDialog({ session, onClose, onSecurityChanged, modules, initialSection = "security" }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; modules: ModulesSettingsProps; initialSection?: SettingsSection }) {
+  const [section, setSection] = useState<SettingsSection>(initialSection);
   const [appInfo, setAppInfo] = useState({ version: "0.7.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
@@ -279,7 +287,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
     onClose();
   }, [mcpKeyPending, onClose]);
 
-  function selectSection(next: "security" | "mcp" | "notifications" | "about") {
+  function selectSection(next: SettingsSection) {
     if (next !== "mcp" && mcpKeyPending && !window.confirm("This API key is shown only once. Leave this section without saving it?")) return;
     setSection(next);
   }
@@ -297,6 +305,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
   }, [guardedClose, state.setupRequired]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
+  // D69: browser Back or Forward while Settings is open only closes it (not while setup is required).
+  useHistoryDialogGuard(!state.setupRequired, guardedClose);
 
   async function beginSetup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -400,7 +410,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
+        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -425,7 +435,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );
@@ -664,12 +674,15 @@ export function App() {
   const [mobileActions, setMobileActions] = useState(false);
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("security");
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
   const [toast, setToast] = useState("");
+  // Settings → Modules (D92): per-user, saved on the server, UI only.
+  const modulePreferences = usePreferences(session?.user.id ?? null, session && session.preferences !== undefined ? parsePreferences(session.preferences) : undefined);
   const [selectionOwner, setSelectionOwner] = useState<string | null>(null);
   const [leavingNotes, setLeavingNotes] = useState(false);
   // Set while a note/folder switch finalizes the open note, so late keystrokes cannot be dropped.
@@ -1429,9 +1442,10 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   });
 
-  function openSettings() {
+  function openSettings(section: SettingsSection = "security") {
     setPanel(null);
     setSharingFolder(null);
+    setSettingsSection(section);
     setSettingsOpen(true);
   }
 
@@ -1492,12 +1506,13 @@ export function App() {
     setChecking(false);
   }} />;
 
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+  const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled };
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) setSettingsOpen(false);
   }} />;
   const toastStatus = toast && <div className="toast" role="status">{toast}</div>;
-  const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
+  const account = { displayName: session.user.displayName, onSettings: () => openSettings(), onSignOut: signOut };
 
   if (activeApp !== "notes" && !session.totp.setupRequired) return <NotificationsContext.Provider value={{ openList: () => { void openApp("notifications"); }, openPath: openNotificationPath }}>
     {activeApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
@@ -1547,7 +1562,7 @@ export function App() {
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
         <footer className="sidebar-footer">
-          <button className="footer-settings" title={session.user.displayName} onClick={openSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
+          <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
             <strong>{session.user.displayName}</strong>
             <span><Settings />Settings</span>
           </button>
