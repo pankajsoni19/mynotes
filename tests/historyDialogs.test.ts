@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { acquireDialogSentinel, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry } from "../src/historyDialogs";
+import { acquireDialogSentinel, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop } from "../src/historyDialogs";
 
 test("a sentinel is pushed only for a phone dialog opened at depth 0", () => {
   expect(needsDialogSentinel(null, { phone: true, active: false })).toBe(true);
@@ -146,4 +146,44 @@ test("an in-app navigation from the sentinel replaces it instead of stacking on 
   // Closing the dialog pops nothing: the new route stays.
   expect(entries()).toHaveLength(2);
   expect(popStateClosedDialog({ state: history.state })).toBe(false);
+});
+
+test("Back that closes a nested sheet at depth 1 keeps the URL and the forward entry", async () => {
+  // A fresh `/` (depth 0), then /calendar (depth 1): no sentinel, D18 closes dialogs by undoing the move.
+  const entries: unknown[] = [{ route: "home", "mynotes.depth": 0 }, { route: "calendar", "mynotes.depth": 1 }];
+  let index = 1;
+  const moves: number[] = [];
+  const history = {
+    get state() { return entries[index]; },
+    pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
+    back() { moves.push(-1); }
+  };
+  const env = { history: history as unknown as History, href: () => "https://nook.test/", phone: () => true };
+  // Moves land (and fire popstate) only when delivered, like a browser.
+  const deliver = () => { index += moves.shift()!; return popStateClosedDialog({ state: entries[index] }); };
+  const dialog = acquireDialogSentinel(env);
+  const sheet = acquireDialogSentinel(env);
+  expect(entries).toHaveLength(2);
+  let sheetOpen = true;
+  const unregister = registerHistoryDialogGuard(() => {
+    if (!sheetOpen) return false;
+    sheetOpen = false;
+    // The dropdown guard undoes Back with history.go(1), still in flight when the sheet releases.
+    undoDialogPop("back", (delta) => moves.push(delta));
+    return true;
+  });
+  history.back();
+  expect(deliver()).toBe(true);
+  expect(sheetOpen).toBe(false);
+  expect(index).toBe(0);
+  sheet();
+  // The release must not push a sentinel over `/` and drop /calendar.
+  expect(entries).toEqual([{ route: "home", "mynotes.depth": 0 }, { route: "calendar", "mynotes.depth": 1 }]);
+  expect(deliver()).toBe(true);
+  expect(history.state).toEqual({ route: "calendar", "mynotes.depth": 1 });
+  unregister();
+  dialog();
+  await Bun.sleep(5);
+  expect(entries).toHaveLength(2);
+  expect(index).toBe(1);
 });
