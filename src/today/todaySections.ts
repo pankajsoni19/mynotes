@@ -29,7 +29,8 @@ function upcomingRow(item: Record<string, any>, date: string): TodayRow {
 }
 
 function taskRow(item: Record<string, any>, date: string): TodayRow {
-  const due = dueStatus(item.dueOn ?? null, date);
+  // A card with a time (Wave 13, D100) shows the viewer's local time of its instant: "Due today at 17:00".
+  const due = dueStatus(item.dueOn ?? null, date, false, { dueAt: item.dueAt ?? null });
   const reason = item.reason === "assigned" ? "Assigned to you" : item.reason === "created" ? "Added by you" : null;
   return {
     key: item.cardId,

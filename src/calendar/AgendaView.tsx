@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CalendarDays, CircleCheck, Repeat, RotateCcw, TriangleAlert } from "lucide-react";
 import { addDays, AGENDA_DAYS } from "../calendarRoute";
 import { listOccurrences, viewerTimeZone, type DueTask, type Occurrence, type OccurrenceList } from "./calendarApi";
-import { agendaDays, dayHeading, occurrenceTimeLabel, tasksByDay } from "./calendarFormat";
+import { agendaDays, dayHeading, occurrenceTimeLabel, tasksByDay, taskTimeLabel } from "./calendarFormat";
 
 type AgendaViewProps = {
   today: string;
@@ -76,9 +76,11 @@ export function OccurrenceRow({ occurrence, day, zone, onOpen }: { occurrence: O
 
 /** A card due that day (D67). Read-only here: it is changed on its board. */
 export function TaskRow({ task }: { task: DueTask }) {
-  return <div className="calendar-occurrence calendar-task" role="group" aria-label={`Task due: ${task.title}`}>
+  // A timed card shows the viewer's local time of its instant (Wave 13, D100).
+  const time = taskTimeLabel(task, viewerTimeZone());
+  return <div className="calendar-occurrence calendar-task" role="group" aria-label={task.dueAt ? `Task due at ${time}: ${task.title}` : `Task due: ${task.title}`}>
     <CircleCheck className="calendar-task-icon" aria-hidden="true" />
-    <span className="calendar-occurrence-time">Due</span>
+    <span className="calendar-occurrence-time">{time}</span>
     <span className="calendar-occurrence-copy">
       <strong>{task.title}</strong>
       <small>{task.boardName}</small>

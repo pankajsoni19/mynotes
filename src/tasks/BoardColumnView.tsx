@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Ellipsis, MessageSquare, Paperclip, Plus, AlignLeft, UserRound } from "lucide-react";
 import { CARD_DRAG_TYPE, isCardDrag, isMoveKey, type MoveKey } from "./boardOrder";
-import { attachmentCountLabel, cardCountLabel, commentCountLabel, dueStatus, localDateString, validateCardTitle } from "./taskActions";
+import { assigneeSentence, attachmentCountLabel, cardAssignees, commentCountLabel, dueStatus, localDateString, validateCardTitle, wipCountLabel, wipState } from "./taskActions";
 import type { BoardColumn, CardSummary } from "./tasksApi";
 
 type BoardColumnViewProps = {
@@ -13,6 +13,8 @@ type BoardColumnViewProps = {
   draggingId: string | null;
   /** Insertion index shown while a card is dragged over this column (cards without the dragged one). */
   dropIndex: number | null;
+  /** A card from another column is being dragged and this column is full: the drop is refused (D108). */
+  refuseDrop?: boolean;
   onDragStart: (card: CardSummary) => void;
   onDragEnd: () => void;
   onDragOverIndex: (index: number | null) => void;
@@ -48,13 +50,18 @@ export function BoardColumnView(props: BoardColumnViewProps) {
 
   function dragOver(event: ReactDragEvent<HTMLElement>) {
     if (!isCardDrag(event.dataTransfer.types) || !listRef.current) return;
+    if (props.refuseDrop) {
+      // Not calling preventDefault leaves the drop disallowed; the hint says why.
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     props.onDragOverIndex(dropIndexFor(listRef.current, event.clientY, draggingId));
   }
 
   function drop(event: ReactDragEvent<HTMLElement>) {
-    if (!isCardDrag(event.dataTransfer.types) || !listRef.current) return;
+    if (!isCardDrag(event.dataTransfer.types) || !listRef.current || props.refuseDrop) return;
     event.preventDefault();
     const index = dropIndexFor(listRef.current, event.clientY, draggingId);
     props.onDropAt(event.dataTransfer.getData(CARD_DRAG_TYPE), index);
@@ -90,18 +97,23 @@ export function BoardColumnView(props: BoardColumnViewProps) {
 
   const indicator = (index: number) => dropIndex === index ? <li className="task-drop-indicator" aria-hidden="true" /> : null;
 
-  return <section className={`task-column${dropIndex !== null ? " drop-active" : ""}`} aria-labelledby={`column-${column.id}`} data-column-id={column.id}
+  const wip = wipState(cards.length, column.wip_limit);
+
+  return <section className={`task-column${dropIndex !== null ? " drop-active" : ""}${props.refuseDrop ? " drop-refused" : ""}`} aria-labelledby={`column-${column.id}`} data-column-id={column.id}
     onDragOver={dragOver} onDragEnter={dragOver} onDrop={drop}
     onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onDragOverIndex(null); }}>
     <header className="task-column-header">
       <h2 id={`column-${column.id}`} title={column.name}>{column.name}</h2>
-      <b aria-label={cardCountLabel(cards.length)}>{cards.length}</b>
+      <b className={wip ? `task-wip ${wip}` : undefined} aria-label={wipCountLabel(cards.length, column.wip_limit)} title={wip ? `WIP limit ${column.wip_limit}` : undefined}>
+        {wip ? `${cards.length} / ${column.wip_limit}` : cards.length}
+      </b>
       {owner && <span className="task-column-controls">
         <button className="icon-button desktop-only" onClick={() => props.onMoveColumn(-1)} disabled={isFirst} aria-label={`Move ${column.name} left`} title="Move column left"><ChevronLeft /></button>
         <button className="icon-button desktop-only" onClick={() => props.onMoveColumn(1)} disabled={isLast} aria-label={`Move ${column.name} right`} title="Move column right"><ChevronRight /></button>
         <button className="icon-button" onClick={(event) => props.onColumnMenu(event.currentTarget)} aria-haspopup="dialog" aria-label={`Column actions for ${column.name}`} title="Column actions"><Ellipsis /></button>
       </span>}
     </header>
+    {props.refuseDrop && <p className="task-column-full-hint" role="status">Full: it takes at most {column.wip_limit} {column.wip_limit === 1 ? "card" : "cards"}.</p>}
     <ul ref={listRef} className="task-card-list" aria-label={`${column.name} cards`}>
       {cards.map((card) => {
         // The dragged card stays rendered (removing it would cancel the drag); slots count the others.
@@ -134,15 +146,20 @@ export function BoardColumnView(props: BoardColumnViewProps) {
         >
           <span className="task-card-title">{card.title}</span>
           {(() => {
-            const due = dueStatus(card.due_on, today, column.is_done === 1);
+            const due = dueStatus(card.due_on, today, column.is_done === 1, { dueAt: card.due_at });
             return due && <span className={`task-due-chip ${due.tone}`} title={due.description}><CalendarDays aria-hidden="true" /><span aria-hidden="true">{due.label}</span><span className="sr-only">{due.description}</span></span>;
           })()}
-          {(card.has_description === 1 || card.comment_count > 0 || card.attachment_count > 0 || card.assignee_name) && <span className="task-card-meta">
-            {card.assignee_name && <span title={`Assigned to ${card.assignee_name}`}><UserRound aria-hidden="true" /><span className="task-card-assignee" aria-hidden="true">{card.assignee_name}</span><span className="sr-only">{`Assigned to ${card.assignee_name}`}</span></span>}
+          {(() => {
+            const people = cardAssignees(card);
+            const names = people.map((person) => person.display_name);
+            const assigned = names.length ? `Assigned to ${assigneeSentence(names)}` : "";
+            return (card.has_description === 1 || card.comment_count > 0 || card.attachment_count > 0 || names.length > 0) && <span className="task-card-meta">
+            {names.length > 0 && <span title={assigned}><UserRound aria-hidden="true" /><span className="task-card-assignee" aria-hidden="true">{names[0]}</span>{names.length > 1 && <span className="task-card-more-people" aria-hidden="true">+{names.length - 1}</span>}<span className="sr-only">{assigned}</span></span>}
             {card.has_description === 1 && <span title="Has a description"><AlignLeft aria-label="Has a description" /></span>}
             {card.comment_count > 0 && <span title="Comments"><MessageSquare aria-hidden="true" /><span aria-hidden="true">{card.comment_count}</span><span className="sr-only">{commentCountLabel(card.comment_count)}</span></span>}
             {card.attachment_count > 0 && <span title="Attachments"><Paperclip aria-hidden="true" /><span aria-hidden="true">{card.attachment_count}</span><span className="sr-only">{attachmentCountLabel(card.attachment_count)}</span></span>}
-          </span>}
+          </span>;
+          })()}
           <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…" draggable={false}><Ellipsis /></button>
         </div>
       </li>;

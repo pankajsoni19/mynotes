@@ -198,13 +198,20 @@ export function weekdayOf(date: string): Weekday {
   return WEEKDAYS[(new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7]!;
 }
 
-/** Due cards by due date (the overlay is date-only, so no zone applies). */
+/**
+ * Due cards by the viewer's day: the server's `date` (a timed card's local day, which can differ
+ * from its `dueOn` in another zone), or `dueOn` from an older server.
+ */
 export function tasksByDay(tasks: DueTask[]) {
   const days = new Map<string, DueTask[]>();
   for (const task of tasks) {
-    const list = days.get(task.dueOn) ?? [];
+    const day = task.date ?? task.dueOn;
+    const list = days.get(day) ?? [];
     list.push(task);
-    days.set(task.dueOn, list);
+    days.set(day, list);
   }
   return days;
 }
+
+/** The overlay row's time: the viewer's local time of a timed card, or "Due" for a date-only one. */
+export const taskTimeLabel = (task: DueTask, timeZone: string) => task.dueAt ? zonedParts(task.dueAt, timeZone).time : "Due";
