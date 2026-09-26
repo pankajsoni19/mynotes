@@ -74,7 +74,14 @@ export type EventInput = {
   repeat?: RepeatRule | null;
 };
 
-export type DueTask = { cardId: string; boardId: string; boardName: string; title: string; dueOn: string };
+/**
+ * A card in the "Tasks due" overlay. Wave 13 (D100): a timed card carries its wall time and zone and
+ * the exact instant, and `date` is the viewer's local day for it (`dueOn` for date-only cards).
+ */
+export type DueTask = {
+  cardId: string; boardId: string; boardName: string; title: string; dueOn: string;
+  dueTime?: string | null; dueTz?: string | null; dueAt?: string | null; date?: string;
+};
 export type OccurrenceList = { occurrences: Occurrence[]; truncated: boolean; tasks?: DueTask[] };
 
 const json = (body: unknown) => JSON.stringify(body);

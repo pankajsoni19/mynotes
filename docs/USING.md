@@ -36,7 +36,7 @@ Home shows what needs you today, in sections of up to ten items each. Every item
 
 | Section | Shows |
 | --- | --- |
-| Due soon | Cards due within seven days, or overdue, on boards you can open, except in done columns |
+| Due soon | Cards due within seven days, or overdue, on boards you can open, except in done columns. A card with a due time shows it in your time zone ("Due today at 17:00") and counts as overdue once that time has passed |
 | My tasks | Open cards assigned to you or added by you |
 | Recent notes | Notes you can read, newest change first (someone else's note appears once it is published, with its published title) |
 | Unpublished drafts | Your notes whose draft differs from what is published |
