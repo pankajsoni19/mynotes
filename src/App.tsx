@@ -72,7 +72,7 @@ import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type Se
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { ModulesSettings } from "./ModulesSettings";
-import { hiddenEntryStep, hiddenModuleForApp, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
+import { hiddenEntryStep, hiddenModuleForApp, openTeamViaSettings, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
 import { useHistoryDialogGuard } from "./tasks/useHistoryDialogGuard";
 
@@ -1269,9 +1269,11 @@ export function App() {
     }
   }
 
+  /** Resolves true once `section` is on screen, false when the switch did not happen (no session, or a note that could not be saved). */
   async function openApp(section: AppSection) {
-    if (!session || section === activeApp) return;
-    if (activeApp === "notes" && !await leaveNotes()) return;
+    if (!session) return false;
+    if (section === activeApp) return true;
+    if (activeApp === "notes" && !await leaveNotes()) return false;
     if (section === "notes") {
       setMobilePanel("folders");
       navigate(currentNotesRoute(), { panel: "folders" });
@@ -1279,6 +1281,7 @@ export function App() {
       navigate(routeForApp(section));
     }
     setActiveApp(section);
+    return true;
   }
 
   function openHome() {
@@ -1594,7 +1597,7 @@ export function App() {
   const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
   // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate
   // lets that one visit through; Back, Forward, and links still follow the toggle.
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onManageTeam={() => { setSettingsOpen(false); setTeamViaSettings(true); void openApp("team"); }} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onManageTeam={() => { setSettingsOpen(false); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) setSettingsOpen(false);
   }} />;

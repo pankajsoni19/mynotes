@@ -15,6 +15,7 @@ import {
   ModulesContext,
   moduleOffHint,
   normalizeDisabledModules,
+  openTeamViaSettings,
   parsePreferences,
   SETTINGS_MODULES,
   settingsModulesFor,
@@ -192,5 +193,15 @@ describe("gating (client only)", () => {
     expect(hiddenEntryStep(null, 2)).toBe("replace");
     expect(hiddenEntryStep("forward", 3)).toBe("undo");
     expect(hiddenEntryStep("back", 3)).toBe("back");
+  });
+
+  test("Manage team keeps the gate open only when Team actually opened", async () => {
+    const seen: boolean[] = [];
+    // Notes could not save the open note: the switch fails and the flag is cleared again.
+    expect(await openTeamViaSettings((value) => seen.push(value), async () => false)).toBe(false);
+    expect(seen).toEqual([true, false]);
+    seen.length = 0;
+    expect(await openTeamViaSettings((value) => seen.push(value), async () => true)).toBe(true);
+    expect(seen).toEqual([true]);
   });
 });
