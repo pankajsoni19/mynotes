@@ -15,6 +15,7 @@ import { collectionsMigration } from "../server/migrations/012_collections";
 import { calendarMigration } from "../server/migrations/013_calendar";
 import { eventNextOccurrenceMigration } from "../server/migrations/014_event_next_occurrence";
 import { userPreferencesMigration } from "../server/migrations/016_user_preferences";
+import { taskCardUxMigration } from "../server/migrations/015_task_card_ux";
 import { registeredMigrationIds, runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
@@ -463,6 +464,67 @@ describe("database migrations", () => {
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
     expectAllMigrations(ids);
     expect(db.query("SELECT card_id, user_id FROM card_assignees").all()).toEqual([{ card_id: "k1", user_id: "u1" }]);
+    db.close();
+  });
+
+  test("migration 020 backfills column states and adds task views with CHECKs and cascades, without 017–019", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    // A 016-shaped database (no Team or hierarchy migrations): 020 needs only 009, 011, and 015.
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
+      taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u2', 'member@example.test', 'Member', 'x', ?)").run(old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b1', 'u1', 'Plan', ?, ?)").run(old, old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b2', 'u1', 'Done first', ?, ?)").run(old, old);
+    const column = db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    column.run("c1", "b1", "Backlog", 1024, 0, old, old);
+    column.run("c2", "b1", "Doing", 2048, 0, old, old);
+    column.run("c3", "b1", "Review", 3072, 0, old, old);
+    column.run("c4", "b1", "Shipped", 4096, 1, old, old);
+    column.run("c5", "b2", "Done", 512, 1, old, old);
+    column.run("c6", "b2", "Later", 1024, 0, old, old);
+
+    runMigrations(db);
+
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect(ids).toContain(20);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 20").get() as { name: string }).name).toBe("task_views");
+    // Done columns are done; otherwise the first column is todo and the rest doing. A board whose first column is done has no todo.
+    expect(db.query("SELECT id, state FROM board_columns ORDER BY id").all()).toEqual([
+      { id: "c1", state: "todo" }, { id: "c2", state: "doing" }, { id: "c3", state: "doing" }, { id: "c4", state: "done" },
+      { id: "c5", state: "done" }, { id: "c6", state: "doing" }
+    ]);
+    expect((db.query("SELECT COUNT(*) AS count FROM board_columns WHERE (state = 'done') <> (is_done = 1)").get() as { count: number }).count).toBe(0);
+    expect(() => db.query("UPDATE board_columns SET state = 'later' WHERE id = 'c1'").run()).toThrow();
+    // A column inserted without a state (older code) is doing.
+    column.run("c7", "b1", "Extra", 5120, 0, old, old);
+    expect((db.query("SELECT state FROM board_columns WHERE id = 'c7'").get() as { state: string }).state).toBe("doing");
+
+    const view = db.query(`INSERT INTO task_views (id, owner_id, name, query, display_json, visibility, position, created_at, updated_at)
+      VALUES (?, 'u1', ?, ?, ?, ?, 1024, ?, ?)`);
+    view.run("v1", "Mine", "assignee:me", '{"layout":"list"}', "private", old, old);
+    expect(db.query("SELECT revision, visibility FROM task_views WHERE id = 'v1'").get()).toEqual({ revision: 1, visibility: "private" });
+    expect(() => view.run("v2", "", "q", "{}", "private", old, old)).toThrow();
+    expect(() => view.run("v2", "x".repeat(81), "q", "{}", "private", old, old)).toThrow();
+    expect(() => view.run("v2", "Long", "x".repeat(2001), "{}", "private", old, old)).toThrow();
+    expect(() => view.run("v2", "Bad JSON", "q", "not json", "private", old, old)).toThrow();
+    expect(() => view.run("v2", "Array", "q", "[]", "private", old, old)).toThrow();
+    expect(() => view.run("v2", "Big", "q", JSON.stringify({ a: "x".repeat(2050) }), "private", old, old)).toThrow();
+    expect(() => view.run("v2", "Public", "q", "{}", "public", old, old)).toThrow();
+    view.run("v2", "Shared", "state:todo", "{}", "selected", old, old);
+    db.query("INSERT INTO task_view_members (view_id, user_id, created_at) VALUES ('v2', 'u2', ?)").run(old);
+    expect(() => db.query("INSERT INTO task_view_members (view_id, user_id, created_at) VALUES ('v2', 'missing', ?)").run(old)).toThrow();
+    // Deleting a member removes the membership; deleting the owner removes their views and memberships.
+    db.query("DELETE FROM users WHERE id = 'u2'").run();
+    expect((db.query("SELECT COUNT(*) AS count FROM task_view_members").get() as { count: number }).count).toBe(0);
+    db.query("DELETE FROM users WHERE id = 'u1'").run();
+    expect((db.query("SELECT COUNT(*) AS count FROM task_views").get() as { count: number }).count).toBe(0);
     db.close();
   });
 });

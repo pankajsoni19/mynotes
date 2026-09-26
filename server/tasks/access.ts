@@ -30,7 +30,10 @@ export function readableBoard(boardId: string, userId: string) {
   return db.query(`SELECT b.* FROM boards b WHERE b.id = $boardId AND ${readableBoardPredicate}`).get({ boardId, userId }) as BoardRow | null;
 }
 
-export type ColumnRow = { id: string; board_id: string; name: string; position: number; is_done: 0 | 1; wip_limit: number | null; created_at: string; updated_at: string };
+export type ColumnState = "todo" | "doing" | "done";
+
+/** `state` is the normalized workflow state (migration 020, D141); the service keeps `is_done = (state = 'done')`. */
+export type ColumnRow = { id: string; board_id: string; name: string; position: number; is_done: 0 | 1; state: ColumnState; wip_limit: number | null; created_at: string; updated_at: string };
 
 /** A column joined to a board the caller can read (path ids are always joined to their board, T39). */
 export function readableColumn(columnId: string, userId: string) {

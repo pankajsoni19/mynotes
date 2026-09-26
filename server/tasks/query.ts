@@ -29,13 +29,8 @@ export type Binding = string | number;
 export type CompiledFilter = { where: string; params: Record<string, Binding> };
 export type CompileContext = { userId: string; today: string; nowTime: string };
 
-/**
- * The normalized column state (D141): done for a done column, todo for a
- * board's first column, doing otherwise. Migration 020 stores this as
- * `board_columns.state`; until then it is derived with the same rule.
- */
-export const COLUMN_STATE = `(CASE WHEN col.is_done = 1 THEN 'done'
-  WHEN col.position = (SELECT MIN(x.position) FROM board_columns x WHERE x.board_id = col.board_id) THEN 'todo' ELSE 'doing' END)`;
+/** The normalized column state (migration 020, D141), kept equal to `is_done` by the service. */
+export const COLUMN_STATE = "col.state";
 
 /** `readableBoardPredicate` for another card's board (alias `ob`), derived so the two never drift apart. */
 export const readableOtherBoardPredicate = readableBoardPredicate.replace(/\bb\./g, "ob.");

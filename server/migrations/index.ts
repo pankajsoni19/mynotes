@@ -15,15 +15,19 @@ import { calendarMigration } from "./013_calendar";
 import { eventNextOccurrenceMigration } from "./014_event_next_occurrence";
 import { taskCardUxMigration } from "./015_task_card_ux";
 import { userPreferencesMigration } from "./016_user_preferences";
+import { taskViewsMigration } from "./020_task_views";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration,
+  // 017 and 018 (Team) and 019 (task hierarchy) come from parallel waves; 020 does not depend on them.
+  taskViewsMigration];
 
 /**
  * Ids of every registered migration, in order. Tests assert against this list.
  *
  * The ids may have gaps during development. Wave 13 fixes 015 (task card UX, sub-wave 13B) and
- * 016 (user preferences, 13F), and 017 onwards belong to Team (Wave 14), but the sub-waves merge
- * in any order, so an id can be missing here for a while (017 until Team lands). `runMigrations`
+ * 016 (user preferences, 13F), 017–018 belong to Team (Wave 14), 019 to task hierarchy (17A), and
+ * 020 to task views (17C), but the sub-waves merge in any order, so an id can be missing here for a
+ * while (017–019 until those land). `runMigrations`
  * only needs the ids to ascend and applies each missing id on its own, so a database that already
  * has 016 still gets 015 when it lands (tests/migrations.test.ts). Releases are contiguous.
  */

@@ -27,7 +27,7 @@ const stamp = new Date().toISOString();
 
 function seed() {
   const insertBoard = db.query("INSERT INTO boards (id, owner_id, name, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
-  const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
   const insertCard = db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description_excerpt, due_on, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertAssignee = db.query("INSERT INTO card_assignees (card_id, user_id, created_at) VALUES (?, ?, ?)");
@@ -41,7 +41,7 @@ function seed() {
       insertBoard.run(boardId, boardOwner, `Perf board ${index}`, visibility, stamp, stamp);
       const columns = [0, 1, 2].map((column) => {
         const id = crypto.randomUUID();
-        insertColumn.run(id, boardId, ["To do", "Doing", "Done"][column]!, (column + 1) * 1024, column === 2 ? 1 : 0, stamp, stamp);
+        insertColumn.run(id, boardId, ["To do", "Doing", "Done"][column]!, (column + 1) * 1024, column === 2 ? 1 : 0, ["todo", "doing", "done"][column]!, stamp, stamp);
         return id;
       });
       const tagId = crypto.randomUUID();

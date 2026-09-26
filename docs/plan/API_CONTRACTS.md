@@ -306,6 +306,7 @@ type BoardColumn = {
   id: string; board_id: string; name: string /* 1–60 */; position: number;
   is_done: 0 | 1;                    // migration 011
   wip_limit: number | null;          // Wave 13 (D108): 1–1000, or null for no limit
+  state: "todo" | "doing" | "done";  // migration 020 (D141); is_done = (state = "done")
   created_at: string; updated_at: string;
 };
 ```
@@ -338,7 +339,7 @@ Same rules as folder sharing: the owner cannot be a recipient (400), `selected` 
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `POST /boards/:b/columns { name, afterColumnId? }` | owner | 201 `{ column, columns }`. Omitted `afterColumnId` appends; `null` puts the column first. | 400, 403, 404 (board, or an anchor not on this board), 409 `LIMIT_REACHED` |
-| `PATCH /columns/:c { name?, afterColumnId?, isDone?, wipLimit? }` | owner | 200 `{ column, columns, renormalized? }`. Columns carry `is_done: 0 \| 1` (migration 011); a new board's Done column starts at 1. `wipLimit` is an integer 1–1000 or `null` (Wave 13, D108) and may be set below the current count. | 400 (no field, after itself, or a bad limit), 403, 404 |
+| `PATCH /columns/:c { name?, afterColumnId?, isDone?, state?, wipLimit? }` | owner | 200 `{ column, columns, renormalized? }`. Columns carry `is_done: 0 \| 1` (migration 011); a new board's Done column starts at 1. `wipLimit` is an integer 1–1000 or `null` (Wave 13, D108) and may be set below the current count. | 400 (no field, after itself, or a bad limit), 403, 404 |
 | `DELETE /columns/:c` | owner | 200 `{ ok: true, columns }` | 403, 404, 409 `COLUMN_NOT_EMPTY` (with `cardCount`) or `LAST_COLUMN` |
 
 Binned cards do not block deleting their column; they keep `column_id = NULL` and restore to the first column.
@@ -481,11 +482,49 @@ type QueryRefs = {                                   // first page only: what th
 };
 ```
 
+- **Column state.** `state:` and `column_state` read `board_columns.state` (migration 020).
 - **Access.** Only live cards on live boards the caller can read (`readableBoardPredicate`), ANDed before any filter, sort, or limit. A board, column, or tag id the caller cannot read matches nothing and resolves as `restricted`, exactly like an id that does not exist.
 - **Order and paging.** Keyset pagination on the group key, then the sort key, then the card id. `due` sorts by date then time with undated cards last; `updated` and `created` are newest first; `title` is case-insensitive; `board` is board name, column position, card position. `group` orders by the group first (board name; state todo → doing → done; due bucket overdue → today → this week → later → none), so a group is one contiguous run across pages; assignee and tag grouping are done by the client within the loaded cards. `nextCursor` is opaque and only continues the same canonical query, sort, and group (and, for date-relative queries, the same zone and date); anything else is `CURSOR_INVALID`.
 - **`total`** is on the first page only, when at most 1000 cards match. `refs` is on the first page only.
 - **Relations** (`has:`) follow the per-viewer relation rules (WAVE_13 D105): a relation to a card the caller cannot read counts, one to a readable binned card does not. `has:blocked` counts only readable, live `depends_on` cards outside a done column.
 - **Text** uses ASCII case folding (SQLite `lower`), as the Collections query does; accented capitals do not fold.
+
+### Saved views (sub-wave 17C, D140, migration 020)
+
+A view stores a **question, not an answer**: a name, a canonical filter, and display options. Running it always runs the stored filter **as the viewer**, through the same code as `POST /api/tasks/query`, so sharing a view never shows anyone cards from boards they cannot read (T115). Views are configuration, not content: they are not Bin items.
+
+```ts
+type TaskView = {
+  id; name /* 1–80, trimmed, no control characters */; owner_id; owner_name; is_owner: 0 | 1;
+  visibility: "private" | "selected" | "all_users";
+  query: string;                                   // canonical grammar
+  display: { layout: "list" | "table" | "board"; group: "none" | "board" | "state" | "due" | "assignee" | "tag";
+             sort: "due" | "updated" | "created" | "title" | "board";
+             fields?: ("board" | "column" | "state" | "assignees" | "due" | "tags" | "flags" | "updated")[] };
+  position: number; revision: number; created_at; updated_at;
+};
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /views` | any | `{ mine, shared, everyone, truncated }`: the caller's views by position; views shared with them (`selected`) and `all_users` views of others, by name, at most 200 each | — |
+| `POST /views { name, query, display? }` | any | 201 `{ view }`, private, at the end of the caller's list. `query` is stored canonical; `display` defaults to list, no group, sort by due | 400 (body, `FILTER_*` with `position`), 409 `LIMIT_REACHED` (50 per owner) |
+| `GET /views/:v` | reader | `{ view }` | 404 |
+| `PATCH /views/:v { name?, query?, display?, afterViewId?, revision }` | owner | `{ view }` with `revision + 1`. `display` merges into the stored one; `afterViewId` reorders among the owner's views (`null` = first) | 400, 403 `OWNER_ONLY`, 404 (view or anchor), 409 `VIEW_CHANGED` with the current `view` |
+| `DELETE /views/:v` | owner | `{ ok: true }` (the client offers Undo by re-creating the same body) | 403, 404 |
+| `GET /views/:v/sharing` / `PUT /views/:v/sharing { visibility, userIds ≤ 100 }` | owner | `{ visibility, users: { id, display_name }[] }` / `{ ok: true }`, as board sharing | 400 (owner as recipient, `selected` without users, unknown or disabled users), 403, 404 |
+| `POST /views/:v/duplicate` | reader | 201 `{ view }`: a private copy owned by the caller, named "… (copy)" | 404, 409 `LIMIT_REACHED` |
+| `GET /views/:v/cards?cursor&limit&tz` | reader | `{ view, query, cards, nextCursor, total?, refs? }`: the stored filter run as the caller with the view's sort and server-side group (`board`, `state`, `due`; `assignee` and `tag` group on the client) | 400, 404, 429 (shares the query limit) |
+
+- **Readers** are the owner, members for `selected`, and everyone for `all_users`, while the owner is enabled; a disabled owner's views disappear for everyone else. Anyone else gets 404, the same as a missing view. Only the owner edits, reorders, shares, or deletes (403 `OWNER_ONLY`); recipients duplicate instead (§13 Q13).
+- **Audit** (ids only): `task.view_create { viewId, sourceViewId? }`, `task.view_update { viewId, renamed?, query?, display?, moved? }`, `task.view_delete`, `task.view_sharing_changed { viewId, visibility, recipientCount }`.
+
+### Column state (sub-wave 17C, D141, migration 020)
+
+Every column has `state: "todo" | "doing" | "done"`, a shared vocabulary across boards for `state:` filters and board lanes. `is_done` stays, and always equals `state = "done"` (T121): the service writes both in one statement.
+
+- The 020 backfill: a done column is `done`; otherwise a board's first column is `todo` and the rest `doing`. New boards get `todo`, `doing`, `done`; a new column is `doing`.
+- `PATCH /columns/:c { state? }` (owner) sets the state and `is_done` together. `isDone: true` sets `done`; `isDone: false` on a done column sets `todo` for the board's first column and `doing` otherwise. `isDone` and `state` that disagree are 400. Audit `task.column_state { boardId, columnId, state }` (and `task.column_done` when `isDone` was sent).
 
 ## Today (Wave 10)
 

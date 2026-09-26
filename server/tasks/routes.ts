@@ -41,11 +41,13 @@ export const columnPatchSchema = z.object({
   name: label(60).optional(),
   afterColumnId: uuid.nullable().optional(),
   isDone: z.boolean().optional(),
+  /** Normalized workflow state (migration 020, D141); `done` also sets isDone. */
+  state: z.enum(["todo", "doing", "done"]).optional(),
   /** WIP limit (D108): 1–1000 or null for none. */
   wipLimit: z.number().int().min(1).max(1000).nullable().optional()
 }).strict()
-  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined || value.isDone !== undefined || value.wipLimit !== undefined,
-    "Provide a name, an afterColumnId, isDone, or wipLimit");
+  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined || value.isDone !== undefined || value.state !== undefined || value.wipLimit !== undefined,
+    "Provide a name, an afterColumnId, isDone, state, or wipLimit");
 
 /** A real calendar date `YYYY-MM-DD` between 1900 and 2999 (T71). */
 export function isCalendarDate(value: string) {
