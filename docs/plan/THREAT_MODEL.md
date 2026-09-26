@@ -202,6 +202,15 @@ Rows T110–T121 of [research/2026-09-26-task-hierarchy-workflows.md](research/2
 | T121 | **Column state drift** (`state` and `is_done` disagree, so Today or the overlay miscount) | `patchColumn` writes `state` and `is_done` in one statement; new boards and columns insert both. The 020 backfill derives state from `is_done` and position. Tests assert `(state = 'done') = (is_done = 1)` after every column operation and after the backfill. | Required |
 | T117 | **Filter injection or DoS** (SQL through the grammar, pathological queries) | `shared/taskQuery.ts` is a pure parser with a fixed key and value table: ids must be UUIDs, keywords come from fixed lists, and C0/C1 controls and bidi overrides are refused. Caps: 2000 characters, 20 terms, 20 values per term, 100 characters per text term. Reserved keys (`parent`, `level`, `sprint`) fail as `FILTER_UNSUPPORTED` instead of being ignored, so a query is never silently widened. The compiler (`server/tasks/query.ts`) binds every value as a named parameter and picks SQL only from fixed fragments; text matching is `instr`, never LIKE. Keyset pagination with at most 100 cards a page, `total` counted only up to 1000, a strict body schema, and 30 queries per 10 s per user. Positive assignee, tag, and flag terms compile to `k.id IN (…)` over their join-table indexes, so selective filters drive the scan. The default fixture (20 boards × 500 cards) keeps every measured shape under p95 150 ms (`tests/tasksQueryPerf.test.ts`). On the plan's large fixture (500 all_users boards × 1000 cards, run by hand) My work stays at about 35 ms, but unselective queries (everything, negated filters, text) take 0.8–1.9 s, which trips §13 Q11: bun:sqlite exposes no statement interrupt, so a budget (for example refusing unselective queries above a readable-card count) is **open for the director**. | Required (budget open) |
 
+### Task hierarchy (Wave 17A)
+
+Rows T110–T114, T119, and T120 of [research/2026-09-26-task-hierarchy-workflows.md](research/2026-09-26-task-hierarchy-workflows.md) §11.1 (17B adds T118).
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T110 | **A cycle in the parent chain** hangs roll-ups or the breadcrumb | Level invariant (D121): a parent is exactly one level up and levels are 0–2, so a chain has at most three cards and cannot loop. The service checks it under the board lock with one lookup by id and board; the 019 triggers refuse a write that breaks it (a parent on another board, not one level up, or the card itself; a level change on a card with children). No recursive SQL: the breadcrumb is at most two lookups. Tests cover every refusal through the API and straight against the triggers. | Done (17A) |
+| T113 | **Reparenting as an existence oracle** (probing card ids on other boards) | Every invalid parent (unknown, another board, binned, the card itself, wrong level) is the same 400 `PARENT_INVALID` with the same message, and the parent is looked up by `id AND board_id`. | Done (17A) |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

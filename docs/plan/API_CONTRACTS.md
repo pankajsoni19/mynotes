@@ -491,6 +491,36 @@ type CardAttachment = {
 - Inline images in a description use the same content URL, `/api/files/:id/content?disposition=inline`.
 
 **Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.column_wip { wipLimit }`, `task.card_create { assigneesAdded? }`, `task.card_update { dueOn?, dueTime?: "set" | "cleared", assigneeId?, assigneesAdded?, assigneesRemoved? }` (counts, not ids), `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, `task.relation_create` / `task.relation_delete { boardId, cardId, relationId, kind }` (`boardId` and `cardId` are the path card's, `kind` the stored kind), and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
+### Hierarchy (sub-wave 17A, D120–D135, migration 019)
+
+Cards form a tree of at most three levels on one board. `level` 0 is the top ("Epic"), 1 sits under it, 2 under that; the names come from the board's structure (§ Board structure). A card's parent is optional at every level (an orphan story is fine), but when set it is a **live card on the same board exactly one level up** (D121). Levels strictly increase downward, so a cycle is impossible and no ancestor walk is ever needed (T110); two triggers in 019 refuse any write that would break the rule, as a backstop to the service.
+
+```ts
+type CardSummary = /* … */ & {
+  parent_card_id: string | null;     // same board, one level up (D121)
+  level: 0 | 1 | 2;                  // below the board's level count
+  child_count: number;               // live direct children
+  done_child_count: number;          // of those, in a done column (D125)
+};
+type ChildCard = { id; title; level; column_id; column_name; is_done: 0 | 1; position; due_on; child_count; done_child_count };
+// GET /cards/:k adds, on the card:
+type CardHierarchy = {
+  parent: { id; title; level } | null;
+  ancestors: { id; title; level }[];  // root first, at most 2 (the breadcrumb)
+  children: ChildCard[];              // live direct children by column position, then card position, at most 100
+};
+```
+
+| Endpoint | Who | Change | Errors |
+| --- | --- | --- | --- |
+| `POST /boards/:b/cards` | reader | adds `parentId?: uuid \| null` and `level?: 0–2`. The level defaults to the parent's plus one, else the board's work level. | 400 `PARENT_INVALID` (unknown, another board, binned, the card itself, or not one level up: always the same code and message, T113), 400 `LEVEL_INVALID` (at or past the board's level count), 409 `LIMIT_REACHED` (the parent has 100 live children) |
+| `PATCH /cards/:k` | reader | adds `parentId?: uuid \| null` (reparent, D128) and `level?: 0–2` ("Change level"), under the revision CAS like every field (`revision + 1`). Without `level` the card keeps its level, so a new parent must be one level up; send both to move a card to another level. A card with live children cannot change level; children that were binned on their own are detached, so they restore without a parent (D130). | as above, plus 409 `HAS_CHILDREN { childCount }` and 409 `CARD_CHANGED` |
+| `GET /cards/:k/children` | reader | `{ children: ChildCard[] }` | 404 |
+
+- **Audit** (ids only): `task.card_create` adds `parentId` and `level` when set; `task.card_reparent { boardId, cardId, parentId }`; `task.card_level { boardId, cardId, level }`.
+- **WIP limits** count every card in a column, whatever its level (§8, Q7).
+- There is no endpoint that changes a card's board, so a parent never ends up on another board (T112).
+
 ### Filter grammar (sub-wave 17C, D137, D140–D145)
 
 One grammar for the board filter bar (13E), cross-board queries, saved views, URLs, and MCP. It lives in `shared/taskQuery.ts`, a pure module that the server and the client both import (research 2026-09-26 §10.3, Q10). A query is terms separated by spaces: **terms AND together**, the **values of one term OR together**, and a leading `-` negates a term.

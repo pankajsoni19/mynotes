@@ -10,6 +10,7 @@ import { RELATION_TYPES, type RelationType } from "./relations";
 import { registerCardRelationRoutes } from "./relationRoutes";
 import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NAME_MAX, updateTag } from "./tags";
 import { registerTaskQueryRoutes } from "./queryRoutes";
+import { cardHierarchy } from "./hierarchy";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
   createBoard,
@@ -83,6 +84,8 @@ const flagsSchema = z.array(z.enum(CARD_FLAGS)).max(CARD_FLAGS.length).refine((f
 const createRelationsSchema = z.array(z.object({ targetCardId: uuid, type: z.enum(RELATION_TYPES as [RelationType, ...RelationType[]]) }).strict())
   .max(MAX_RELATIONS_PER_CARD)
   .refine((relations) => new Set(relations.map((relation) => relation.targetCardId.toLowerCase())).size === relations.length, "Each card can be related once");
+/** A card level (migration 019): 0–2; the service also checks the board's level count (D121). */
+const levelSchema = z.number().int().min(0).max(2);
 export const tagCreateSchema = z.object({ name: label(TAG_NAME_MAX), color: z.enum(TAG_COLORS).optional() }).strict();
 export const tagPatchSchema = z.object({ name: label(TAG_NAME_MAX).optional(), color: z.enum(TAG_COLORS).optional() }).strict()
   .refine((value) => value.name !== undefined || value.color !== undefined, "Provide a name or a color");
@@ -99,6 +102,9 @@ export const cardCreateSchema = z.object({
   relations: createRelationsSchema.optional(),
   /** The caller's own unlinked task-attachment uploads (LIMITS.attachmentsPerCard). */
   attachmentIds: z.array(uuid).max(50).optional(),
+  /** A live card of this board one level up (D121). */
+  parentId: uuid.nullable().optional(),
+  level: levelSchema.optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
 export const cardPatchSchema = z.object({
@@ -112,12 +118,17 @@ export const cardPatchSchema = z.object({
   assigneeIds: assigneeIdsSchema.optional(),
   tagIds: tagIdsSchema.optional(),
   flags: flagsSchema.optional(),
+  /** Reparent (D128): a live card of this board one level up, or null to detach. */
+  parentId: uuid.nullable().optional(),
+  /** Change level (D128); 409 HAS_CHILDREN while the card has live children. */
+  level: levelSchema.optional(),
   revision: z.number().int().positive()
 }).strict()
   .refine((value) => value.assigneeId === undefined || value.assigneeIds === undefined, "Send assigneeIds or the legacy assigneeId, not both")
   .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.dueTime !== undefined
-    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined,
-  "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, or flags");
+    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined
+    || value.parentId !== undefined || value.level !== undefined,
+  "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, flags, parentId, or level");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
 export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();
@@ -271,7 +282,16 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     return respond(c, () => {
       const { card } = getCard(userId, cardId);
       const page = listComments(userId, cardId);
-      return { card, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
+      // Parent, ancestors, and children are on the card's own board (D133, T112).
+      return { card: { ...card, ...cardHierarchy(cardId) }, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
+    });
+  });
+
+  app.get("/api/tasks/cards/:cardId/children", (c) => {
+    const cardId = id(c, "cardId");
+    return respond(c, () => {
+      getCard(c.get("user").id, cardId);
+      return { children: cardHierarchy(cardId).children };
     });
   });
 
