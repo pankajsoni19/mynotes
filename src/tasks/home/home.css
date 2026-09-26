@@ -1,0 +1,60 @@
+/* Tasks home (17C): segments, My work, views. Tokens follow tasks.css and boardViews.css. */
+/* The scroll container holds the rows' visually hidden text (.sr-only is absolute), so it never
+   stretches the page itself. */
+.task-home { position: relative; }
+.task-home-segments { display: inline-flex; max-width: 100%; margin: 0 0 18px; border: 1px solid #303035; border-radius: 12px; padding: 3px; background: #131315; }
+.task-home-segments button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 9px; padding: 0 14px; background: transparent; color: #b7b7bd; font: inherit; font-size: .84rem; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.task-home-segments button.active { background: #2b271d; color: #f5cf79; }
+.task-home-segments button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.task-home-segments svg { width: 16px; height: 16px; flex: none; }
+.task-home-intro { margin-bottom: 18px; }
+
+.task-home-pane { display: grid; gap: 10px; min-width: 0; }
+.task-home-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.task-home-actions { display: inline-flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.task-home-action { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; margin: 0; padding: 0 14px; }
+.task-home-action svg { width: 16px; flex: none; }
+.task-home .task-filter-bar { padding: 0; }
+.task-filter-chip.locked { border-color: #4a3f24; background: #17150f; }
+.task-filter-chip.locked .task-filter-chip-body { padding-right: 12px; }
+
+.task-home-states { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-home-state { min-height: 32px; border: 1px solid #303035; border-radius: 999px; padding: 0 12px; background: #151517; color: #b7b7bd; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.task-home-state.active { border-color: #6f5928; background: #2b271d; color: #f5cf79; }
+.task-home-state:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+
+.task-home-results { display: grid; gap: 12px; min-width: 0; }
+.task-home-place { min-width: 0; overflow: hidden; color: #9a9aa1; text-overflow: ellipsis; white-space: nowrap; }
+.task-home-empty { margin: 12px 0; }
+.task-home-more { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; color: #7c7c83; font-size: .78rem; }
+.task-home-more .secondary-button { min-height: 40px; margin: 0; }
+.task-home-note { color: #7c7c83; font-size: .78rem; }
+
+.task-home-lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.task-home-lane { min-width: 0; border: 1px solid #242428; border-radius: 14px; padding: 8px; background: #121214; }
+.task-home-lane h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 4px 8px; color: #e4e4e6; font-size: .86rem; font-weight: 650; }
+.task-home-lane h3 b { min-width: 22px; border-radius: 999px; padding: 1px 7px; background: rgb(255 255 255 / 7%); color: #a8a8ae; font-size: .7rem; text-align: center; }
+.task-home-table .task-table-title { min-width: 220px; }
+
+/* The view page */
+.task-home-view { padding-top: 16px; }
+.task-view-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.task-view-header .task-board-heading h2 { margin: 2px 0 0; overflow: hidden; color: #f2f2f3; font-size: 1.35rem; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; }
+.task-view-dirty { border: 1px solid #4a3f24; border-radius: 999px; padding: 3px 10px; background: #17150f; color: #f5cf79; font-size: .74rem; font-weight: 650; }
+.task-view-actions { display: inline-flex; align-items: center; gap: 6px; }
+.task-view-actions .icon-button svg { width: 17px; }
+
+@media (max-width: 760px) {
+  .task-home-segments { display: flex; width: 100%; }
+  .task-home-segments button { flex: 1; min-height: 44px; padding: 0 6px; }
+  .task-home-action, .task-home-state, .task-home-more .secondary-button { min-height: 44px; }
+  .task-home-actions { margin-left: 0; }
+  .task-home-toolbar .task-view-switch { order: 0; }
+  .task-home-lanes { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 86%; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; padding-bottom: 4px; }
+  .task-home-lane { scroll-snap-align: start; }
+  .task-home-view { padding-top: 8px; }
+  .task-view-header .task-board-heading { flex: 1 1 60%; }
+  .task-view-header .task-board-heading h2 { font-size: 1.1rem; }
+  .task-view-actions { width: 100%; justify-content: flex-end; }
+  .task-view-actions .icon-button { width: 44px; height: 44px; }
+}

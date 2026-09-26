@@ -1,0 +1,53 @@
+import { format, type TaskState } from "../../../shared/taskQuery";
+import { viewerTimeZone, type TaskNotify } from "../taskActions";
+import type { QueriedCard, TaskView } from "./homeApi";
+import { HomeResultsPane, type HomeDirectory } from "./HomeResultsPane";
+import { withHomeTerm, homeTermValues } from "./HomeFilterBar";
+import { STATE_LABELS } from "./homeResults";
+import { myWorkDefault, serverGroup, withAssigneeMe, type HomeQuery } from "./homeUrl";
+
+/** My work's state chips: one tap picks a preset; "Open" is the default (`state:todo,doing`). */
+export const STATE_PRESETS: Array<{ id: string; label: string; states: TaskState[] }> = [
+  { id: "open", label: "Open", states: ["todo", "doing"] },
+  { id: "todo", label: STATE_LABELS.todo, states: ["todo"] },
+  { id: "doing", label: STATE_LABELS.doing, states: ["doing"] },
+  { id: "done", label: STATE_LABELS.done, states: ["done"] },
+  { id: "all", label: "All", states: [] }
+];
+
+export function statePreset(query: HomeQuery) {
+  const values = [...homeTermValues(query.filter, "state")].sort().join(",");
+  return STATE_PRESETS.find((preset) => [...preset.states].sort().join(",") === values)?.id ?? null;
+}
+
+type MyWorkProps = {
+  userId: string;
+  query: HomeQuery | undefined;
+  onQuery: (next: HomeQuery, options: { push: boolean }) => void;
+  directory: HomeDirectory;
+  notify: TaskNotify;
+  onOpenCard: (card: QueriedCard) => void;
+  onOpenView: (view: TaskView) => void;
+};
+
+/**
+ * My work (§10.2): the built-in, unsaved view of cards assigned to me on every board I can read.
+ * It always carries `assignee:me` (Q11), so it never runs an unselective cross-board query; the
+ * default at 390 px is the list grouped by due bucket (Q16), with table and lanes one tap away.
+ */
+export function MyWork({ userId, query, onQuery, directory, notify, onOpenCard }: MyWorkProps) {
+  const effective: HomeQuery = { ...(query ?? myWorkDefault()), filter: withAssigneeMe((query ?? myWorkDefault()).filter) };
+  const preset = statePreset(effective);
+  const q = format(effective.filter);
+
+  return <>
+    <HomeResultsPane userId={userId} query={effective} onQuery={onQuery} directory={directory} notify={notify} onOpenCard={onOpenCard}
+      source={{ kind: "query", request: { q, sort: effective.sort, group: serverGroup(effective.group), tz: viewerTimeZone() } }}
+      lockedKeys={["assignee"]} hiddenKeys={["state"]}
+      above={<div className="task-home-states" role="radiogroup" aria-label="State">
+        {STATE_PRESETS.map((item) => <button key={item.id} type="button" role="radio" aria-checked={preset === item.id} className={`task-home-state${preset === item.id ? " active" : ""}`}
+          onClick={() => { if (preset !== item.id) onQuery({ ...effective, filter: withHomeTerm(effective.filter, "state", item.states) }, { push: true }); }}>{item.label}</button>)}
+      </div>}
+      emptyText={preset === "open" ? "Nothing open is assigned to you. Cards assigned to you on any board show here." : "No cards assigned to you match these filters."} />
+  </>;
+}

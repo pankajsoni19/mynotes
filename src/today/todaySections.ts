@@ -14,6 +14,8 @@ export type TodaySectionDef = {
   empty: string;
   /** Turns one server item into a row; `date` is Today's date in the viewer's zone. */
   row?: (item: Record<string, any>, date: string) => TodayRow;
+  /** Where "View all" goes instead of the section's href (Tasks: My work, 17C). */
+  viewAll?: string;
   /** The app the "View all" link opens, for its accessible name. */
   app: string;
 };
@@ -50,7 +52,7 @@ const binTypeLabel: Record<string, string> = { note: "Note", document: "File", c
  */
 export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
   tasksDue: { title: "Due soon", empty: "Nothing is due in the next seven days.", app: "Tasks", row: taskRow },
-  tasksMine: { title: "My tasks", empty: "No other open cards assigned to you or added by you.", app: "Tasks", row: taskRow },
+  tasksMine: { title: "My tasks", empty: "No other open cards assigned to you or added by you.", app: "Tasks", row: taskRow, viewAll: "/tasks/my" },
   notesRecent: {
     title: "Recent notes", empty: "No notes yet.", app: "Notes",
     row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: [item.is_owner ? null : item.owner_name, `Updated ${relativeTime(item.updated_at)}`].filter(Boolean).join(" · "), route: noteRoute(item.id) })

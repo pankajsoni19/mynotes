@@ -1,5 +1,6 @@
 // Pure URL routing for the SPA. No DOM access, so it can be unit tested directly.
 import { formatBoardSearch, isDefaultBoardQuery, parseBoardSearch, type BoardQuery } from "./tasks/boardUrl";
+import { formatHomeSearch, NEW_VIEW, parseMyWorkSearch, parseViewSearch, type TasksHome } from "./tasks/home/homeUrl";
 
 export type Route =
   | { app: "home" }
@@ -7,7 +8,8 @@ export type Route =
   | { app: "files"; folder: "all" | "shared" | string; documentId: string | null }
   // `query` (D112): a board's view, grouping, sort, and filters, carried in the URL query. It is
   // left out when it is the default, and never set without a board. `full` (13D): the card as a page.
-  | { app: "tasks"; boardId: string | null; cardId: string | null; full?: true; query?: BoardQuery }
+  // `home` (17C): without a board, the My work and Views segments of the Tasks home (/tasks is Boards).
+  | { app: "tasks"; boardId: string | null; cardId: string | null; full?: true; query?: BoardQuery; home?: TasksHome }
   | { app: "collections"; collectionId: string | null; viewId: string | null; rowId: string | null }
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "notifications" }
@@ -37,6 +39,8 @@ function parseCollection(segments: string[]): { folder: string; itemId: string |
 // kept on its cards' URLs too, so closing a card returns to the same view (D112).
 function parseTasks(segments: string[], search: string): Route {
   const [board, kind, card, view] = segments;
+  const home = parseTasksHome(segments, search);
+  if (home) return { app: "tasks", boardId: null, cardId: null, home };
   if (board === undefined || !isRouteId(board)) return { app: "tasks", boardId: null, cardId: null };
   const boardId = board.toLowerCase();
   const full = segments.length === 4 && view === "full";
@@ -44,6 +48,21 @@ function parseTasks(segments: string[], search: string): Route {
   const query = parseBoardSearch(search);
   const route: Route = cardId && full ? { app: "tasks", boardId, cardId, full: true } : { app: "tasks", boardId, cardId };
   return isDefaultBoardQuery(query) ? route : { ...route, query };
+}
+
+// The Tasks home segments (17C): /tasks/my, /tasks/views, /tasks/views/new, and /tasks/views/:id,
+// each with its query. Anything malformed after `views` opens the views list; after `my`, My work.
+function parseTasksHome(segments: string[], search: string): TasksHome | null {
+  const [section, id] = segments;
+  if (section === "my") {
+    const query = parseMyWorkSearch(search);
+    return formatHomeSearch({ section: "my", query }) ? { section: "my", query } : { section: "my" };
+  }
+  if (section !== "views") return null;
+  if (segments.length !== 2 || id === undefined || !(id === NEW_VIEW || isRouteId(id))) return { section: "views" };
+  const query = parseViewSearch(search);
+  const viewId = id.toLowerCase();
+  return query ? { section: "view", viewId, query } : { section: "view", viewId };
 }
 
 // /collections, /collections/:c, /collections/:c/view/:v, and /collections/:c/row/:r. Anything
@@ -118,6 +137,7 @@ export function formatRoute(route: Route): string {
   if (route.app === "notes") return formatCollection("/notes", route.folder, route.noteId);
   if (route.app === "files") return formatCollection("/files", route.folder, route.documentId);
   if (route.app === "tasks") {
+    if (!route.boardId && route.home) return formatTasksHome(route.home);
     if (!route.boardId || !isRouteId(route.boardId)) return "/tasks";
     const board = `/tasks/${route.boardId.toLowerCase()}`;
     const search = route.query ? formatBoardSearch(route.query) : "";
@@ -140,6 +160,12 @@ export function formatRoute(route: Route): string {
   if (route.app === "bin") return "/bin";
   if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : "/team";
   return "/";
+}
+
+function formatTasksHome(home: TasksHome) {
+  if (home.section === "my") return `/tasks/my${formatHomeSearch(home)}`;
+  if (home.section === "view" && (home.viewId === NEW_VIEW || isRouteId(home.viewId))) return `/tasks/views/${home.viewId.toLowerCase()}${formatHomeSearch(home)}`;
+  return "/tasks/views";
 }
 
 /** A location's route, with its query (the one way DOM callers should parse the current URL). */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { KanbanSquare, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert, Users } from "lucide-react";
 import { ConfirmDialog } from "../files/Dialog";
 import { relativeTime } from "../files/format";
@@ -13,11 +13,13 @@ type BoardListProps = {
   /** Opens a board by id (after Undo restores it). */
   onOpenBoard?: (boardId: string) => void;
   notify: TaskNotify;
+  /** Under the intro: the Tasks home segments (17C). */
+  header?: ReactNode;
 };
 
 type ListDialog = { kind: "new" } | { kind: "rename" | "share" | "delete"; boardId: string };
 
-export function BoardList({ onOpen, onOpenBoard, notify }: BoardListProps) {
+export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProps) {
   const [deleting, setDeleting] = useState(false);
   const [boards, setBoards] = useState<BoardSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -109,6 +111,7 @@ export function BoardList({ onOpen, onOpenBoard, notify }: BoardListProps) {
       </div>
       <button className="primary-button tasks-new-button" onClick={() => setDialog({ kind: "new" })} aria-haspopup="dialog"><Plus />New board</button>
     </div>
+    {header}
 
     {loadError && <div className="bin-state bin-error" role="alert">
       <span className="bin-state-icon"><TriangleAlert /></span>
