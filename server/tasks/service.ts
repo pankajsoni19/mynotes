@@ -48,7 +48,7 @@ export type BoardSummary = {
   updated_at: string;
 };
 
-export type ColumnSummary = Pick<ColumnRow, "id" | "board_id" | "name" | "position" | "is_done" | "created_at" | "updated_at">;
+export type ColumnSummary = Pick<ColumnRow, "id" | "board_id" | "name" | "position" | "is_done" | "wip_limit" | "created_at" | "updated_at">;
 
 const boardSummarySelect = `
   SELECT b.id, b.name, b.owner_id, u.display_name AS owner_name,
@@ -69,7 +69,7 @@ export function listBoards(userId: string) {
 }
 
 export function listColumns(boardId: string) {
-  return db.query("SELECT id, board_id, name, position, is_done, created_at, updated_at FROM board_columns WHERE board_id = ? ORDER BY position, id")
+  return db.query("SELECT id, board_id, name, position, is_done, wip_limit, created_at, updated_at FROM board_columns WHERE board_id = ? ORDER BY position, id")
     .all(boardId) as ColumnSummary[];
 }
 
@@ -273,7 +273,7 @@ function requireOwnedColumn(columnId: string, userId: string) {
   return found;
 }
 
-export async function patchColumn(userId: string, columnId: string, input: { name?: string; afterColumnId?: string | null; isDone?: boolean }) {
+export async function patchColumn(userId: string, columnId: string, input: { name?: string; afterColumnId?: string | null; isDone?: boolean; wipLimit?: number | null }) {
   const { board } = requireOwnedColumn(columnId, userId);
   return withBoardLock(board.id, () => {
     requireOwnedColumn(columnId, userId);
@@ -293,6 +293,11 @@ export async function patchColumn(userId: string, columnId: string, input: { nam
       if (input.isDone !== undefined) {
         db.query("UPDATE board_columns SET is_done = ?, updated_at = ? WHERE id = ?").run(input.isDone ? 1 : 0, timestamp, columnId);
         audit(userId, null, "task.column_done", { boardId: board.id, columnId, isDone: input.isDone });
+      }
+      if (input.wipLimit !== undefined) {
+        // A limit may be set below the current count; it only blocks cards coming in (D108).
+        db.query("UPDATE board_columns SET wip_limit = ?, updated_at = ? WHERE id = ?").run(input.wipLimit, timestamp, columnId);
+        audit(userId, null, "task.column_wip", { boardId: board.id, columnId, wipLimit: input.wipLimit });
       }
       if (plan) {
         applyRenumber("board_columns", plan.renumbered);
@@ -353,9 +358,23 @@ function stalePosition(columnId: string) {
 
 /** A column of this board (path and body ids are joined to their board, T39). */
 function requireBoardColumn(boardId: string, columnId: string) {
-  const column = db.query("SELECT id FROM board_columns WHERE id = ? AND board_id = ?").get(columnId, boardId) as { id: string } | null;
+  const column = db.query("SELECT id, wip_limit FROM board_columns WHERE id = ? AND board_id = ?").get(columnId, boardId) as { id: string; wip_limit: number | null } | null;
   if (!column) throw columnNotFound();
   return column;
+}
+
+/**
+ * 409 COLUMN_FULL when a card would come into a column at or over its WIP
+ * limit (D108, T96). Called under the board lock for creates and for moves
+ * from another column only: moving within a column, moving out, and Bin
+ * restore are always allowed. Every live card in the column counts.
+ */
+function requireColumnRoom(column: { id: string; wip_limit: number | null }) {
+  if (column.wip_limit === null) return;
+  const cardCount = liveCardsIn(column.id).length;
+  if (cardCount >= column.wip_limit) {
+    throw new TaskError(409, `This column is full (limit ${column.wip_limit})`, "COLUMN_FULL", { columnId: column.id, wipLimit: column.wip_limit, cardCount });
+  }
 }
 
 export function requireReadableCard(cardId: string, userId: string) {
@@ -374,12 +393,13 @@ export type CardCreateInput = {
 export function createCard(userId: string, boardId: string, input: CardCreateInput) {
   return withBoardLock(boardId, () => {
     requireReadableBoard(boardId, userId);
-    requireBoardColumn(boardId, input.columnId);
+    const column = requireBoardColumn(boardId, input.columnId);
     const assignees = input.assigneeIds === undefined ? undefined : uniqueAssignees(input.assigneeIds);
     for (const assigneeId of assignees ?? []) requireAssignableUser(boardId, assigneeId);
     const due = requireDue({ due_on: null, due_time: null, due_tz: null }, input).value;
     const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(boardId) as { count: number }).count;
     if (live >= LIMITS.liveCardsPerBoard) throw limitReached(`A board can have up to ${LIMITS.liveCardsPerBoard} cards`);
+    requireColumnRoom(column);
     const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
     if (!plan) throw stalePosition(input.columnId);
     const id = crypto.randomUUID();
@@ -528,8 +548,9 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
 export async function moveCard(userId: string, cardId: string, input: { columnId: string; afterCardId?: string | null }) {
   const { board } = requireReadableCard(cardId, userId);
   return withBoardLock(board.id, () => {
-    requireReadableCard(cardId, userId);
-    requireBoardColumn(board.id, input.columnId);
+    const { card } = requireReadableCard(cardId, userId);
+    const column = requireBoardColumn(board.id, input.columnId);
+    if (card.column_id !== column.id) requireColumnRoom(column);
     if (input.afterCardId === cardId) throw stalePosition(input.columnId);
     const siblings = liveCardsIn(input.columnId).filter((card) => card.id !== cardId);
     const plan = planInsert(siblings, input.afterCardId);

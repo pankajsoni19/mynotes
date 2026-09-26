@@ -91,9 +91,10 @@ describe("multiple card assignees (D102, D103)", () => {
     // Re-adding them after removal is refused.
     expect((await call(owner, "PATCH", `/cards/${card.id}`, { assigneeIds: [owner.userId], revision: 3 })).status).toBe(200);
     expect((await call(owner, "PATCH", `/cards/${card.id}`, { assigneeIds: [owner.userId, member.userId], revision: 4 })).body.code).toBe("ASSIGNEE_NOT_MEMBER");
-    // A disabled user reads as a former member too.
+    // A disabled user reads as a former member too, even as the owner.
     db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), owner.userId);
-    expect((db.query("SELECT COUNT(*) AS count FROM card_assignees WHERE card_id = ?").get(card.id) as { count: number }).count).toBe(1);
+    const { assigneesForCard } = await import("../server/tasks/assignees");
+    expect(assigneesForCard(card.id)).toEqual([{ id: owner.userId, display_name: "Access owner", can_read: 0 }]);
     db.query("UPDATE users SET disabled_at = NULL WHERE id = ?").run(owner.userId);
   });
 
@@ -218,5 +219,59 @@ describe("optional due time with a time zone (D100, D101, T94)", () => {
     // A timed card cannot lose its date while keeping the time.
     await call(owner, "PATCH", `/cards/${card.id}`, { dueOn: "2026-10-01", dueTime: "10:00", dueTz: "UTC", revision: 1 });
     expect((await call(owner, "PATCH", `/cards/${card.id}`, { dueOn: null, dueTime: "10:00", dueTz: "UTC", revision: 2 })).status).toBe(400);
+  });
+});
+
+describe("owner-set WIP limits (D108, T96)", () => {
+  test("only the owner sets a limit of 1–1000 or null; columns carry wip_limit", async () => {
+    const { owner, member, stranger, boardId, columns } = await setup("WIP set");
+    expect((await call(owner, "GET", `/boards/${boardId}`)).body.columns.map((column: { wip_limit: number | null }) => column.wip_limit)).toEqual([null, null, null]);
+    expect((await call(member, "PATCH", `/columns/${columns[1].id}`, { wipLimit: 2 })).body.code).toBe("OWNER_ONLY");
+    expect((await call(stranger, "PATCH", `/columns/${columns[1].id}`, { wipLimit: 2 })).status).toBe(404);
+    for (const wipLimit of [0, 1001, 2.5, "2"]) expect((await call(owner, "PATCH", `/columns/${columns[1].id}`, { wipLimit })).status).toBe(400);
+    const set = await call(owner, "PATCH", `/columns/${columns[1].id}`, { wipLimit: 2 });
+    expect(set.status).toBe(200);
+    expect(set.body.column.wip_limit).toBe(2);
+    expect(lastAudit(owner.userId, "task.column_wip")).toEqual({ boardId, columnId: columns[1].id, wipLimit: 2 });
+    expect((await call(member, "GET", `/boards/${boardId}`)).body.columns[1].wip_limit).toBe(2);
+    expect((await call(owner, "PATCH", `/columns/${columns[1].id}`, { wipLimit: null })).body.column.wip_limit).toBeNull();
+  });
+
+  test("create and cross-column moves into a full column get 409 COLUMN_FULL; within, out, and restore still work", async () => {
+    const { owner, member, boardId, columns, card } = await setup("WIP enforce");
+    const [todo, doing] = columns;
+    const second = (await call(member, "POST", `/boards/${boardId}/cards`, { columnId: todo.id, title: "Second" })).body.card as { id: string };
+    // A limit below the current count is allowed.
+    expect((await call(owner, "PATCH", `/columns/${todo.id}`, { wipLimit: 1 })).status).toBe(200);
+    const full = await call(member, "POST", `/boards/${boardId}/cards`, { columnId: todo.id, title: "Third" });
+    expect(full).toMatchObject({ status: 409, body: { code: "COLUMN_FULL", columnId: todo.id, wipLimit: 1, cardCount: 2 } });
+    // Within the column: allowed, even over the limit.
+    expect((await call(member, "POST", `/cards/${second.id}/move`, { columnId: todo.id, afterCardId: null })).status).toBe(200);
+    // Out of the column: allowed.
+    expect((await call(member, "POST", `/cards/${second.id}/move`, { columnId: doing.id, afterCardId: null })).status).toBe(200);
+    // Back in while it is still at the limit: refused.
+    expect((await call(member, "POST", `/cards/${second.id}/move`, { columnId: todo.id, afterCardId: null })).body).toMatchObject({ code: "COLUMN_FULL", cardCount: 1 });
+    // Bin restore ignores the limit.
+    expect((await call(member, "DELETE", `/cards/${card.id}`)).status).toBe(200);
+    expect((await call(member, "POST", `/cards/${second.id}/move`, { columnId: todo.id, afterCardId: null })).status).toBe(200);
+    const restored = await request(`/bin/card/${card.id}/restore`, { method: "POST", body: "{}" }, member);
+    expect(restored.status).toBe(200);
+    expect(((await call(owner, "GET", `/boards/${boardId}`)).body.cards as Array<{ column_id: string }>).filter((item) => item.column_id === todo.id)).toHaveLength(2);
+    // Removing the limit lets cards in again.
+    expect((await call(owner, "PATCH", `/columns/${todo.id}`, { wipLimit: null })).status).toBe(200);
+    expect((await call(member, "POST", `/boards/${boardId}/cards`, { columnId: todo.id, title: "Third" })).status).toBe(201);
+  });
+
+  test("parallel creates and moves stay within the limit (board lock)", async () => {
+    const { owner, member, boardId, columns, card } = await setup("WIP race");
+    const [, doing] = columns;
+    expect((await call(owner, "PATCH", `/columns/${doing.id}`, { wipLimit: 3 })).status).toBe(200);
+    const results = await Promise.all([
+      ...Array.from({ length: 5 }, (_, index) => call(index % 2 ? owner : member, "POST", `/boards/${boardId}/cards`, { columnId: doing.id, title: `Race ${index}` })),
+      call(member, "POST", `/cards/${card.id}/move`, { columnId: doing.id, afterCardId: null })
+    ]);
+    expect(results.filter((result) => result.status === 409).every((result) => result.body.code === "COLUMN_FULL")).toBe(true);
+    expect(results.filter((result) => result.status < 300)).toHaveLength(3);
+    expect((db.query("SELECT COUNT(*) AS count FROM cards WHERE column_id = ? AND deleted_at IS NULL").get(doing.id) as { count: number }).count).toBe(3);
   });
 });

@@ -36,8 +36,15 @@ export const boardSharingSchema = z.object({
   userIds: z.array(uuid).max(100).default([])
 }).strict();
 export const columnCreateSchema = z.object({ name: label(60), afterColumnId: uuid.nullable().optional() }).strict();
-export const columnPatchSchema = z.object({ name: label(60).optional(), afterColumnId: uuid.nullable().optional(), isDone: z.boolean().optional() }).strict()
-  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined || value.isDone !== undefined, "Provide a name, an afterColumnId, or isDone");
+export const columnPatchSchema = z.object({
+  name: label(60).optional(),
+  afterColumnId: uuid.nullable().optional(),
+  isDone: z.boolean().optional(),
+  /** WIP limit (D108): 1–1000 or null for none. */
+  wipLimit: z.number().int().min(1).max(1000).nullable().optional()
+}).strict()
+  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined || value.isDone !== undefined || value.wipLimit !== undefined,
+    "Provide a name, an afterColumnId, isDone, or wipLimit");
 
 /** A real calendar date `YYYY-MM-DD` between 1900 and 2999 (T71). */
 export function isCalendarDate(value: string) {

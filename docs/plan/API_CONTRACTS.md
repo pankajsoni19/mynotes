@@ -302,7 +302,12 @@ type BoardSummary = {
   card_count: number;                // live cards
   created_at: string; updated_at: string;
 };
-type BoardColumn = { id: string; board_id: string; name: string /* 1–60 */; position: number; created_at: string; updated_at: string };
+type BoardColumn = {
+  id: string; board_id: string; name: string /* 1–60 */; position: number;
+  is_done: 0 | 1;                    // migration 011
+  wip_limit: number | null;          // Wave 13 (D108): 1–1000, or null for no limit
+  created_at: string; updated_at: string;
+};
 ```
 
 Positions are computed by the server (D40) and never accepted from clients: a new item goes to the midpoint of its neighbours, to last + 1024 at the bottom, or to half the first position at the top. When a gap would drop below 1e-6, the whole column (or the board's column list) is renumbered to 1024, 2048, … and the response says `renormalized: true`. Ordering changes run under the `board:<id>` lock.
@@ -333,10 +338,12 @@ Same rules as folder sharing: the owner cannot be a recipient (400), `selected` 
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `POST /boards/:b/columns { name, afterColumnId? }` | owner | 201 `{ column, columns }`. Omitted `afterColumnId` appends; `null` puts the column first. | 400, 403, 404 (board, or an anchor not on this board), 409 `LIMIT_REACHED` |
-| `PATCH /columns/:c { name?, afterColumnId?, isDone? }` | owner | 200 `{ column, columns, renormalized? }`. Columns carry `is_done: 0 \| 1` (migration 011); a new board's Done column starts at 1. | 400 (no field, or after itself), 403, 404 |
+| `PATCH /columns/:c { name?, afterColumnId?, isDone?, wipLimit? }` | owner | 200 `{ column, columns, renormalized? }`. Columns carry `is_done: 0 \| 1` (migration 011); a new board's Done column starts at 1. `wipLimit` is an integer 1–1000 or `null` (Wave 13, D108) and may be set below the current count. | 400 (no field, after itself, or a bad limit), 403, 404 |
 | `DELETE /columns/:c` | owner | 200 `{ ok: true, columns }` | 403, 404, 409 `COLUMN_NOT_EMPTY` (with `cardCount`) or `LAST_COLUMN` |
 
 Binned cards do not block deleting their column; they keep `column_id = NULL` and restore to the first column.
+
+**WIP limits (Wave 13, D108, T96).** A hard block, checked under the `board:<id>` lock for REST and MCP: creating a card in a column, or moving one in **from another column**, returns 409 `{ error, code: "COLUMN_FULL", columnId, wipLimit, cardCount }` when the column already holds `wipLimit` or more live cards. Moving within a column and moving out are always allowed, and a Bin restore never fails because of a limit (it may put the column over it). Audit: `task.column_wip { boardId, columnId, wipLimit }`.
 
 ### Cards
 
@@ -368,10 +375,10 @@ type CardDetail = CardSummary & { description: string };  // Markdown, at most 6
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `GET /boards/:b/readers?q=&limit=` | reader | 200 `{ users: { id, displayName }[], truncated }`: everyone who can open the board (owner plus members, or every enabled user on an `all_users` board), display names only, for the assignee picker. Without `q`: at most 200 by name. With `q` (1–64 characters): a case-insensitive `instr` match on the display name (no wildcards), at most `limit` (1–50, default 20; `limit` needs `q`) | 400, 404, 429 `RATE_LIMITED` with `Retry-After` (60 a minute per user, T92) |
-| `POST /boards/:b/cards { columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. Assignees are written in the same transaction. | 400 (including `ASSIGNEE_NOT_MEMBER`), 404 (board, or a column not on this board), 409 `STALE_POSITION` or `LIMIT_REACHED` |
+| `POST /boards/:b/cards { columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. Assignees are written in the same transaction. | 400 (including `ASSIGNEE_NOT_MEMBER`), 404 (board, or a column not on this board), 409 `COLUMN_FULL`, `STALE_POSITION`, or `LIMIT_REACHED` |
 | `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: CardAttachment[] }`: the newest 50 comments in chronological order, and every live attachment | 404 |
 | `PATCH /cards/:k { title?, description?, dueOn?, dueTime?, dueTz?, assigneeIds?, assigneeId?, revision }` | reader | 200 `{ card }` with `revision + 1`, exactly once however many fields change (one transaction). `dueOn` is a real date `YYYY-MM-DD` (1900–2999) or `null`; `dueTime`/`dueTz` follow the due-time rules above; `assigneeIds` (≤ 20 after deduplication) replaces the whole set and `[]` clears it; the legacy `assigneeId` (a user or `null`) means `[id]` or `[]` (D103); omitted fields are unchanged | 400 (including `ASSIGNEE_NOT_MEMBER` when a new assignee is disabled or cannot read the board, and `assigneeId` sent together with `assigneeIds`), 404, 409 `{ code: "CARD_CHANGED", card }` (the current card, every field) when `revision` is not the stored one |
-| `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION` |
+| `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION`, or `COLUMN_FULL` when moving in from another column |
 | `DELETE /cards/:k` | reader | 200 `{ ok: true, purgeAfter }`: the card moves to the Bin and keeps its column | 404 |
 
 - **Stale positions.** `afterCardId` must be another live card in the target column. Otherwise (binned, in another column or board, the moved card itself, or unknown) the response is 409 `{ error, code: "STALE_POSITION", columnId, order: string[] }`, where `order` is the target column's live card ids in their current order.
@@ -420,7 +427,7 @@ type CardAttachment = {
 - **Lifecycle (director review §7).** Unlinking never deletes the file directly. When a document loses its last link (unlink, comment deleted, card or board purged), it moves to its uploader's Bin with `deleted_by` = the actor, and purges 30 days later. Binning a card keeps its links, so restoring the card brings its attachments back.
 - Inline images in a description use the same content URL, `/api/files/:id/content?disposition=inline`.
 
-**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.card_create { assigneesAdded? }`, `task.card_update { dueOn?, dueTime?: "set" | "cleared", assigneeId?, assigneesAdded?, assigneesRemoved? }` (counts, not ids), `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
+**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.column_wip { wipLimit }`, `task.card_create { assigneesAdded? }`, `task.card_update { dueOn?, dueTime?: "set" | "cleared", assigneeId?, assigneesAdded?, assigneesRemoved? }` (counts, not ids), `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
 ## Today (Wave 10)
 
 `GET /api/today?tz=<IANA>&sections=<a,b>?` returns 200 `{ generatedAt, date, sections }`. `date` is today in `tz`. `sections` maps each installed section, in order, to `{ items, more, href }` (at most ten items; `more` when there are more; `href` is the owning app's list). A section whose provider failed is `{ items: [], more: false, href, error }`; the others still load. Sections of modules that are not installed are absent. There are no counts, bodies, or caching. `sections=` limits the response to those names (the per-section Retry).
