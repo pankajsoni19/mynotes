@@ -139,7 +139,8 @@ describe("search index sync", () => {
     const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "searchBackfillProbe.ts")], { stdout: "pipe", stderr: "pipe" });
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     const result = JSON.parse(output) as Record<string, unknown>;
-    expect(registeredMigrationIds).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    // 015 (Wave 13B) may be missing while the Wave 13 sub-waves merge in any order.
+    expect(registeredMigrationIds.filter((id) => id !== 15)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]);
     expect(result).toMatchObject({
       migrations: [...registeredMigrationIds],
       rows: ["binned:published", "both:draft", "both:published", "draftOnly:draft", "published:published"],

@@ -156,6 +156,14 @@ Rows T72, T73, and T75 of [WAVES_10-12.md](WAVES_10-12.md) §5 (T74 is under Tod
 | T73 | **MCP overwrites or vandalizes rows and events** | Create and update only: no delete, exdate, share, feed, schema, view, attachment, or import tools. Writes need the editor role (`READ_ONLY` for viewers), updates need `baseRevision` (`EVENT_CHANGED`, `ROW_CHANGED` with `currentRevision`), and row updates merge instead of replacing. Every write keeps the previous values for one-step undo, sets `updated_via_key_id` (the event view and row panel say "Changed by the MCP key <name>" and offer Undo), and is audited with `{ via: "mcp", keyId }`. Reminders are always the key owner's own. Daily caps per key: 200 event writes, 100 reminders, 500 row writes (per user across keys: 400, 200, 1000), on top of 120 calls and 30 writes a minute. Revoking the key stops it at once. | Done (Waves 11–12) |
 | T75 | **Prompt injection through rows or events returned to agents** | As T35: rows and events are returned as data (event descriptions as stored plain text, rows keyed by field name, note links as titles or `restricted`, attachments as names only); writes are opt-in scopes, reversible, audited, and capped. The server cannot tell instructions from data. | Accepted (documented) |
 
+### Task cards, views, and Modules (Wave 13)
+
+Rows from [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §6 (T90–T102). Each sub-wave adds its own rows here; 13F (Modules) owns T97.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T97 | **The Modules toggle mistaken for access control** | Settings → Modules only hides UI: the launcher, header items, routes (redirected to Home with a hint), and Today sections. Routes, ACLs, MCP tools, calendar feeds, reminders, and push never read `user_preferences`, and MCP has no tool to change it. `PUT /api/preferences` accepts only known module ids (unique, at most one per module, far below the 512-byte CHECK in migration 016), a strict body, and a revision compare-and-swap (`PREFERENCES_CHANGED`); it needs a session, CSRF, and the TOTP gate, and each write is audited with module ids only. `tests/preferences.test.ts` shows that a disabled module's API still works for its owner and still returns 404 to a stranger. The docs say a hidden module is not a security boundary. | Done (Wave 13F) |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

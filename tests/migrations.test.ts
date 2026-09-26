@@ -21,7 +21,8 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  // 015 (task card UX, Wave 13B) merges independently of 016, so it may be missing on this branch.
+  expect(ids.filter((id) => id !== 15)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]);
 }
 
 function openDb() {
@@ -306,6 +307,36 @@ describe("database migrations", () => {
     expect((db.query("SELECT COUNT(*) AS count FROM collection_rows").get() as { count: number }).count).toBe(0);
     expect((db.query("SELECT COUNT(*) AS count FROM collection_row_search").get() as { count: number }).count).toBe(0);
     expect((db.query("SELECT COUNT(*) AS count FROM collection_row_fts").get() as { count: number }).count).toBe(0);
+    db.close();
+  });
+
+  test("migration 016 adds user preferences with defaults, a bounded JSON array CHECK, and a user cascade", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    // A 014-shaped database: every released migration, then 016 on top without a backfill.
+    for (const migration of [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2026-01-02T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u2', 'other@example.test', 'Other', 'x', ?)").run(old);
+    runMigrations(db);
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 16").get() as { name: string }).name).toBe("user_preferences");
+    expect((db.query("SELECT COUNT(*) AS count FROM user_preferences").get() as { count: number }).count).toBe(0);
+
+    db.query("INSERT INTO user_preferences (user_id, updated_at) VALUES ('u1', ?)").run(old);
+    expect(db.query("SELECT disabled_modules, revision FROM user_preferences WHERE user_id = 'u1'").get()).toEqual({ disabled_modules: "[]", revision: 1 });
+    const insert = db.query("INSERT INTO user_preferences (user_id, disabled_modules, updated_at) VALUES ('u2', ?, ?)");
+    expect(() => insert.run("not json", old)).toThrow();
+    expect(() => insert.run('{"a":1}', old)).toThrow();
+    expect(() => insert.run(JSON.stringify(["x".repeat(520)]), old)).toThrow();
+    expect(() => db.query("INSERT INTO user_preferences (user_id, updated_at) VALUES ('missing', ?)").run(old)).toThrow();
+    insert.run('["calendar"]', old);
+    db.query("DELETE FROM users WHERE id = 'u1'").run();
+    expect((db.query("SELECT user_id FROM user_preferences").all() as Array<{ user_id: string }>).map((row) => row.user_id)).toEqual(["u2"]);
     db.close();
   });
 });

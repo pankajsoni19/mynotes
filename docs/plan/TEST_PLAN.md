@@ -390,6 +390,24 @@ Manual QA (desktop and 390×844):
 - [ ] Calendars → Subscribe links: create a Busy link, copy it once (the dialog never shows it again), subscribe from a phone calendar on the tailnet HTTPS origin, and see times titled "Busy"; revoke it and the phone's next refresh fails. The dialog is usable at 390 px and Back closes it.
 - [ ] An MCP client with `calendar:write` creates and moves an event; the event view says "Changed by the MCP key <name>", and Undo last change restores it.
 
+## Wave 13F: Modules
+
+Migration ids may skip 015 while the Wave 13 sub-waves merge in any order; `tests/migrations.test.ts`, `tests/api.test.ts`, and `tests/searchIndex.test.ts` pin 1–14 and 16 and allow 15.
+
+- [x] `tests/migrations.test.ts`: 016 on a database at migration 10 with users and no backfill; the defaults (`[]`, revision 1); the CHECK refuses non-JSON, a JSON object, and a value over 512 bytes; the user foreign key and its cascade.
+- [x] `tests/preferences.test.ts` (API): defaults for a user without a row (revision 0) in both `GET /api/preferences` and `/api/auth/me`; PUT stores ids in registry order and bumps the revision by exactly one; `/api/auth/me` includes the saved value; a stale revision gets 409 `PREFERENCES_CHANGED` with the current value, and of two parallel writers exactly one wins; unknown ids (`home`, `settings`, wrong case), duplicates, too many ids, a missing or negative revision, and extra keys get 400 and change nothing; per-user rows; a session and CSRF are required; retired ids are dropped on read; a disabled module's API still works for its owner and still returns 404 to a stranger (T97).
+- [x] `tests/modules.test.tsx` (registry and Settings): the client and server module ids match, including the reserved `team`; Settings lists every shipped module and not Team; every Today section belongs to exactly one module; unknown ids, duplicates, and non-arrays are ignored; toggles keep registry order; malformed server preferences mean every module is on; each row is a labelled `role="switch"`, on by default, off when disabled; the Bin and Notifications help says what keeps working; a conflict is a status and a failure an alert.
+- [x] `tests/modules.test.tsx` (gating, client only): `TODAY_APPS` is derived from the registry and the launcher on Home drops modules that are off; Bin off removes the Bin button from Home and from `AccountActions` even when an app passes `onBin`; the Today sections of modules that are off are neither requested nor shown; `hiddenModuleForApp` gates every route of a hidden module (Calendar event and month URLs, Tasks, Bin, Notifications, Notes) and never Home, whatever ids are stored.
+
+Manual QA (desktop and 390×844, a throwaway account):
+
+- [x] Settings → Modules lists eight switches, all on; turning Calendar off saves it on the server and removes it from the Home launcher and Today's Upcoming at once.
+- [x] With Calendar off, a deep link to `/calendar/month/…` and Back into an earlier `/calendar` entry both land on Home with "Calendar is turned off. Turn it on in Settings → Modules.", and no Calendar view renders; **Turn on in Settings** opens Settings on Modules; turning it back on clears the hint, restores the tile, and `/calendar` opens again.
+- [x] Browser Back with Settings open only closes Settings and keeps the URL, at 390 px and on desktop.
+- [x] With Bin, Notifications, and Search off (saved from another client), Home has no Bin button, bell, or Leaving the Bin soon; Notes has no search box and no Bin in its footer; `/bin` goes Home with the hint; turning them back on restores them.
+- [ ] A second browser signed in to the same account picks up the change when its tab becomes visible again.
+- [ ] With Bin off, deleting a note still moves it to the Bin; with Notifications off, a reminder still arrives as a push on a device with push on; with Search off, Ctrl+K does nothing in Notes. The Bin button is also gone from the Tasks, Collections, and Files headers.
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.

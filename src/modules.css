@@ -1,0 +1,34 @@
+/* Settings → Modules (D92) and the hint shown when a hidden module's route is opened. */
+.modules-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.modules-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: #17171a; }
+.modules-row-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: #29251b; color: var(--yellow); }
+.modules-row.off .modules-row-icon { background: #1f1f23; color: var(--muted); }
+.modules-row-icon svg { width: 18px; }
+.modules-row-text { display: grid; gap: 3px; min-width: 0; }
+.modules-row-text strong { font-size: .95rem; }
+.modules-row-text small { color: #8b8b92; font-size: .8rem; line-height: 1.45; }
+.modules-switch { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 22px; padding: 0 6px; background: transparent; color: #c9c9ce; font-size: .8rem; cursor: pointer; }
+.modules-switch-track { position: relative; width: 44px; height: 26px; flex: none; border-radius: 13px; background: #34343a; transition: background-color .15s ease; }
+.modules-switch-thumb { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #d6d6db; transition: transform .15s ease; }
+.modules-switch[aria-checked="true"] .modules-switch-track { background: var(--yellow); }
+.modules-switch[aria-checked="true"] .modules-switch-thumb { transform: translateX(18px); background: #2a210e; }
+.modules-switch-state { min-width: 2em; text-align: left; }
+.modules-notice { margin: 0 0 14px; padding: 10px 12px; border: 1px solid #624c21; border-radius: 10px; background: #282116; color: #f3ce79; font-size: .84rem; }
+
+.module-hint { position: fixed; z-index: 60; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border: 1px solid #36363b; border-radius: 12px; background: #1b1b1e; color: #e4e4e7; font-size: .86rem; box-shadow: 0 16px 50px rgb(0 0 0 / 50%); }
+.module-hint p { margin: 0; }
+.module-hint button { min-height: 44px; flex: none; }
+.module-hint .secondary-button { padding: 0 14px; border-radius: 10px; }
+.module-hint .icon-button { width: 44px; }
+
+@media (max-width: 760px) {
+  .modules-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 10px 10px 10px 12px; }
+  .modules-row-icon { display: none; }
+  .modules-switch-state { display: none; }
+  .module-hint { bottom: calc(76px + env(safe-area-inset-bottom)); flex-wrap: wrap; width: calc(100vw - 32px); }
+  .module-hint p { flex: 1 1 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modules-switch-track, .modules-switch-thumb { transition: none; }
+}

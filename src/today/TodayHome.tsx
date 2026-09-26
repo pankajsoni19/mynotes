@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { ArrowRight, RotateCcw, RotateCw, SlidersHorizontal, Sparkles } from "lucide-react";
 import { AccountActions, useBinCount } from "../AppShell";
 import type { AppSection } from "../appShellNavigation";
+import { ApiError } from "../api";
+import { hiddenTodaySections, isModuleEnabled, useDisabledModules } from "../modules";
 import { formatRoute, type Route } from "../router";
 import { CustomizeSections } from "./CustomizeSections";
 import { getToday, type TodayResponse, type TodaySection } from "./todayApi";
-import { TODAY_APPS } from "./todayApps";
+import { enabledTodayApps } from "./todayApps";
 import { readHiddenSections, toggleHidden, writeHiddenSections } from "./todayPreferences";
 import { DEFAULT_SECTION_ORDER, storageText, TODAY_SECTIONS, viewAllRoute, type StorageUsage } from "./todaySections";
 import "./today.css";
@@ -90,8 +92,34 @@ function SectionView({ name, section, date, busy, retrying, onRetry, onOpenRoute
  * installed apps, and the Today sections. Every item is a real link routed
  * through `navigate`, so Back from it returns here.
  */
+/** Today's date in the browser, for the heading when no section is requested at all. */
+function localIsoDate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Loads Today without the sections of modules that are off (D92), so their providers never run.
+ * An older server that does not know one of the names answers 400; then everything is loaded and
+ * the view filters instead.
+ */
+async function loadVisibleToday(moduleHidden: readonly string[]): Promise<TodayResponse> {
+  if (moduleHidden.length === 0) return getToday();
+  const wanted = DEFAULT_SECTION_ORDER.filter((name) => !moduleHidden.includes(name));
+  if (wanted.length === 0) return { generatedAt: new Date().toISOString(), date: localIsoDate(), sections: {} };
+  try {
+    return await getToday(wanted);
+  } catch (reason) {
+    if (reason instanceof ApiError && reason.status === 400) return getToday();
+    throw reason;
+  }
+}
+
 export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings, onSignOut }: TodayHomeProps) {
-  const binCount = useBinCount();
+  const disabledModules = useDisabledModules();
+  const binEnabled = isModuleEnabled(disabledModules, "bin");
+  const moduleHiddenKey = hiddenTodaySections(disabledModules).join(",");
+  const binCount = useBinCount(binEnabled);
   const [data, setData] = useState<TodayResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -108,7 +136,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
     setRefreshing(true);
     if (announce) setAnnouncement("Refreshing…");
     try {
-      const next = await getToday();
+      const next = await loadVisibleToday(moduleHiddenKey ? moduleHiddenKey.split(",") : []);
       if (generation !== generationRef.current) return;
       setData(next);
       setLoadError(null);
@@ -124,7 +152,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
     } finally {
       if (generation === generationRef.current) setRefreshing(false);
     }
-  }, []);
+  }, [moduleHiddenKey]);
 
   useEffect(() => {
     void load(false);
@@ -166,15 +194,18 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
   }
 
   const initialLoading = data === null && loadError === null;
-  // The sections the server returned, in its order, that this client knows how to show.
-  const available = data ? Object.keys(data.sections).filter((name) => TODAY_SECTIONS[name]) : DEFAULT_SECTION_ORDER.filter((name) => name !== "agentDrafts");
+  // The sections the server returned, in its order, that this client knows how to show, without
+  // those of modules that are turned off (they are not offered in Customize either).
+  const moduleHidden = moduleHiddenKey ? moduleHiddenKey.split(",") : [];
+  const available = (data ? Object.keys(data.sections).filter((name) => TODAY_SECTIONS[name]) : DEFAULT_SECTION_ORDER.filter((name) => name !== "agentDrafts"))
+    .filter((name) => !moduleHidden.includes(name));
   const names = available.filter((name) => !hidden.includes(name));
   const firstName = displayName.split(" ")[0] || displayName;
 
   return <main className="app-home today-home">
     <header className="app-home-header">
       <div className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Home</strong></span></div>
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={() => onOpen("bin")} binCount={binCount} />
+      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={binEnabled ? () => onOpen("bin") : undefined} binCount={binCount} />
     </header>
     <div className="today-content">
       <section className="today-intro" aria-labelledby="app-home-title">
@@ -182,7 +213,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
         <h1 id="app-home-title">Good to see you, {firstName}.</h1>
         <nav className="today-launcher" aria-label="Apps">
           <ul>
-            {TODAY_APPS.map(({ section, label, href, icon: Icon }) => <li key={section}>
+            {enabledTodayApps(disabledModules).map(({ section, label, href, icon: Icon }) => <li key={section}>
               <a className={`today-app today-app-${section}`} href={href} onClick={(event) => {
                 if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
                 event.preventDefault();
@@ -207,7 +238,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
           <button className="primary-button" onClick={() => { void load(true); }} disabled={refreshing}><RotateCcw />Try again</button>
         </div>
         : names.length === 0
-          ? <p className="today-all-hidden">Every section is hidden. Use Customize sections to show them again.</p>
+          ? <p className="today-all-hidden">{available.length === 0 ? "Every Today section belongs to a module that is turned off. Turn modules on in Settings → Modules." : "Every section is hidden. Use Customize sections to show them again."}</p>
           : <div className="today-grid" aria-busy={initialLoading || undefined}>
             {names.map((name) => <SectionView key={name} name={name} section={data?.sections[name]} date={data?.date ?? ""} busy={initialLoading} retrying={retrying.has(name)} onRetry={() => { void retrySection(name); }} onOpenRoute={onOpenRoute} />)}
           </div>}

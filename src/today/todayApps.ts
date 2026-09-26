@@ -1,17 +1,16 @@
-import { Archive, CalendarDays, FileText, KanbanSquare, Table2, type LucideIcon } from "lucide-react";
-import type { AppSection } from "../appShellNavigation";
+import type { LucideIcon } from "lucide-react";
+import { isModuleEnabled, MODULES, type LauncherSection, type ModuleId } from "../modules";
 
-export type TodayApp = { section: Exclude<AppSection, "home" | "bin" | "notifications">; label: string; href: string; icon: LucideIcon };
+export type TodayApp = { section: LauncherSection; label: string; href: string; icon: LucideIcon; module: ModuleId };
 
 /**
- * The launcher row on Today (D50). Each installed app adds its entry here
- * (Calendar included). The Bin and notifications are not launcher items:
- * it stays in the account row and in each app's sidebar footer.
+ * The launcher row on Today (D50), derived from the module registry (src/modules.ts, D92): each
+ * module with a `launcher` adds its tile there. The Bin and notifications are not launcher items:
+ * they stay in the account row and in each app's sidebar footer.
  */
-export const TODAY_APPS: TodayApp[] = [
-  { section: "notes", label: "Notes", href: "/notes", icon: Archive },
-  { section: "files", label: "Files", href: "/files", icon: FileText },
-  { section: "tasks", label: "Tasks", href: "/tasks", icon: KanbanSquare },
-  { section: "collections", label: "Collections", href: "/collections", icon: Table2 },
-  { section: "calendar", label: "Calendar", href: "/calendar", icon: CalendarDays }
-];
+export const TODAY_APPS: TodayApp[] = MODULES.flatMap((module) => module.launcher
+  ? [{ section: module.launcher.section, label: module.label, href: module.launcher.href, icon: module.icon, module: module.id }]
+  : []);
+
+/** The launcher tiles of modules that are on. */
+export const enabledTodayApps = (disabled: readonly ModuleId[]) => TODAY_APPS.filter((app) => isModuleEnabled(disabled, app.module));

@@ -19,6 +19,7 @@ import {
   History,
   Info,
   KeyRound,
+  LayoutGrid,
   Lock,
   LogOut,
   Menu,
@@ -67,9 +68,16 @@ import { SearchResults, searchListId, searchOptionId } from "./search/SearchResu
 import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
+import { ModulesSettings } from "./ModulesSettings";
+import { hiddenModuleForApp, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
+import { usePreferences, type PreferencesStatus } from "./usePreferences";
+import { useHistoryDialogGuard } from "./tasks/useHistoryDialogGuard";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState };
+// `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown };
+type SettingsSection = "security" | "modules" | "mcp" | "notifications" | "about";
+type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 
@@ -262,8 +270,8 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   </section>;
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
-  const [section, setSection] = useState<"security" | "mcp" | "notifications" | "about">("security");
+function SettingsDialog({ session, onClose, onSecurityChanged, modules, initialSection = "security" }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; modules: ModulesSettingsProps; initialSection?: SettingsSection }) {
+  const [section, setSection] = useState<SettingsSection>(initialSection);
   const [appInfo, setAppInfo] = useState({ version: "0.7.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
@@ -279,7 +287,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
     onClose();
   }, [mcpKeyPending, onClose]);
 
-  function selectSection(next: "security" | "mcp" | "notifications" | "about") {
+  function selectSection(next: SettingsSection) {
     if (next !== "mcp" && mcpKeyPending && !window.confirm("This API key is shown only once. Leave this section without saving it?")) return;
     setSection(next);
   }
@@ -297,6 +305,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
   }, [guardedClose, state.setupRequired]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
+  // D69: browser Back or Forward while Settings is open only closes it (not while setup is required).
+  useHistoryDialogGuard(!state.setupRequired, guardedClose);
 
   async function beginSetup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -400,7 +410,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
+        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -425,7 +435,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );
@@ -664,12 +674,22 @@ export function App() {
   const [mobileActions, setMobileActions] = useState(false);
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("security");
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
   const [toast, setToast] = useState("");
+  // Settings → Modules (D92): per-user, saved on the server, UI only.
+  const modulePreferences = usePreferences(session?.user.id ?? null, session && session.preferences !== undefined ? parsePreferences(session.preferences) : undefined);
+  const disabledModules = modulePreferences.preferences.disabledModules;
+  const searchEnabled = isModuleEnabled(disabledModules, "search");
+  const binEnabled = isModuleEnabled(disabledModules, "bin");
+  // The module whose route was just replaced with Home, for the one-line hint (D92).
+  const [moduleHint, setModuleHint] = useState<ModuleId | null>(null);
+  const leavingHiddenModuleRef = useRef(false);
+  const hiddenLeaveFailedRef = useRef<string | null>(null);
   const [selectionOwner, setSelectionOwner] = useState<string | null>(null);
   const [leavingNotes, setLeavingNotes] = useState(false);
   // Set while a note/folder switch finalizes the open note, so late keystrokes cannot be dropped.
@@ -1358,7 +1378,7 @@ export function App() {
 
   // Ctrl/⌘+K anywhere in Notes, or "/" outside a text field, focuses search.
   useEffect(() => {
-    if (!session || activeApp !== "notes" || settingsOpen) return;
+    if (!session || activeApp !== "notes" || settingsOpen || !searchEnabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       const typing = Boolean(target && (target.isContentEditable || target.closest("input, textarea, select, [contenteditable='true']")));
@@ -1429,9 +1449,46 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   });
 
-  function openSettings() {
+  // D92: a route of a module that is turned off (a launcher link, a deep link, Back or Forward, a
+  // notification, or turning it off while it is open) is replaced with Home and a hint. The entry is
+  // replaced, not pushed, so Back never bounces into it again. The server is not involved: the
+  // module's API still works and keeps its own access rules (T97).
+  useEffect(() => {
+    const hidden = hiddenModuleForApp(disabledModules, activeApp);
+    if (!session || session.totp.setupRequired || !hidden || leavingHiddenModuleRef.current) return;
+    const app = activeApp;
+    // A note that could not be saved keeps Notes open (the toast says why) until the choice changes.
+    const attempt = `${app}:${disabledModules.join(",")}`;
+    if (hiddenLeaveFailedRef.current === attempt) return;
+    leavingHiddenModuleRef.current = true;
+    void (async () => {
+      try {
+        // Leaving Notes saves or publishes the open note first, as any other way out does.
+        if (app === "notes" && !await leaveNotes()) {
+          hiddenLeaveFailedRef.current = attempt;
+          return;
+        }
+        hiddenLeaveFailedRef.current = null;
+        setModuleHint(hidden);
+        setActiveApp("home");
+        navigate({ app: "home" }, { replace: true });
+      } finally {
+        leavingHiddenModuleRef.current = false;
+      }
+    })();
+  });
+  useEffect(() => {
+    if (moduleHint && (isModuleEnabled(disabledModules, moduleHint) || activeApp !== "home")) setModuleHint(null);
+  }, [activeApp, disabledModules, moduleHint]);
+  // Search turned off: drop any query so the Notes list is not left filtered by a hidden box.
+  useEffect(() => {
+    if (!searchEnabled && query) clearSearch();
+  }, [searchEnabled, query]);
+
+  function openSettings(section: SettingsSection = "security") {
     setPanel(null);
     setSharingFolder(null);
+    setSettingsSection(section);
     setSettingsOpen(true);
   }
 
@@ -1492,27 +1549,38 @@ export function App() {
     setChecking(false);
   }} />;
 
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+  const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled };
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) setSettingsOpen(false);
   }} />;
-  const toastStatus = toast && <div className="toast" role="status">{toast}</div>;
-  const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
+  const toastStatus = <>{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
+    <p>{moduleOffHint(moduleHint)}</p>
+    <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>
+    <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
+  </div>}</>;
+  const openBin = binEnabled ? () => { void openApp("bin"); } : undefined;
+  // A hidden module's view never renders, even for the moment before the gate above replaces its route.
+  const shownApp: AppSection = activeApp !== "notes" && !isAppEnabled(disabledModules, activeApp) ? "home" : activeApp;
+  const account = { displayName: session.user.displayName, onSettings: () => openSettings(), onSignOut: signOut };
 
-  if (activeApp !== "notes" && !session.totp.setupRequired) return <NotificationsContext.Provider value={{ openList: () => { void openApp("notifications"); }, openPath: openNotificationPath }}>
-    {activeApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
-      : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
-      : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
-      : activeApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
-      : activeApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
-      : activeApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
+  // Notifications off (D92): no provider, so every bell renders nothing and stops polling.
+  const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
+  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><NotificationsContext.Provider value={notificationsContext}>
+    {shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
+      : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
+      : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}
-  </NotificationsContext.Provider>;
+  </NotificationsContext.Provider></ModulesContext.Provider>;
 
   return (
+    <ModulesContext.Provider value={disabledModules}>
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
         <header className="sidebar-header">
@@ -1547,11 +1615,11 @@ export function App() {
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
         <footer className="sidebar-footer">
-          <button className="footer-settings" title={session.user.displayName} onClick={openSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
+          <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
             <strong>{session.user.displayName}</strong>
             <span><Settings />Settings</span>
           </button>
-          <button className="footer-bin" onClick={() => { void openApp("bin"); }}><Trash2 />Bin</button>
+          {openBin && <button className="footer-bin" onClick={openBin}><Trash2 />Bin</button>}
           <button className="footer-signout" onClick={signOut}><LogOut />Sign out</button>
         </footer>
       </aside>
@@ -1570,7 +1638,7 @@ export function App() {
             </div>
             <button className="icon-button new-note-button" onClick={createNote} aria-label="New note"><FilePlus2 /></button>
           </div>
-          <div className="search-box">
+          {searchEnabled && <div className="search-box">
             <Search aria-hidden="true" />
             <input
               ref={searchInputRef}
@@ -1591,7 +1659,7 @@ export function App() {
               spellCheck={false}
             />
             {query ? <button type="button" className="search-clear" onClick={() => { clearSearch(); searchInputRef.current?.focus(); }} aria-label="Clear search"><X /></button> : <kbd aria-hidden="true">/</kbd>}
-          </div>
+          </div>}
           {search.active && selectedFolder !== "all" && <div className="search-scope">
             {!searchAll && <span>Searching {selectedFolder === "shared" ? "Shared with me" : folders.find((folder) => folder.id === selectedFolder)?.name ?? "this folder"}</span>}
             <button type="button" className="search-scope-chip" aria-pressed={searchAll} onClick={() => setSearchAll((all) => !all)}>{searchAll ? <Check aria-hidden="true" /> : <Archive aria-hidden="true" />}Search all notes</button>
@@ -1678,5 +1746,6 @@ export function App() {
         <button className={mobilePanel === "editor" ? "active" : ""} disabled={!note} onClick={() => showMobilePanel("editor")}><Sparkles />Editor</button>
       </nav>
     </main>
+    </ModulesContext.Provider>
   );
 }
