@@ -10,6 +10,8 @@ import { byPosition } from "./boardOrder";
 import type { BoardGroupId, BoardQuery, BoardSort } from "./boardUrl";
 import { cardAssignees } from "./taskActions";
 import type { BoardColumn, BoardDetail, BoardTag, CardAssignee, CardSummary } from "./tasksApi";
+import { FLAT_STRUCTURE, levelName, type BoardStructure } from "../../shared/boardStructure";
+import { rollupMap } from "./hierarchyModel";
 
 export type { BoardTag } from "./tasksApi";
 
@@ -20,25 +22,40 @@ export type { BoardTag } from "./tasksApi";
  */
 export type BoardCardInput = CardSummary & Partial<{ description_excerpt: string; tag_ids: string[]; flags: string[]; relation_count: number; open_blockers: number }>;
 export type BoardCard = CardSummary & QueryCard & { assignees: CardAssignee[]; tag_ids: string[]; flags: string[]; relation_count?: number; open_blockers?: number };
-export type BoardData = { columns: BoardColumn[]; cards: BoardCard[]; tags: BoardTag[] };
+/** `structure` (17A): the board's levels; Flat for an older payload. */
+export type BoardData = { columns: BoardColumn[]; cards: BoardCard[]; tags: BoardTag[]; structure?: BoardStructure };
 
 /** The viewer: `today` is their local date, `now` their clock, `timeZone` their zone (for timed cards). */
 export type BoardContext = { userId: string; today: string; now: number; timeZone: string };
 
-/** Fills the optional payload fields, so every view reads one shape. */
-export function boardData(detail: Pick<BoardDetail, "columns" | "cards"> & { tags?: BoardTag[] }): BoardData {
+/**
+ * Fills the optional payload fields, so every view reads one shape. Roll-ups (17A) are recounted
+ * from the loaded cards, so `has:subtasks` and the chips follow local moves at once.
+ */
+export function boardData(detail: Pick<BoardDetail, "columns" | "cards"> & { tags?: BoardTag[]; board?: Pick<BoardDetail["board"], "structure"> }): BoardData {
+  const rollups = rollupMap(detail.cards, detail.columns);
   return {
     columns: [...detail.columns].sort(byPosition),
     tags: detail.tags ?? [],
+    structure: detail.board?.structure ?? FLAT_STRUCTURE,
     cards: (detail.cards as BoardCardInput[]).map((card) => ({
       ...card,
       description_excerpt: card.description_excerpt ?? "",
       tag_ids: card.tag_ids ?? [],
       flags: card.flags ?? [],
-      assignees: cardAssignees(card) as CardAssignee[]
+      assignees: cardAssignees(card) as CardAssignee[],
+      child_count: rollups.get(card.id)?.total ?? 0,
+      done_child_count: rollups.get(card.id)?.done ?? 0
     }))
   };
 }
+
+/** The board's structure (Flat when unknown). */
+export const structureOfData = (board: BoardData) => board.structure ?? FLAT_STRUCTURE;
+const hasLevelsData = (board: BoardData) => structureOfData(board).levels.length > 1;
+/** A card's parent title on this board, or null. */
+export const parentTitleOf = (card: Pick<CardSummary, "parent_card_id">, board: BoardData) =>
+  card.parent_card_id ? board.cards.find((item) => item.id === card.parent_card_id)?.title ?? null : null;
 
 export const FLAG_LABELS: Record<TaskFlag, string> = { urgent: "Urgent", blocked: "Blocked", needs_review: "Needs review", on_hold: "On hold" };
 export const DUE_GROUP_LABELS: Record<string, string> = { overdue: "Overdue", today: "Today", week: "Next 7 days", later: "Later", none: "No date" };
@@ -78,7 +95,7 @@ export function memoryContext(board: BoardData, context: BoardContext): MemoryQu
     const state = (column as BoardColumn & { state?: TaskState }).state;
     columnStates[column.id] = state ?? (column.is_done === 1 ? "done" : "doing");
   }
-  return { userId: context.userId, today: context.today, now: context.now, tags: board.tags, columnStates };
+  return { userId: context.userId, today: context.today, now: context.now, tags: board.tags, columnStates, workLevel: structureOfData(board).workLevel };
 }
 
 export type DueGroup = "overdue" | "today" | "week" | "later" | "none";
@@ -134,6 +151,16 @@ export const GROUP_DIMENSIONS: Record<BoardGroupId, GroupDimension> = {
     labelFor: (key) => flagLabel(key),
     order: (keys) => [...keys].sort(noneLast((a, b) => TASK_FLAGS.indexOf(a as TaskFlag) - TASK_FLAGS.indexOf(b as TaskFlag)))
   },
+  parent: {
+    label: "Parent",
+    keysFor: (card) => [card.parent_card_id ?? "none"],
+    labelFor: (key, board) => key === "none" ? "No parent" : parentTitleOf({ parent_card_id: key }, board) ?? "Parent in the Bin",
+    // Parents in board order (their column, then position), cards without one last.
+    order: (keys, board) => {
+      const rank = new Map(sortCards(board.cards, board.columns).map((card, index) => [card.id, index]));
+      return [...keys].sort(noneLast((a, b) => (rank.get(a) ?? Infinity) - (rank.get(b) ?? Infinity)));
+    }
+  },
   due: {
     label: "Due date",
     keysFor: (card, board, context) => [dueGroupOf(card, board, context)],
@@ -158,6 +185,8 @@ export type FilterField = {
   optionsFor: (board: BoardData, context: BoardContext) => FilterOption[];
   labelFor: (value: string, board: BoardData, context: BoardContext) => string;
   match?: (card: BoardCard, values: readonly string[], board: BoardData) => boolean;
+  /** Whether the bar offers the field on this board (hierarchy fields need levels). */
+  available?: (board: BoardData) => boolean;
 };
 
 const shortDate = (date: string) => {
@@ -173,7 +202,7 @@ export function dueValueLabel(value: string) {
   return ({ overdue: "overdue", today: "today", week: "in the next 7 days", "next-week": "in the 7 days after", none: "no date" } as Record<string, string>)[value] ?? value;
 }
 
-export const HAS_LABELS: Record<string, string> = { relation: "has relations", blocked: "is blocked" };
+export const HAS_LABELS: Record<string, string> = { relation: "has relations", blocked: "is blocked", subtasks: "has subtasks" };
 const STATE_LABELS: Record<string, string> = { todo: "to do", doing: "in progress", done: "done" };
 
 export const FILTER_FIELDS: Record<string, FilterField> = {
@@ -217,8 +246,26 @@ export const FILTER_FIELDS: Record<string, FilterField> = {
   has: {
     label: "Relations",
     key: "has",
-    optionsFor: () => [{ value: "relation", label: "Has relations" }, { value: "blocked", label: "Is blocked" }],
+    optionsFor: (board) => [{ value: "relation", label: "Has relations" }, { value: "blocked", label: "Is blocked" },
+      ...(hasLevelsData(board) ? [{ value: "subtasks", label: "Has subtasks" }] : [])],
     labelFor: (value) => HAS_LABELS[value] ?? value
+  },
+  level: {
+    label: "Level",
+    key: "level",
+    available: hasLevelsData,
+    optionsFor: (board) => [{ value: "work", label: `Work level (${levelName(structureOfData(board), structureOfData(board).workLevel)})` },
+      ...structureOfData(board).levels.map((level, index) => ({ value: String(index), label: level.name }))],
+    labelFor: (value, board) => value === "work" ? "work level" : levelName(structureOfData(board), Number(value))
+  },
+  parent: {
+    label: "Parent",
+    key: "parent",
+    available: hasLevelsData,
+    optionsFor: (board) => [{ value: "none", label: "No parent" },
+      ...board.cards.filter((card) => (card.level ?? 0) < structureOfData(board).levels.length - 1)
+        .map((card) => ({ value: card.id, label: card.title })).sort((a, b) => byName(a.label, b.label))],
+    labelFor: (value, board) => value === "none" ? "no parent" : parentTitleOf({ parent_card_id: value }, board) ?? "a card in the Bin"
   }
 };
 
@@ -303,6 +350,31 @@ export function sortBoardCards(cards: readonly BoardCard[], board: BoardData, so
     if (right === null) return -1;
     return sign * compareText(left, right) || rank.get(a.id)! - rank.get(b.id)!;
   });
+}
+
+export type TreeRow = { card: BoardCard; depth: number; childCount: number };
+
+/**
+ * The table's tree (research 2026-09-26 §8): each card followed by its children, in the order the
+ * rows came (board order when unsorted), indented by depth. A card whose parent is filtered out or
+ * binned is a root. `collapsed` hides a card's descendants.
+ */
+export function treeRows(cards: readonly BoardCard[], collapsed: ReadonlySet<string> = new Set()): TreeRow[] {
+  const ids = new Set(cards.map((card) => card.id));
+  const children = new Map<string, BoardCard[]>();
+  for (const card of cards) {
+    if (!card.parent_card_id || !ids.has(card.parent_card_id)) continue;
+    children.set(card.parent_card_id, [...(children.get(card.parent_card_id) ?? []), card]);
+  }
+  const rows: TreeRow[] = [];
+  const visit = (card: BoardCard, depth: number) => {
+    const kids = children.get(card.id) ?? [];
+    rows.push({ card, depth, childCount: kids.length });
+    // Depth is at most 2 (D121), so this never recurses further than that.
+    if (!collapsed.has(card.id) && depth < 2) for (const kid of kids) visit(kid, depth + 1);
+  };
+  for (const card of cards) if (!card.parent_card_id || !ids.has(card.parent_card_id)) visit(card, 0);
+  return rows;
 }
 
 export type BoardGroup = {

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Columns3, File as FileIcon, Link2, Paperclip, Plus, X } from "lucide-react";
+import { Columns3, File as FileIcon, Layers, Link2, Paperclip, Plus, X } from "lucide-react";
+import { FLAT_STRUCTURE, levelName, type BoardStructure } from "../../shared/boardStructure";
+import { hasLevels, levelOf, parentCandidates } from "./hierarchyModel";
 import { ApiError } from "../api";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { NoteEditor } from "../editor/NoteEditor";
@@ -46,6 +48,10 @@ type CardComposerProps = {
   tags?: BoardTag[];
   owner?: boolean;
   onTagsChange?: (change: TagChange) => void;
+  /** Hierarchy (17A): the board's levels, the cards that can be parents, and a parent to start with ("Add subtask"). */
+  structure?: BoardStructure;
+  parentCards?: ReadonlyArray<{ id: string; title: string; column_id: string; position: number; level?: number; parent_card_id?: string | null }>;
+  initialParentId?: string | null;
 };
 
 /**
@@ -54,8 +60,10 @@ type CardComposerProps = {
  * guarded dialog, not a route (D69): full screen on phones, a large modal on desktop. Back, Escape,
  * and Close ask first when anything was entered, and discarding moves the uploads to the Bin.
  */
-export function CardComposer({ boardId, boardName, userId, columns, cards, initialColumnId, onClose, onCreated, notify, tags, owner = false, onTagsChange }: CardComposerProps) {
-  const [draft, setDraft] = useState<ComposerDraft>(() => emptyDraft(defaultColumnId(columns, cards, initialColumnId)));
+export function CardComposer({ boardId, boardName, userId, columns, cards, initialColumnId, onClose, onCreated, notify, tags, owner = false, onTagsChange, structure = FLAT_STRUCTURE, parentCards = [], initialParentId = null }: CardComposerProps) {
+  const initialParent = initialParentId ? parentCards.find((card) => card.id === initialParentId) : undefined;
+  const [draft, setDraft] = useState<ComposerDraft>(() => emptyDraft(defaultColumnId(columns, cards, initialColumnId),
+    initialParent ? { parentId: initialParent.id, level: levelOf(initialParent) + 1 } : {}));
   const [titleError, setTitleError] = useState<string | null>(null);
   const [error, setError] = useState<ComposerError | null>(null);
   const [creating, setCreating] = useState(false);
@@ -119,7 +127,8 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
       onCreated(card, mode, { hadRelations: current.relations.length > 0 });
       if (mode === "another") {
         notify(`Added “${card.title}”. Add another.`);
-        update(() => emptyDraft(current.columnId));
+        // "Create another" keeps the column, the level, and the parent (a run of subtasks).
+        update(() => emptyDraft(current.columnId, { parentId: current.parentId, level: current.level }));
         setTitleError(null);
         setAddingRelation(false);
         setRound((value) => value + 1);
@@ -208,6 +217,11 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     return { value: item.id, label: item.name, disabled: full, ...(full ? { description: `Full (limit ${item.wip_limit})` } : item.is_done === 1 ? { description: "Done column" } : {}) };
   });
   const busy = creating || uploading > 0;
+  const levels = hasLevels(structure);
+  const draftLevel = draft.level ?? structure.workLevel;
+  const candidates = levels && draftLevel > 0 ? parentCandidates(parentCards, { id: "", title: "", column_id: "", position: 0, level: draftLevel }) : [];
+  const parentLabel = draftLevel > 0 ? levelName(structure, draftLevel - 1) : "";
+  const parentOptions = [{ value: "", label: `No ${parentLabel.toLowerCase()}` }, ...candidates.map((card) => ({ value: card.id, label: card.title }))];
   const fieldError = (field: ComposerError["field"]) => error?.field === field && <p className="file-dialog-error" role="alert">{error.message}</p>;
   const stagedRows = draft.relations.map((relation) => ({ key: relation.key, type: relation.type, restricted: false, card: relation.card }));
 
@@ -216,7 +230,7 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     <section className="task-card-dialog task-composer" role="dialog" aria-modal="true" aria-labelledby={`${baseId}-heading`} onKeyDownCapture={onKeyDownCapture} onKeyDown={trapTabKey}>
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
-          <span className="eyebrow" id={`${baseId}-heading`}>New card · {boardName}</span>
+          <span className="eyebrow" id={`${baseId}-heading`}>New {levels ? levelName(structure, draftLevel).toLowerCase() : "card"} · {boardName}</span>
           <input
             ref={titleRef}
             id={titleId}
@@ -250,6 +264,21 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
               onChange={(columnId) => { update((current) => ({ ...current, columnId })); if (error?.field === "column") setError(null); }} />
             {fieldError("column")}
           </div>
+          {levels && <div className="task-card-field">
+            <label id={`${baseId}-level-label`}><Layers aria-hidden="true" />Level</label>
+            <Select id={`${baseId}-level`} labelledBy={`${baseId}-level-label`} label="Level" value={String(draftLevel)} disabled={busy}
+              options={structure.levels.map((level, index) => ({ value: String(index), label: level.name }))}
+              onChange={(value) => update((current) => {
+                const level = Number(value);
+                const parent = parentCards.find((card) => card.id === current.parentId);
+                return { ...current, level, parentId: parent && levelOf(parent) === level - 1 ? parent.id : null };
+              })} />
+          </div>}
+          {levels && draftLevel > 0 && <div className="task-card-field">
+            <label id={`${baseId}-parent-label`}><Layers aria-hidden="true" />{parentLabel}</label>
+            <Select id={`${baseId}-parent`} labelledBy={`${baseId}-parent-label`} label={parentLabel} value={draft.parentId ?? ""} disabled={busy} options={parentOptions}
+              onChange={(parentId) => update((current) => ({ ...current, parentId: parentId || null, level: current.level ?? structure.workLevel }))} />
+          </div>}
         </div>
         <CardFields card={draftCard(draft, boardId)} userId={userId} idPrefix={baseId} done={column?.is_done === 1} saving={creating} onSave={saveField}
           tags={tags} owner={owner} onTagsChange={tagsChanged} />

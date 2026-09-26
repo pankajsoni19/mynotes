@@ -78,6 +78,9 @@ export function mergeCardDetail(item: CardSummary, card: CardDetail): CardSummar
     tag_ids: card.tag_ids ?? item.tag_ids,
     flags: card.flags ?? item.flags,
     column_id: item.column_id,
+    // Hierarchy (17A): a reparent or level change saves through the same dialog.
+    parent_card_id: card.parent_card_id !== undefined ? card.parent_card_id : item.parent_card_id,
+    level: card.level ?? item.level,
     updated_at: card.updated_at
   };
 }

@@ -172,7 +172,7 @@ test("the filter bar edits one positive term per field and keeps the query canon
   expect(FILTER_FIELDS.assignee!.optionsFor(board, context).map((option) => option.label)).toEqual(["Me", "Asha", "Ben", "No assignee"]);
   expect(FILTER_FIELDS.tag!.labelFor("bbbbbbbb-0000-4000-8000-00000000ffff", board, context)).toBe("Unknown tag");
   expect(FILTER_FIELDS.due!.labelFor("<2026-10-01", board, context)).toBe(`before ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 9, 1)))}`);
-  expect(Object.keys(GROUP_DIMENSIONS)).toEqual(["column", "assignee", "tag", "flag", "due"]);
+  expect(Object.keys(GROUP_DIMENSIONS)).toEqual(["column", "assignee", "tag", "flag", "parent", "due"]);
 });
 
 test("hierarchy readiness: a stub `parent` dimension and filter plug in without code changes", () => {

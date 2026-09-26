@@ -16,7 +16,7 @@ export type BoardViewId = typeof BOARD_VIEWS[number];
  * Grouping dimensions of the list view (§4.5). The hierarchy wave adds `parent` and `sprint`
  * here and in `GROUP_DIMENSIONS` (src/tasks/boardQuery.ts); nothing else changes.
  */
-export const BOARD_GROUPS = ["column", "assignee", "tag", "flag", "due"] as const;
+export const BOARD_GROUPS = ["column", "assignee", "tag", "flag", "parent", "due"] as const;
 export type BoardGroupId = typeof BOARD_GROUPS[number];
 
 /** Sortable table columns (§4.5). */

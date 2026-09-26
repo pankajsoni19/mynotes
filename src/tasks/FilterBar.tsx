@@ -99,7 +99,7 @@ export function FilterBar({ board, context, filter, onChange, shown, total }: Fi
       </span>;
     })}
     {!editing && <Select<string> variant="chip" className="task-filter-add" label="Add filter" placeholder="+ Filter" value={null} searchable={false}
-      options={Object.entries(FILTER_FIELDS).map(([key, item]) => ({ value: key, label: item.label, icon: <ListFilter /> }))}
+      options={Object.entries(FILTER_FIELDS).filter(([, item]) => !item.available || item.available(board)).map(([key, item]) => ({ value: key, label: item.label, icon: <ListFilter /> }))}
       onChange={(key) => setEditing(key as FilterKey)} />}
     {editing && field && <span className="task-filter-editor" role="group" aria-label={`${field.label} filter`}>
       <span className="task-filter-editor-label">{field.label} is</span>

@@ -1,5 +1,7 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, Ellipsis } from "lucide-react";
-import type { BoardCard, BoardData } from "./boardQuery";
+import { useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Ellipsis } from "lucide-react";
+import { levelName } from "../../shared/boardStructure";
+import { parentTitleOf, structureOfData, treeRows, type BoardCard, type BoardData } from "./boardQuery";
 import type { BoardSort, BoardSortField } from "./boardUrl";
 import { assigneeNames, Avatars, DueChip, FlagIcons, shortTimestamp, TagChips } from "./boardViewParts";
 
@@ -40,6 +42,18 @@ export function nextSort(current: BoardSort | null, field: BoardSortField): Boar
  */
 export function BoardTable({ board, cards, sort, today, onSort, onOpenCard, onCardMenu, filtered }: BoardTableProps) {
   const columns = new Map(board.columns.map((column) => [column.id, column]));
+  // Hierarchy (17A): unsorted, rows form a tree (children under their parent, ▸ to collapse); Level and Parent columns.
+  const structure = structureOfData(board);
+  const levels = structure.levels.length > 1;
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const tree = levels && !sort;
+  const rows = tree ? treeRows(cards, collapsed) : cards.map((card) => ({ card, depth: 0, childCount: 0 }));
+  const toggle = (id: string) => setCollapsed((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
   return <div className="task-table-region" role="region" aria-label="Cards table" tabIndex={0}>
     <table className="task-table">
       <thead>
@@ -53,17 +67,25 @@ export function BoardTable({ board, cards, sort, today, onSort, onOpenCard, onCa
               </button>
             </th>;
           })}
+          {levels && <th scope="col" className="task-table-level">Level</th>}
+          {levels && <th scope="col" className="task-table-parent">Parent</th>}
         </tr>
       </thead>
       <tbody>
-        {cards.map((card) => {
+        {rows.map(({ card, depth, childCount }) => {
           const column = columns.get(card.column_id);
           const done = column?.is_done === 1;
           const names = assigneeNames(card);
           return <tr key={card.id} className={done ? "done" : undefined} data-card-id={card.id}
             onClick={(event) => { if (!(event.target as Element).closest("button")) onOpenCard(card); }}>
             <th scope="row" className="task-table-title">
-              <span className="task-table-title-cell">
+              <span className="task-table-title-cell" style={depth ? { paddingLeft: `${depth * 18}px` } : undefined}>
+                {tree && (childCount > 0
+                  ? <button type="button" className="icon-button task-tree-toggle" aria-expanded={!collapsed.has(card.id)} onClick={() => toggle(card.id)}
+                    aria-label={`${collapsed.has(card.id) ? "Show" : "Hide"} the ${childCount} ${childCount === 1 ? "card" : "cards"} under “${card.title}”`}>
+                    {collapsed.has(card.id) ? <ChevronRight /> : <ChevronDown />}
+                  </button>
+                  : <span className="task-tree-spacer" aria-hidden="true" />)}
                 <button type="button" className="task-table-open" onClick={() => onOpenCard(card)} data-open-card={card.id} title={card.description_excerpt || undefined}>{card.title}</button>
                 <button type="button" className="icon-button task-table-more" onClick={(event) => onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…"><Ellipsis /></button>
               </span>
@@ -75,6 +97,8 @@ export function BoardTable({ board, cards, sort, today, onSort, onOpenCard, onCa
             <td><FlagIcons flags={card.flags} /></td>
             <td className="task-table-date">{shortTimestamp(card.created_at)}</td>
             <td className="task-table-date">{shortTimestamp(card.updated_at)}</td>
+            {levels && <td>{levelName(structure, card.level ?? 0)}</td>}
+            {levels && <td className="task-table-parent-cell" title={parentTitleOf(card, board) ?? undefined}>{parentTitleOf(card, board) ?? <span className="task-table-empty">—</span>}</td>}
           </tr>;
         })}
       </tbody>

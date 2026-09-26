@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Settings2, Trash2, TriangleAlert } from "lucide-react";
+import { BoardSettingsSheet } from "./BoardSettingsSheet";
+import { useBoardHierarchy } from "./useBoardHierarchy";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
@@ -74,7 +76,7 @@ type BoardViewProps = {
 };
 
 type BoardDialog =
-  | { kind: "rename" | "share" | "addColumn" | "deleteBoard" }
+  | { kind: "rename" | "share" | "addColumn" | "deleteBoard" | "settings" }
   | { kind: "columnMenu" | "renameColumn" | "deleteColumn" | "wipLimit"; columnId: string }
   | { kind: "moveCard"; cardId: string };
 
@@ -90,7 +92,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const [dropTarget, setDropTarget] = useState<{ columnId: string; index: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   // The card composer (a guarded dialog, no history entry): the column it was opened from, or null.
-  const [composer, setComposer] = useState<{ columnId: string | null } | null>(null);
+  const [composer, setComposer] = useState<{ columnId: string | null; parentId?: string } | null>(null);
   const detailRef = useRef(detail);
   detailRef.current = detail;
   // The control that opened the current dialog, so focus can return to it.
@@ -187,6 +189,12 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const laneCards: CardSummary[] = filtered && result ? result.cards : cards;
   const laneCardsRef = useRef(laneCards);
   laneCardsRef.current = laneCards;
+  // Hierarchy (17A): which levels the lanes show, chips, nesting by drag, and the card dialog's checklist.
+  const hierarchy = useBoardHierarchy({
+    detail, detailRef, setDetail, notify, load, onOpenCard,
+    move: (cardId, columnId, afterCardId) => move(cardId, columnId, afterCardId),
+    openComposer: ({ parentId }) => setComposer({ columnId: null, parentId })
+  });
 
   const setCards = (change: (cards: CardSummary[]) => CardSummary[]) =>
     setDetail((current) => current ? { ...current, cards: change(current.cards) } : current);
@@ -429,13 +437,16 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     const siblings = card ? columnCards(detailRef.current!.cards, card.column_id) : [];
     const index = siblings.findIndex((item) => item.id === cardId);
     const place = card ? { columnId: card.column_id, afterCardId: index > 0 ? siblings[index - 1]!.id : null } : {};
-    await deleteCard(cardId);
-    setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => item.id !== cardId), board: { ...current.board, card_count: Math.max(0, current.board.card_count - 1) } } : current);
+    const { descendantCount = 0 } = await deleteCard(cardId);
+    // Its live children and grandchildren went to the Bin with it (D129).
+    const gone = new Set([cardId]);
+    for (let step = 0; step < 2; step += 1) for (const item of detailRef.current?.cards ?? []) if (item.parent_card_id && gone.has(item.parent_card_id)) gone.add(item.id);
+    setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => !gone.has(item.id)), board: { ...current.board, card_count: Math.max(0, current.board.card_count - gone.size) } } : current);
     lastOpenCardRef.current = null;
     onCloseCard();
-    notify(`Moved “${card?.title ?? "card"}” to the Bin`, { label: "Undo", run: () => {
+    notify(`Moved “${card?.title ?? "card"}”${descendantCount ? ` and ${descendantCount === 1 ? "1 card" : `${descendantCount} cards`} under it` : ""} to the Bin`, { label: "Undo", run: () => {
       restoreTaskItem("card", cardId, place).then((result) => {
-        notify(`Restored to ${result.columnName ?? "the board"}`);
+        notify(`Restored to ${result.columnName ?? "the board"}${result.descendantCount ? ` with ${result.descendantCount === 1 ? "1 card" : `${result.descendantCount} cards`} under it` : ""}${result.detached ? ", without its parent (it is in the Bin)" : ""}`);
         void load();
       }, (reason) => notify(taskErrorMessage(reason, "Could not restore the card")));
     } });
@@ -471,10 +482,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       {board && <span className="task-board-count">{cardCountLabel(board.card_count)}</span>}
       {detail && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
       {detail && <BoardViewSwitch value={view} onChange={(next) => onQueryChange(withBoardQuery(query, { view: next }), { push: true })} />}
-      {owner && <span className="task-board-actions">
-        <button className="icon-button" onClick={(event) => openDialog({ kind: "rename" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Rename board" title="Rename board"><Pencil /></button>
-        <button className="icon-button" onClick={(event) => openDialog({ kind: "share" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Share board" title="Share board"><Share2 /></button>
-        <button className="icon-button" onClick={(event) => openDialog({ kind: "deleteBoard" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Delete board" title="Move to the Bin"><Trash2 /></button>
+      {board && <span className="task-board-actions">
+        <button className="icon-button" onClick={(event) => openDialog({ kind: "settings" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Board settings" title="Board settings"><Settings2 /></button>
       </span>}
     </header>
     <p id="task-card-keys" className="sr-only">Press Alt with an arrow key to move a card up, down, or to the next column.</p>
@@ -519,8 +528,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       {columns.map((column, index) => <BoardColumnView
         key={column.id}
         column={column}
-        cards={columnCards(laneCards, column.id)}
-        totalCount={filtered ? columnCards(cards, column.id).length : undefined}
+        cards={columnCards(hierarchy.visible(laneCards, filtered), column.id)}
+        totalCount={columnCards(cards, column.id).length}
+        emptyText={filtered ? "No matching cards" : "Cards here sit inside their parents. Board settings → Show all levels."}
+        nesting={hierarchy.nesting}
         tags={detail.tags}
         owner={owner}
         isFirst={index === 0}
@@ -529,7 +540,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         dropIndex={dropTarget?.columnId === column.id ? dropTarget.index : null}
         refuseDrop={draggingId !== null && !canEnterColumn(cards, column, draggingId)}
         onDragStart={(card) => setDraggingId(card.id)}
-        onDragEnd={() => { setDraggingId(null); setDropTarget(null); }}
+        onDragEnd={() => { setDraggingId(null); setDropTarget(null); hierarchy.clearNest(); }}
         onDragOverIndex={(slot) => setDropTarget((current) => slot === null
           ? current?.columnId === column.id ? null : current
           : current?.columnId === column.id && current.index === slot ? current : { columnId: column.id, index: slot })}
@@ -565,6 +576,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onTagsChange={(change) => setDetail((current) => current ? applyTagChange(current, change) : current)}
       onOpenRelated={(target) => onOpenCardRoute?.(target.board_id, target.id)}
       onRelationsChanged={(id, counts) => setCards((items) => items.map((item) => item.id === id ? { ...item, ...counts } : item))}
+      hierarchy={hierarchy.dialog}
     /></CardPage>}
     {composer && detail && board && <CardComposer
       boardId={boardId}
@@ -579,7 +591,14 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       tags={detail.tags ?? []}
       owner={owner}
       onTagsChange={(change) => setDetail((current) => current ? applyTagChange(current, change) : current)}
+      structure={hierarchy.structure}
+      parentCards={cards}
+      initialParentId={composer.parentId}
     />}
+    {dialog?.kind === "settings" && board && <BoardSettingsSheet board={board} owner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
+      onClose={closeDialog} notify={notify}
+      onRename={() => setDialog({ kind: "rename" })} onShare={() => setDialog({ kind: "share" })} onDelete={() => setDialog({ kind: "deleteBoard" })} onAddColumn={() => setDialog({ kind: "addColumn" })}
+      onStructureSaved={(saved) => setDetail((current) => current ? { ...current, board: saved } : current)} />}
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
     {dialog?.kind === "share" && board && <BoardSharePanel board={board} onClose={closeDialog} onChanged={() => {
       closeDialog();
@@ -613,7 +632,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}
-    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} onMove={async (columnId, place) => {
+    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} parentPicker={hierarchy.parentPicker(dialogCard)} onMove={async (columnId, place) => {
       const current = detailRef.current;
       setDialog(null);
       returnFocusRef.current = null;

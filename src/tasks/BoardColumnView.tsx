@@ -4,6 +4,7 @@ import { CARD_DRAG_TYPE, isCardDrag, isMoveKey, type MoveKey } from "./boardOrde
 import { CardFace, cardFaceLabel } from "./CardFace";
 import { localDateString, wipCountLabel, wipState } from "./taskActions";
 import type { BoardColumn, BoardTag, CardSummary } from "./tasksApi";
+import type { ColumnNesting } from "./useBoardHierarchy";
 
 type BoardColumnViewProps = {
   column: BoardColumn;
@@ -31,6 +32,10 @@ type BoardColumnViewProps = {
   onAddCard: () => void;
   /** With filters on (13E), `cards` are the matching ones and this is the column's real count (for WIP). */
   totalCount?: number;
+  /** Shown when the column has cards but none are listed (filters, or hierarchy levels that are hidden). */
+  emptyText?: string;
+  /** Hierarchy (17A): parent and subtask chips, and nesting by drag onto a card one level up (D128). */
+  nesting?: ColumnNesting;
 };
 
 /** Which slot a pointer at `clientY` points to among the column's card elements (the dragged one excluded). */
@@ -49,8 +54,26 @@ export function BoardColumnView(props: BoardColumnViewProps) {
   const others = cards.filter((card) => card.id !== draggingId);
   const today = localDateString();
 
+  /** The card under the pointer when the dragged card can become its child, else null. */
+  function nestTargetOf(event: ReactDragEvent<HTMLElement>) {
+    const nesting = props.nesting;
+    if (!nesting || !draggingId) return null;
+    const target = (event.target as Element | null)?.closest?.("[data-card-id]") as HTMLElement | null;
+    const targetId = target?.dataset.cardId;
+    return targetId && nesting.canNest(draggingId, targetId) ? targetId : null;
+  }
+
   function dragOver(event: ReactDragEvent<HTMLElement>) {
     if (!isCardDrag(event.dataTransfer.types) || !listRef.current) return;
+    const nestTarget = nestTargetOf(event);
+    props.nesting?.onNestOver(nestTarget);
+    if (nestTarget) {
+      // Onto a card one level up: it becomes the parent, whatever the column's WIP (nothing moves).
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "link";
+      props.onDragOverIndex(null);
+      return;
+    }
     if (props.refuseDrop) {
       // Not calling preventDefault leaves the drop disallowed; the hint says why.
       event.dataTransfer.dropEffect = "none";
@@ -62,7 +85,16 @@ export function BoardColumnView(props: BoardColumnViewProps) {
   }
 
   function drop(event: ReactDragEvent<HTMLElement>) {
-    if (!isCardDrag(event.dataTransfer.types) || !listRef.current || props.refuseDrop) return;
+    if (!isCardDrag(event.dataTransfer.types) || !listRef.current) return;
+    const nestTarget = nestTargetOf(event);
+    if (nestTarget && draggingId) {
+      event.preventDefault();
+      props.onDragEnd();
+      props.nesting!.onNestDrop(draggingId, nestTarget);
+      return;
+    }
+    props.nesting?.onNestOver(null);
+    if (props.refuseDrop) return;
     event.preventDefault();
     const index = dropIndexFor(listRef.current, event.clientY, draggingId);
     props.onDropAt(event.dataTransfer.getData(CARD_DRAG_TYPE), index);
@@ -98,12 +130,16 @@ export function BoardColumnView(props: BoardColumnViewProps) {
       {cards.map((card) => {
         // The dragged card stays rendered (removing it would cancel the drag); slots count the others.
         const slot = others.indexOf(card);
-        const face = { card, tags: props.tags ?? [], done: column.is_done === 1, today };
+        const parent = props.nesting?.parentOf(card) ?? null;
+        const rollup = props.nesting?.rollupOf(card) ?? null;
+        const face = { card, tags: props.tags ?? [], done: column.is_done === 1, today, parentTitle: parent?.title ?? null, rollup, childLabel: props.nesting?.childLabel(card) };
+        const nesting = props.nesting?.nestTarget === card.id;
         const excerptId = `task-card-excerpt-${card.id}`;
         return <li key={card.id} className="task-card-item">
         {slot >= 0 && indicator(slot)}
         <div
-          className={`task-card${draggingId === card.id ? " dragging" : ""}`}
+          className={`task-card${draggingId === card.id ? " dragging" : ""}${nesting ? " nest-target" : ""}`}
+          data-nest-label={nesting ? props.nesting!.nestLabel(card.id) : undefined}
           tabIndex={0}
           data-card-id={card.id}
           draggable
@@ -117,7 +153,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
             event.dataTransfer.effectAllowed = "move";
             props.onDragStart(card);
           }}
-          onDragEnd={props.onDragEnd}
+          onDragEnd={() => { props.nesting?.onNestOver(null); props.onDragEnd(); }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && event.target === event.currentTarget) {
               event.preventDefault();
@@ -128,13 +164,17 @@ export function BoardColumnView(props: BoardColumnViewProps) {
           }}
           onClick={(event) => { if (!(event.target as Element).closest("button")) props.onOpenCard(card); }}
         >
+          {parent && <button className="task-parent-chip" draggable={false} onClick={() => props.nesting!.onOpenCardId(parent.id)}
+            aria-label={`Open ${parent.levelName.toLowerCase()} “${parent.title}”`} title={`${parent.levelName}: ${parent.title}`}>
+            <ChevronRight aria-hidden="true" /><span>{parent.title}</span>
+          </button>}
           <CardFace {...face} excerptId={excerptId} />
           <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…" draggable={false}><Ellipsis /></button>
         </div>
       </li>;
       })}
       {dropIndex !== null && dropIndex >= others.length && <li className="task-drop-indicator" aria-hidden="true" />}
-      {!cards.length && dropIndex === null && <li className="task-column-empty">{count > 0 ? "No matching cards" : "No cards yet"}</li>}
+      {!cards.length && dropIndex === null && <li className="task-column-empty">{count > 0 ? props.emptyText ?? "No matching cards" : "No cards yet"}</li>}
     </ul>
     <footer className="task-column-footer">
       <button className="task-add-card" onClick={props.onAddCard} aria-haspopup="dialog" aria-label={`Add a card to ${column.name}`}><Plus />Add a card</button>
