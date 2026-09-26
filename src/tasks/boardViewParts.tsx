@@ -1,34 +1,32 @@
-import { Ban, CalendarDays, CircleAlert, Eye, Pause } from "lucide-react";
-import type { TaskFlag } from "../../shared/taskQuery";
-import { FLAG_LABELS, tagLabel, type BoardCard, type BoardData } from "./boardQuery";
+import { CalendarDays } from "lucide-react";
+import { avatarTone, FACE_PEOPLE, FACE_TAGS, initials } from "./CardFace";
+import { cardTags, FLAG_LABELS, visibleItems } from "./cardTags";
+import { FlagIcon } from "./TagPicker";
+import type { BoardCard, BoardData } from "./boardQuery";
 import { dueStatus } from "./taskActions";
+import type { CardAssignee, CardFlag } from "./tasksApi";
 
-// Small read-only pieces the table, list, and calendar views share. Every label is React text (T98).
+// Small read-only pieces the table, list, and calendar views share, drawn like the lane card face
+// (CardFace.tsx, §4.4): the same flag icons, tag chips, due chip, and assignee avatars. Every label
+// is React text (T98).
 
-const FLAG_ICONS: Record<TaskFlag, typeof Ban> = { urgent: CircleAlert, blocked: Ban, needs_review: Eye, on_hold: Pause };
-
+/** The card's flags as icons, each named for screen readers. */
 export function FlagIcons({ flags }: { flags: readonly string[] }) {
-  const known = flags.filter((flag): flag is TaskFlag => flag in FLAG_LABELS);
+  const known = flags.filter((flag): flag is CardFlag => flag in FLAG_LABELS);
   if (!known.length) return null;
   return <span className="task-flags">
-    {known.map((flag) => {
-      const Icon = FLAG_ICONS[flag];
-      return <Icon key={flag} className={`task-flag flag-${flag}`} role="img" aria-label={FLAG_LABELS[flag]} />;
-    })}
+    {known.map((flag) => <span key={flag} className="task-flag" role="img" aria-label={FLAG_LABELS[flag]} title={FLAG_LABELS[flag]}><FlagIcon flag={flag} /></span>)}
   </span>;
 }
 
-/** Up to `max` tag chips, then "+N". */
-export function TagChips({ tagIds, board, max = 3 }: { tagIds: readonly string[]; board: BoardData; max?: number }) {
-  if (!tagIds.length) return null;
-  const shown = tagIds.slice(0, max);
-  const names = tagIds.map((id) => tagLabel(id, board));
-  return <span className="task-tags" aria-label={`Tags ${names.join(", ")}`} role="group">
-    {shown.map((id) => {
-      const tag = board.tags.find((item) => item.id === id);
-      return <span key={id} className={`task-tag tone-${tag?.color ?? "gray"}`} aria-hidden="true">{tag?.name ?? "Unknown tag"}</span>;
-    })}
-    {tagIds.length > max && <span className="task-tag more" aria-hidden="true">+{tagIds.length - max}</span>}
+/** Up to `max` tag chips in the board's colours, then "+N"; named as one group. */
+export function TagChips({ tagIds, board, max = FACE_TAGS }: { tagIds: readonly string[]; board: BoardData; max?: number }) {
+  const tags = cardTags(tagIds, board.tags as Parameters<typeof cardTags>[1]);
+  if (!tags.length) return null;
+  const { shown, more } = visibleItems(tags, max);
+  return <span className="task-tags" aria-label={`Tags ${tags.map((tag) => tag.name).join(", ")}`} role="group">
+    {shown.map((tag) => <span key={tag.id} className={`task-tag color-${tag.color}`} aria-hidden="true">{tag.name}</span>)}
+    {more > 0 && <span className="task-tag more" aria-hidden="true">+{more}</span>}
   </span>;
 }
 
@@ -40,6 +38,16 @@ export function DueChip({ card, today, done }: { card: BoardCard; today: string;
 
 export function assigneeNames(card: BoardCard) {
   return card.assignees.map((person) => person.can_read === 1 ? person.display_name : `${person.display_name} (no access)`);
+}
+
+/** Up to three assignee avatars (initials in a stable tone), then "+N", as on the lane card. */
+export function Avatars({ card }: { card: BoardCard }) {
+  if (!card.assignees.length) return null;
+  const { shown, more } = visibleItems<CardAssignee>(card.assignees, FACE_PEOPLE);
+  return <span className="task-card-people" aria-hidden="true">
+    {shown.map((person) => <span key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`}>{initials(person.display_name)}</span>)}
+    {more > 0 && <span className="task-avatar task-avatar-more">+{more}</span>}
+  </span>;
 }
 
 export function shortTimestamp(value: string) {

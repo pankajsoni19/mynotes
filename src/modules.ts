@@ -97,6 +97,46 @@ export function hiddenModuleForApp(disabled: readonly ModuleId[], app: AppSectio
   return owner && !isModuleEnabled(disabled, owner.id) ? owner.id : null;
 }
 
+export type HiddenEntryStep = "undo" | "back" | "replace";
+
+/**
+ * Back or Forward landed on the entry of a module that is off (D92). Replacing that entry with Home
+ * would leave two Home entries side by side, so the entry is skipped instead: Forward is undone
+ * (back to the entry it came from, the gated entry stays ahead), and Back steps on past it while
+ * there is an entry below. Only at depth 0, or when the direction is unknown, is it replaced.
+ */
+export function hiddenEntryStep(direction: "back" | "forward" | null, poppedDepth: number): HiddenEntryStep {
+  if (direction === "forward") return "undo";
+  if (direction === "back" && poppedDepth > 0) return "back";
+  return "replace";
+}
+
+/**
+ * Records the depth of the entry a popstate landed on and returns the depth of the entry it left.
+ * Called for every popstate, including the ones a dialog consumed and the ignored popstate of an
+ * undo (history.go), so the next Forward onto a hidden entry still sees which way it moved. The ref
+ * is never re-read from history.state on render: while an undo is in flight, history.state still
+ * reads the entry being undone.
+ */
+export function recordPopDepth(ref: { current: number }, poppedDepth: number) {
+  const previous = ref.current;
+  ref.current = poppedDepth;
+  return previous;
+}
+
+/**
+ * Settings → "Manage team" (Team plan §6.2): opens the gate for this visit, then closes it again when
+ * the switch did not happen (Notes kept open by a note that could not be saved), so a later Back or
+ * Forward onto /team still follows the toggle. The flag is set first so the render that shows Team
+ * already has it; setting it after the switch would let the route gate send the admin Home.
+ */
+export async function openTeamViaSettings(setViaSettings: (value: boolean) => void, open: () => Promise<boolean>) {
+  setViaSettings(true);
+  const opened = await open();
+  if (!opened) setViaSettings(false);
+  return opened;
+}
+
 /** The Today sections of modules that are off. */
 export function hiddenTodaySections(disabled: readonly ModuleId[]): string[] {
   return MODULES.filter((module) => disabled.includes(module.id)).flatMap((module) => module.todaySections);

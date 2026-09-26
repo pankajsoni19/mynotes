@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Ellipsis } from "lucide-react";
 import { Select } from "../ui/Select";
 import { GROUP_DIMENSIONS, type BoardCard, type BoardData, type BoardGroup } from "./boardQuery";
 import { BOARD_GROUPS, type BoardGroupId } from "./boardUrl";
-import { assigneeNames, DueChip, FlagIcons, TagChips } from "./boardViewParts";
+import { assigneeNames, Avatars, DueChip, FlagIcons, TagChips } from "./boardViewParts";
 import { cardCountLabel } from "./taskActions";
 
 type BoardGroupedListProps = {
@@ -41,7 +41,7 @@ export function BoardGroupedList({ board, groups, group, today, onGroup, onOpenC
       <Select<BoardGroupId> variant="chip" labelledBy="task-group-label" value={group} onChange={onGroup}
         options={BOARD_GROUPS.map((id) => ({ value: id, label: GROUP_DIMENSIONS[id].label }))} searchable={false} />
     </div>
-    {empty && <p className="task-view-empty">{filtered ? "No cards match these filters." : "No cards yet. Add one in the Columns view."}</p>}
+    {empty && <p className="task-view-empty">{filtered ? "No cards match these filters." : "No cards yet. Add one with New card."}</p>}
     {groups.map((section) => {
       if (empty && section.items.length === 0) return null;
       const isCollapsed = collapsed.has(`${group}:${section.key}`);
@@ -62,11 +62,12 @@ export function BoardGroupedList({ board, groups, group, today, onGroup, onOpenC
               return <li key={card.id} className={`task-group-row${column?.is_done === 1 ? " done" : ""}`} data-card-id={card.id}>
                 <button type="button" className="task-group-open" onClick={() => onOpenCard(card)} data-open-card={card.id}>
                   <span className="task-group-title"><FlagIcons flags={card.flags} /><span>{card.title}</span></span>
+                  {card.description_excerpt && <span className="task-group-excerpt">{card.description_excerpt}</span>}
                   <span className="task-group-meta">
                     {group !== "column" && <span className="task-group-column">{column?.name}</span>}
                     <DueChip card={card} today={today} done={column?.is_done === 1} />
                     <TagChips tagIds={card.tag_ids} board={board} max={2} />
-                    {names.length > 0 && group !== "assignee" && <span className="task-group-people">{names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0]}</span>}
+                    {names.length > 0 && group !== "assignee" && <span className="task-group-people" title={names.join(", ")}><Avatars card={card} /><span className="sr-only">Assigned to {names.join(", ")}</span></span>}
                     {also.length > 0 && <span className="task-group-also">also in {also.join(", ")}</span>}
                   </span>
                 </button>

@@ -15,6 +15,8 @@ function validateLabel(input: string, max: number, noun: string, current?: strin
 export const validateBoardName = (input: string, current?: string) => validateLabel(input, 120, "board name", current);
 export const validateColumnName = (input: string, current?: string) => validateLabel(input, 60, "column name", current);
 export const validateCardTitle = (input: string, current?: string) => validateLabel(input, 200, "card title", current);
+/** A board tag's name: 1–40 characters (D109). */
+export const validateTagName = (input: string, current?: string) => validateLabel(input, 40, "tag name", current);
 
 export const sharingLabel = (visibility: "private" | "selected" | "all_users") =>
   visibility === "all_users" ? "Everyone here" : visibility === "selected" ? "Shared" : "Private";

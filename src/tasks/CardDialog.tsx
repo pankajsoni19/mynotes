@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowRightLeft, Copy, Download, File as FileIcon, MessageSquare, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Copy, Download, File as FileIcon, Maximize2, MessageSquare, Minimize2, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { contentUrl, formatBytes } from "../files/filesApi";
 import { ApiError } from "../api";
@@ -8,6 +8,9 @@ import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import { CardFields } from "./CardFields";
+import type { TagChange } from "./cardTags";
+import { RelationsSection, type RelatedCardTarget } from "./RelationsSection";
+import { openBlockerCount, relationRow } from "./relationsModel";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -23,9 +26,11 @@ import {
   updateCard,
   updateComment,
   type BoardColumn,
+  type BoardTag,
   type CardChange,
   type CardComment,
-  type CardDetail
+  type CardDetail,
+  type CardRelation
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
@@ -44,6 +49,22 @@ type CardDialogProps = {
   /** Moves the card to the Bin (the dialog confirms first) and closes it. */
   onDelete: (cardId: string) => Promise<void>;
   notify: (message: string) => void;
+  /** The board's tags for the Tags field, and how the board hears of a tag change (13C). */
+  tags?: BoardTag[];
+  onTagsChange?: (change: TagChange) => void;
+  /** Opens a related card (pushes its route). */
+  onOpenRelated?: (card: RelatedCardTarget) => void;
+  /** The relations changed: the board's counts for this card follow (13D). */
+  onRelationsChanged?: (cardId: string, counts: { relation_count: number; open_blockers: number }) => void;
+  /**
+   * "dialog" (over the board) or "page" (/card/:k/full, §4.3): no scrim, not modal, no focus trap,
+   * and two columns above 1024 px. The page sets the document title to the card's.
+   */
+  layout?: "dialog" | "page";
+  /** Dialog only: opens the card as a page (pushes /full). Hidden at ≤760 px, where the dialog is full screen (§11 Q6). */
+  onExpand?: () => void;
+  /** Page only: back to the dialog. */
+  onCollapse?: () => void;
 };
 
 const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -56,7 +77,8 @@ const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.pa
  * The description is Markdown shown through the notes renderer read-only (D44) and edited with
  * an explicit Save; a revision conflict offers Reload or Copy my text.
  */
-export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify }: CardDialogProps) {
+export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify, tags, onTagsChange, onOpenRelated, onRelationsChanged, layout = "dialog", onExpand, onCollapse }: CardDialogProps) {
+  const page = layout === "page";
   const [card, setCard] = useState<CardDetail | null>(null);
   const [comments, setComments] = useState<CardComment[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -74,6 +96,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [attachments, setAttachments] = useState<CardAttachment[]>([]);
+  const [relations, setRelations] = useState<CardRelation[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<UploadedAttachment[]>([]);
   const [unlinking, setUnlinking] = useState<CardAttachment | null>(null);
@@ -96,6 +119,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
       setComments(view.comments);
       setHasMore(view.hasMoreComments);
       setAttachments(view.attachments);
+      setRelations(view.relations ?? []);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 404) onMissing();
       else setLoadError(taskErrorMessage(reason, "Could not load this card"));
@@ -119,7 +143,8 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || subDialogOpen || editingComment) return;
+      // The page is not a dialog: Escape does not leave it.
+      if (page || event.key !== "Escape" || event.defaultPrevented || subDialogOpen || editingComment) return;
       // A dialog opened over the card (Move to…) handles its own Escape.
       if (window.document.querySelector(".file-dialog, .side-panel")) return;
       event.preventDefault();
@@ -127,7 +152,16 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [subDialogOpen, editingComment, requestClose]);
+  }, [page, subDialogOpen, editingComment, requestClose]);
+
+  // The page names the card in the tab; the app's own title comes back when it closes.
+  const pageTitle = page ? card?.title ?? null : null;
+  useEffect(() => {
+    if (pageTitle === null) return undefined;
+    const previous = document.title;
+    document.title = `${pageTitle || "Card"} · Tasks · Nook`;
+    return () => { document.title = previous; };
+  }, [pageTitle]);
 
   function applyCard(next: CardDetail) {
     setCard(next);
@@ -176,7 +210,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   // The fields (due date and time, assignees) save when committed. On CARD_CHANGED the card
   // reloads to the current version and says so, as the title does, instead of overwriting someone
   // else's change.
-  async function saveDetails(change: Pick<CardChange, "dueOn" | "dueTime" | "dueTz" | "assigneeIds">, success: string) {
+  async function saveDetails(change: Omit<CardChange, "title" | "description">, success: string) {
     const current = cardRef.current;
     if (!current) return false;
     setSavingDetails(true);
@@ -424,8 +458,8 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   };
 
   return <>
-    <button className="panel-scrim task-card-scrim" onClick={requestClose} aria-label="Close card" tabIndex={-1} />
-    <section className="task-card-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={trapTabKey}>
+    {!page && <button className="panel-scrim task-card-scrim" onClick={requestClose} aria-label="Close card" tabIndex={-1} />}
+    <section className={page ? "task-card-dialog task-card-page" : "task-card-dialog"} role={page ? undefined : "dialog"} aria-modal={page ? undefined : true} aria-labelledby={titleId} onKeyDown={page ? undefined : trapTabKey}>
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
           <span className="eyebrow">{column ? columnEyebrow(column.name) : "Card"}</span>
@@ -449,7 +483,9 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
         </div>
         {card && <button className="icon-button" onClick={() => onMove(card)} aria-haspopup="dialog" aria-label="Move card" title="Move to…"><ArrowRightLeft /></button>}
         {card && <button className="icon-button" onClick={() => setConfirmDelete(true)} aria-haspopup="dialog" aria-label="Delete card" title="Move to the Bin"><Trash2 /></button>}
-        <button className="icon-button" onClick={requestClose} aria-label="Close card" title="Close"><X /></button>
+        {!page && onExpand && <button className="icon-button task-card-expand" onClick={onExpand} aria-label="Open as page" title="Open as page"><Maximize2 /></button>}
+        {page && onCollapse && <button className="icon-button" onClick={onCollapse} aria-label="Collapse to a dialog" title="Collapse"><Minimize2 /></button>}
+        {!page && <button className="icon-button" onClick={requestClose} aria-label="Close card" title="Close"><X /></button>}
       </header>
 
       <div className="task-card-dialog-body">
@@ -459,11 +495,21 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
         </div>}
         {!loadError && !card && <p className="bin-loading" role="status">Loading the card…</p>}
         {card && <>
+          <div className="task-card-side">
           <p className="task-card-byline">{card.creator_name ? `Added by ${card.creator_name}` : "Added"} · <time dateTime={card.created_at}>{relativeTime(card.created_at)}</time>{card.updated_at !== card.created_at && <> · Updated <time dateTime={card.updated_at}>{relativeTime(card.updated_at)}</time></>}</p>
 
-          <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} />
+          <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} tags={tags} owner={boardOwner} onTagsChange={onTagsChange} />
           {detailsConflict && <p className="file-dialog-error" role="alert">{detailsConflict}</p>}
 
+          <RelationsSection cardId={card.id} boardId={card.board_id} idPrefix={titleId} relations={relations} notify={notify}
+            onOpen={(target) => onOpenRelated?.(target)}
+            onChange={(next) => {
+              setRelations(next);
+              onRelationsChanged?.(card.id, { relation_count: next.length, open_blockers: openBlockerCount(next.map(relationRow)) });
+            }} />
+          </div>
+
+          <div className="task-card-main">
           <section className="task-card-section" aria-labelledby={`${titleId}-description`}>
             <header><h3 id={`${titleId}-description`}>Description</h3>{!editing && <button className="secondary-button task-small-button" onClick={startEditing}><Pencil />Edit</button>}</header>
             {editing
@@ -542,6 +588,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
               </span>
             </div>
           </section>
+          </div>
         </>}
       </div>
     </section>

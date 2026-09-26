@@ -293,6 +293,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mcp-permissions label.locked { cursor: default; opacity: .8; }
 .scope-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 0; padding: 0; list-style: none; }
 .scope-chips li { padding: 2px 8px; border: 1px solid #38383d; border-radius: 999px; color: #c9c9cd; background: #18181b; font-size: .68rem; }
+.scope-chips li.inactive { border-style: dashed; color: #8e8e93; background: transparent; }
 .new-api-key { padding: 14px; border: 1px solid #6c5424; border-radius: 10px; background: #242016; }
 .new-api-key > p { margin: 4px 0 10px; color: #b5a77f; }
 .new-api-key textarea { width: 100%; min-height: 66px; resize: vertical; border: 1px solid #4a4129; border-radius: 8px; padding: 10px; background: #111113; color: #f1cd78; font: .76rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }

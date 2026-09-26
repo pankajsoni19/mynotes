@@ -27,3 +27,18 @@ test("the first registration becomes the only admin, and the host CLI manages ro
   expect(result.cliEvents).toEqual([{ via: "cli", action: "role_change", from_role: "member", to_role: "admin", actor_id: null }]);
   expect(result.cliAudit).toEqual({ count: 1 });
 }, 30_000);
+
+test("with accounts but no active admin, boot warns and the next registration becomes the admin", () => {
+  const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "noActiveAdminProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+  const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
+  const result = JSON.parse(output) as Record<string, any>;
+  // A fresh, empty install is not a lockout.
+  expect(result.emptyWarned).toBe(false);
+  expect(result.bootWarnings).toHaveLength(1);
+  expect(result.bootWarnings[0]).toContain("bun server/team-admin.ts set-role <email> admin");
+  expect(result.statuses).toEqual([201, 201]);
+  // Only the first registration while nobody can manage the team is promoted.
+  expect(result.roles).toEqual(["admin", "member"]);
+  expect(result.events).toEqual([{ via: "bootstrap", action: "bootstrap_admin", to_role: "admin", actor_id: null }]);
+  expect(result.afterWarned).toBe(false);
+}, 30_000);

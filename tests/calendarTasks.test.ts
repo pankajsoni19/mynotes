@@ -75,6 +75,40 @@ describe("the Tasks due overlay", () => {
     db.close();
   });
 
+  test("busy days just outside the range never push in-range cards out", () => {
+    const db = new Database(":memory:", { strict: true });
+    db.exec("PRAGMA foreign_keys = ON");
+    runMigrations(db);
+    const at = "2026-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('owner', 'o@example.test', 'owner', 'x', ?)").run(at);
+    db.query("INSERT INTO boards (id, owner_id, name, visibility, created_at, updated_at) VALUES ('b', 'owner', 'Busy', 'private', ?, ?)").run(at, at);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at, is_done) VALUES ('todo', 'b', 'To do', 1, ?, ?, 0)").run(at, at);
+    const card = db.query("INSERT INTO cards (id, board_id, column_id, position, title, due_on, due_time, due_tz, created_at, updated_at) VALUES (?, 'b', 'todo', ?, ?, ?, ?, ?, ?, ?)");
+    let position = 0;
+    const add = (id: string, dueOn: string, dueTime: string | null = null, dueTz: string | null = null) =>
+      card.run(id, ++position, id, dueOn, dueTime, dueTz, at, at);
+    db.transaction(() => {
+      // 700 date-only cards on the two days before the range, and 300 timed ones that land just
+      // before it for a UTC viewer: all inside the widened ±2-day window, none in range.
+      for (let index = 0; index < 700; index += 1) add(`a-edge-${String(index).padStart(3, "0")}`, index % 2 ? "2026-05-09" : "2026-05-08");
+      for (let index = 0; index < 300; index += 1) add(`a-timed-${String(index).padStart(3, "0")}`, "2026-05-09", "23:00", "UTC");
+      add("in-first", "2026-05-10");
+      add("in-timed", "2026-05-10", "08:00", "UTC");
+      add("in-last", "2026-05-11");
+      // And the day after the range is just as busy.
+      for (let index = 0; index < 700; index += 1) add(`z-edge-${String(index).padStart(3, "0")}`, "2026-05-12");
+    })();
+    const overlay = createDueTasksQuery(db);
+    expect(overlay.list("owner", { fromDate: "2026-05-10", toDate: "2026-05-12" }, "UTC").map((task) => task.cardId)).toEqual(["in-first", "in-timed", "in-last"]);
+    // A far-east viewer (UTC+14): the 23:00 UTC cards of 9 May fall on their 10 May and fill the
+    // capped list after the one date-only card of that day.
+    const east = overlay.list("owner", { fromDate: "2026-05-10", toDate: "2026-05-11" }, "Pacific/Kiritimati");
+    expect(east).toHaveLength(200);
+    expect(east[0]!.cardId).toBe("in-first");
+    expect(east.slice(1).every((task) => task.cardId.startsWith("a-timed") && task.date === "2026-05-10")).toBe(true);
+    db.close();
+  });
+
   test("GET /api/events?include=tasks places a timed card by the viewer's tz", async () => {
     const owner = await createUser("Overlay timed");
     const created = await (await request("/tasks/boards", { method: "POST", body: JSON.stringify({ name: "Timed overlay" }) }, owner)).json() as { board: { id: string }; columns: Array<{ id: string }> };

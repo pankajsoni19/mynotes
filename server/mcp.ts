@@ -43,13 +43,22 @@ export function createMcpApiKey(userId: string, name: string, requestedScopes: r
   return { ...row, token };
 }
 
+/**
+ * The caller's live keys. `scopes` are the stored ones; `effectiveScopes` are what the key can use
+ * right now under the owner's current role (a demoted admin's key keeps `team:read` stored but not
+ * effective), so Settings can show the difference.
+ */
 export function listMcpApiKeys(userId: string) {
   const rows = db.query(`
-    SELECT id, name, key_prefix, scopes, created_at, last_used_at
-    FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL
-    ORDER BY created_at DESC
-  `).all(userId) as Array<{ id: string; name: string; key_prefix: string; scopes: string; created_at: string; last_used_at: string | null }>;
-  return rows.map((row) => ({ ...row, scopes: parseStoredScopes(row.scopes) }));
+    SELECT k.id, k.name, k.key_prefix, k.scopes, k.created_at, k.last_used_at, u.role
+    FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
+    WHERE k.user_id = ? AND k.revoked_at IS NULL
+    ORDER BY k.created_at DESC
+  `).all(userId) as Array<{ id: string; name: string; key_prefix: string; scopes: string; created_at: string; last_used_at: string | null; role: Role }>;
+  return rows.map(({ role, ...row }) => {
+    const scopes = parseStoredScopes(row.scopes);
+    return { ...row, scopes, effectiveScopes: effectiveMcpScopes(scopes, role) };
+  });
 }
 
 export function revokeMcpApiKey(userId: string, keyId: string) {

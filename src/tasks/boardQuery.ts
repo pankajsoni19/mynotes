@@ -9,10 +9,9 @@ import { cardFilterFromQuery, foldText, matchesQuery, queryCards, sortCards, TAS
 import { byPosition } from "./boardOrder";
 import type { BoardGroupId, BoardQuery, BoardSort } from "./boardUrl";
 import { cardAssignees } from "./taskActions";
-import type { BoardColumn, BoardDetail, CardAssignee, CardSummary } from "./tasksApi";
+import type { BoardColumn, BoardDetail, BoardTag, CardAssignee, CardSummary } from "./tasksApi";
 
-/** A board tag (13C, `GET /boards/:b` → `tags`). */
-export type BoardTag = { id: string; board_id?: string; name: string; color: string; card_count?: number };
+export type { BoardTag } from "./tasksApi";
 
 /**
  * The card fields the views read. 13C and 13D added `description_excerpt`, `tag_ids`, `flags`,

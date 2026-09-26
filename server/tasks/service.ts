@@ -584,7 +584,8 @@ function requireAssignableUser(boardId: string, assigneeId: string) {
  * Edits title, description, due date, assignees, tags, and/or flags with a compare-and-swap
  * on `revision` (409 CARD_CHANGED carries the current card). Every field
  * changes in one transaction and `revision` goes up by exactly 1 (D107).
- * `dueOn` accepts null to clear; `assigneeIds` replaces the whole set. Only
+ * `dueOn` accepts null to clear; `assigneeIds` replaces the whole set, and the
+ * legacy `assigneeId` is 409 ASSIGNEES_MULTIPLE on a card with several. Only
  * users being added must be able to read the board, so a former member can
  * stay until someone removes them (T93).
  */
@@ -596,6 +597,13 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
       throw new TaskError(409, "Someone else changed this card", "CARD_CHANGED", { card: cardDetail(cardId)! });
     }
     const assignees = requestedAssignees(input);
+    if (input.assigneeId !== undefined) {
+      // The legacy single field would silently drop the other assignees: refuse it once there are several.
+      const current = assigneesForCard(cardId);
+      if (current.length > 1) {
+        throw new TaskError(409, "This card has several assignees. Send assigneeIds to change them.", "ASSIGNEES_MULTIPLE", { assignees: current });
+      }
+    }
     for (const assigneeId of assignees ? newAssignees(cardId, assignees) : []) requireAssignableUser(board.id, assigneeId);
     const tagIds = input.tagIds === undefined ? undefined : requireCardTags(board.id, input.tagIds);
     const setDue = input.dueOn !== undefined || input.dueTime !== undefined || input.dueTz !== undefined;

@@ -12,27 +12,11 @@
 
 /* Shared pieces */
 .task-flags { display: inline-flex; flex: none; gap: 3px; vertical-align: middle; }
-.task-flag { width: 14px; height: 14px; }
-.task-flag.flag-urgent { color: #ff8f86; }
-.task-flag.flag-blocked { color: #f0c46a; }
-.task-flag.flag-needs_review { color: #8fb5ff; }
-.task-flag.flag-on_hold { color: #9a9aa1; }
+.task-flag { display: inline-grid; place-items: center; }
+.task-flag svg { width: 14px; height: 14px; }
 .task-tags { display: inline-flex; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; }
 .task-tag { max-width: 120px; overflow: hidden; border-radius: 999px; padding: 1px 8px; background: #2a2a2f; color: #d0d0d4; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-tag.more { background: transparent; color: #8d8d94; padding: 1px 2px; }
-.task-tag.tone-red { background: #3d1d22; color: #ffb3bd; }
-.task-tag.tone-orange { background: #3d2a18; color: #ffc98f; }
-.task-tag.tone-yellow { background: #3a3318; color: #f5dc79; }
-.task-tag.tone-green { background: #1c3222; color: #a7e3b2; }
-.task-tag.tone-teal { background: #183331; color: #93e0d6; }
-.task-tag.tone-blue { background: #1a2640; color: #a9c1f5; }
-.task-tag.tone-purple { background: #2a1f3d; color: #cdb6f7; }
-.task-tag.tone-pink { background: #3b1c30; color: #f7b0d8; }
-.tasks-app .ui-option-swatch.color-red { background: #ff8f99; } .tasks-app .ui-option-swatch.color-orange { background: #ffb366; }
-.tasks-app .ui-option-swatch.color-yellow { background: #f5dc79; } .tasks-app .ui-option-swatch.color-green { background: #7fd493; }
-.tasks-app .ui-option-swatch.color-teal { background: #6fd6c9; } .tasks-app .ui-option-swatch.color-blue { background: #8fb0f5; }
-.tasks-app .ui-option-swatch.color-purple { background: #bb9cf5; } .tasks-app .ui-option-swatch.color-pink { background: #f59ccb; }
-.tasks-app .ui-option-swatch.color-gray { background: #9a9aa1; }
 
 /* Table: scrolls sideways inside its region, with a sticky title column. */
 /* Positioned, so absolutely positioned screen-reader text inside is clipped with the table. */
@@ -82,6 +66,11 @@
 .task-group-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; color: #85858c; font-size: .74rem; }
 .task-group-meta .task-due-chip { justify-self: auto; }
 .task-group-also { color: #7c7c83; font-style: italic; }
+.task-group-excerpt { min-width: 0; overflow: hidden; color: #8d8d94; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.task-group-people { display: inline-flex; }
+.task-group-people .task-card-people, .task-table-people .task-card-people { display: inline-flex; align-items: center; }
+.task-table-people .task-card-people { margin-right: 6px; vertical-align: middle; }
+.task-table-names { vertical-align: middle; }
 .task-group-more { flex: none; width: 36px; height: 36px; }
 .task-group-more svg { width: 16px; }
 .task-group-empty { margin: 4px 8px 0; color: #6f6f76; font-size: .78rem; }

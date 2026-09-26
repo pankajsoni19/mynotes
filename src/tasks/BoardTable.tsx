@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, Ellipsis } from "lucide-react";
 import type { BoardCard, BoardData } from "./boardQuery";
 import type { BoardSort, BoardSortField } from "./boardUrl";
-import { assigneeNames, DueChip, FlagIcons, shortTimestamp, TagChips } from "./boardViewParts";
+import { assigneeNames, Avatars, DueChip, FlagIcons, shortTimestamp, TagChips } from "./boardViewParts";
 
 type BoardTableProps = {
   board: BoardData;
@@ -64,12 +64,12 @@ export function BoardTable({ board, cards, sort, today, onSort, onOpenCard, onCa
             onClick={(event) => { if (!(event.target as Element).closest("button")) onOpenCard(card); }}>
             <th scope="row" className="task-table-title">
               <span className="task-table-title-cell">
-                <button type="button" className="task-table-open" onClick={() => onOpenCard(card)} data-open-card={card.id}>{card.title}</button>
+                <button type="button" className="task-table-open" onClick={() => onOpenCard(card)} data-open-card={card.id} title={card.description_excerpt || undefined}>{card.title}</button>
                 <button type="button" className="icon-button task-table-more" onClick={(event) => onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…"><Ellipsis /></button>
               </span>
             </th>
             <td>{column?.name ?? ""}</td>
-            <td className="task-table-people" title={names.join(", ")}>{names.length ? names.join(", ") : <span className="task-table-empty">—</span>}</td>
+            <td className="task-table-people" title={names.join(", ")}>{names.length ? <><Avatars card={card} /><span className="task-table-names">{names.join(", ")}</span></> : <span className="task-table-empty">—</span>}</td>
             <td><DueChip card={card} today={today} done={done} /></td>
             <td><TagChips tagIds={card.tag_ids} board={board} max={2} /></td>
             <td><FlagIcons flags={card.flags} /></td>
@@ -79,6 +79,6 @@ export function BoardTable({ board, cards, sort, today, onSort, onOpenCard, onCa
         })}
       </tbody>
     </table>
-    {!cards.length && <p className="task-view-empty">{filtered ? "No cards match these filters." : "No cards yet. Add one in the Columns view."}</p>}
+    {!cards.length && <p className="task-view-empty">{filtered ? "No cards match these filters." : "No cards yet. Add one with New card."}</p>}
   </div>;
 }

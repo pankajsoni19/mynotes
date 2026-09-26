@@ -75,9 +75,14 @@ const assigneeIdsSchema = z.array(uuid).max(MAX_ASSIGNEES * 2);
 const tagIdsSchema = z.array(uuid).max(MAX_TAGS_PER_CARD * 2);
 /** Flags (D110): unique values from the fixed set. */
 const flagsSchema = z.array(z.enum(CARD_FLAGS)).max(CARD_FLAGS.length).refine((flags) => new Set(flags).size === flags.length, "Each flag can appear once");
-/** Relations to create with a new card (§5.1 composer): each target must be readable; same rules as POST /cards/:k/relations. */
+/**
+ * Relations to create with a new card (§5.1 composer): each target must be readable; same rules as
+ * POST /cards/:k/relations. A target listed twice is a 400 here: the new card has no relations yet,
+ * so a 409 RELATION_EXISTS would point at a relation the same call rolled back.
+ */
 const createRelationsSchema = z.array(z.object({ targetCardId: uuid, type: z.enum(RELATION_TYPES as [RelationType, ...RelationType[]]) }).strict())
-  .max(MAX_RELATIONS_PER_CARD);
+  .max(MAX_RELATIONS_PER_CARD)
+  .refine((relations) => new Set(relations.map((relation) => relation.targetCardId.toLowerCase())).size === relations.length, "Each card can be related once");
 export const tagCreateSchema = z.object({ name: label(TAG_NAME_MAX), color: z.enum(TAG_COLORS).optional() }).strict();
 export const tagPatchSchema = z.object({ name: label(TAG_NAME_MAX).optional(), color: z.enum(TAG_COLORS).optional() }).strict()
   .refine((value) => value.name !== undefined || value.color !== undefined, "Provide a name or a color");

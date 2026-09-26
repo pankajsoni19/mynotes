@@ -25,10 +25,10 @@ test("card URLs carry the board query forward, and closing returns to the same v
   expect(formatRoute(route)).toBe(`/tasks/${board}/card/${card}?view=list&group=assignee`);
   if (route.app !== "tasks") throw new Error("not tasks");
   expect(formatRoute(parentTasksRoute(route)!)).toBe(`/tasks/${board}?view=list&group=assignee`);
-  expect(tasksBackAction(route, 0)).toEqual({ kind: "replace", route: tasksRoute(board, null, route.query) });
+  expect(tasksBackAction(route, 0)).toEqual({ kind: "replace", route: tasksRoute(board, null, false, route.query) });
   // The board list never carries a board's query.
-  expect(formatRoute(parentTasksRoute(tasksRoute(board, null, route.query))!)).toBe("/tasks");
-  expect(formatRoute(tasksRoute(null, null, route.query))).toBe("/tasks");
+  expect(formatRoute(parentTasksRoute(tasksRoute(board, null, false, route.query))!)).toBe("/tasks");
+  expect(formatRoute(tasksRoute(null, null, false, route.query))).toBe("/tasks");
 });
 
 test("an href with its own query parses like a location; other apps ignore the search", () => {

@@ -3,18 +3,23 @@ import { isDefaultBoardQuery, type BoardQuery } from "./tasks/boardUrl";
 
 export type TasksRoute = Extract<Route, { app: "tasks" }>;
 
-/** A Tasks route. `query` (the board's view and filters, D112) is kept only with a board and when it is not the default. */
-export function tasksRoute(boardId: string | null = null, cardId: string | null = null, query?: BoardQuery | null): TasksRoute {
-  const route: TasksRoute = { app: "tasks", boardId, cardId: boardId ? cardId : null };
+/**
+ * A Tasks route. `full` opens the card as a page (13D); `query` (the board's view and filters,
+ * D112) is kept only with a board and when it is not the default.
+ */
+export function tasksRoute(boardId: string | null = null, cardId: string | null = null, full = false, query?: BoardQuery | null): TasksRoute {
+  const card = boardId ? cardId : null;
+  const route: TasksRoute = card && full ? { app: "tasks", boardId, cardId: card, full: true } : { app: "tasks", boardId, cardId: card };
   return boardId && query && !isDefaultBoardQuery(query) ? { ...route, query } : route;
 }
 
 /**
  * The view one level up, used when in-app Back has no history entry of this visit to step back
- * to (a deep link): card → board (in the same view) → board list → Home (null).
+ * to (a deep link): full page → card dialog → board (each in the same view) → board list → Home (null).
  */
 export function parentTasksRoute(route: TasksRoute): TasksRoute | null {
-  if (route.cardId) return tasksRoute(route.boardId, null, route.query);
+  if (route.cardId && route.full) return tasksRoute(route.boardId, route.cardId, false, route.query);
+  if (route.cardId) return tasksRoute(route.boardId, null, false, route.query);
   if (route.boardId) return tasksRoute();
   return null;
 }
@@ -28,4 +33,29 @@ export function tasksBackAction(route: TasksRoute, depth: number): { kind: "hist
   if (depth > 0) return { kind: "history" };
   const parent = parentTasksRoute(route);
   return parent ? { kind: "replace", route: parent } : { kind: "home" };
+}
+
+// The entry that Expand pushes from the card dialog carries this hint (§4.7), so Collapse and Close
+// on the full page know the dialog, and the board before it, are the entries just below.
+const fromDialogKey = "mynotes.tasks.fromDialog";
+
+export function withFromDialogHint(state: unknown) {
+  const base = state && typeof state === "object" ? state as Record<string, unknown> : {};
+  return { ...base, [fromDialogKey]: true };
+}
+
+export function hasFromDialogHint(state: unknown) {
+  return Boolean(state && typeof state === "object" && (state as Record<string, unknown>)[fromDialogKey] === true);
+}
+
+/**
+ * Collapse and Close on the full page (§4.7). With the hint, step back through the entries Expand
+ * came from: Collapse returns to the dialog (one back) and Close to the entry before it (two back).
+ * Otherwise (a deep link, a reload of an older entry, a page opened from a relation link) replace
+ * the entry, so neither ever leaves Nook.
+ */
+export function fullPageAction(action: "collapse" | "close", route: TasksRoute, state: unknown, depth: number): { kind: "history"; delta: number } | { kind: "replace"; route: TasksRoute } {
+  const hint = hasFromDialogHint(state);
+  if (action === "collapse") return hint && depth > 0 ? { kind: "history", delta: -1 } : { kind: "replace", route: tasksRoute(route.boardId, route.cardId, false, route.query) };
+  return hint && depth >= 2 ? { kind: "history", delta: -2 } : { kind: "replace", route: tasksRoute(route.boardId, null, false, route.query) };
 }

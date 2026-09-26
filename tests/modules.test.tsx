@@ -5,6 +5,7 @@ import { AccountActions, TeamNavContext } from "../src/AppShell";
 import { ModulesSettings } from "../src/ModulesSettings";
 import {
   DEFAULT_PREFERENCES,
+  hiddenEntryStep,
   hiddenModuleForApp,
   hiddenTodaySections,
   isAppEnabled,
@@ -14,12 +15,15 @@ import {
   ModulesContext,
   moduleOffHint,
   normalizeDisabledModules,
+  openTeamViaSettings,
   parsePreferences,
+  recordPopDepth,
   SETTINGS_MODULES,
   settingsModulesFor,
   withModuleEnabled,
   type ModuleId
 } from "../src/modules";
+import { dialogPopDirection } from "../src/historyDialogs";
 import { parseRoute } from "../src/router";
 import { TodayHome } from "../src/today/TodayHome";
 import { enabledTodayApps, TODAY_APPS } from "../src/today/todayApps";
@@ -160,5 +164,79 @@ describe("gating (client only)", () => {
     expect(hiddenModuleForApp([...MODULE_IDS], parseRoute("/").app)).toBeNull();
     expect(hiddenModuleForApp(normalizeDisabledModules(["home", "settings"]), parseRoute("/").app)).toBeNull();
     expect(isAppEnabled(["search"], "notes")).toBe(true);
+  });
+
+  test("Back and Forward onto a hidden module skip its entry instead of adding a second Home", () => {
+    // A browser stack of paths; each entry's depth is its index, as the app writes them.
+    function walk(paths: string[], start: number, move: -1 | 1) {
+      const entries = [...paths];
+      let from = start;
+      let index = start + move;
+      for (;;) {
+        if (!hiddenModuleForApp(["calendar"], parseRoute(entries[index]!).app)) return { entries, at: entries[index] };
+        const step = hiddenEntryStep(dialogPopDirection(from, index), index);
+        if (step === "replace") { entries[index] = "/"; return { entries, at: "/" }; }
+        // history.go(-1) back to where Forward came from; that popstate is ignored.
+        if (step === "undo") return { entries, at: entries[from] };
+        // history.back(): another Back popstate, one entry lower.
+        from = index;
+        index -= 1;
+      }
+    }
+    // Forward from Home onto /calendar: back on Home, the stack is untouched (no duplicate `/`).
+    expect(walk(["/", "/calendar"], 0, 1)).toEqual({ entries: ["/", "/calendar"], at: "/" });
+    // Back from /tasks onto /calendar steps on to Home below it.
+    expect(walk(["/", "/calendar", "/tasks"], 2, -1)).toEqual({ entries: ["/", "/calendar", "/tasks"], at: "/" });
+    // Two hidden entries in a row are both stepped past.
+    expect(walk(["/", "/calendar", "/calendar/month/2026-09", "/tasks"], 3, -1).at).toBe("/");
+    // A hidden entry at depth 0 has nothing below: it is replaced with Home.
+    expect(hiddenEntryStep("back", 0)).toBe("replace");
+    expect(hiddenEntryStep(null, 2)).toBe("replace");
+    expect(hiddenEntryStep("forward", 3)).toBe("undo");
+    expect(hiddenEntryStep("back", 3)).toBe("back");
+  });
+
+  test("consecutive Forwards onto a hidden entry are each undone, with no duplicate Home", () => {
+    // A browser whose go() fires popstate later, as real browsers do, and the popstate handler in
+    // App's order: record the depth first (every popstate), then skip ignored ones, then gate.
+    const entries = [{ path: "/", depth: 0 }, { path: "/team", depth: 1 }];
+    let index = 1;
+    const depthRef = { current: 1 };
+    const queued: number[] = [];
+    let ignoring = 0;
+    const onPopState = () => {
+      const entry = entries[index]!;
+      const previousDepth = recordPopDepth(depthRef, entry.depth);
+      if (ignoring > 0) { ignoring -= 1; return; }
+      if (!hiddenModuleForApp(["team"], parseRoute(entry.path).app)) return;
+      const step = hiddenEntryStep(dialogPopDirection(previousDepth, entry.depth), entry.depth);
+      if (step === "replace") { entries[index] = { path: "/", depth: entry.depth }; return; }
+      if (step === "undo") { depthRef.current = previousDepth; ignoring += 1; queued.push(-1); return; }
+      queued.push(-1);
+    };
+    const go = (delta: number) => { index += delta; onPopState(); };
+    const settle = () => { while (queued.length) go(queued.shift()!); };
+    // Settings → Manage team pushed /team at depth 1; Team is off. Back to Home.
+    go(-1); settle();
+    expect(index).toBe(0);
+    for (let forward = 0; forward < 3; forward += 1) {
+      go(1);
+      // A render while the undo is in flight must not re-read the depth: history.state is still /team.
+      expect(depthRef.current).toBe(0);
+      settle();
+      expect(index).toBe(0);
+      expect(depthRef.current).toBe(0);
+      expect(entries.map((entry) => entry.path)).toEqual(["/", "/team"]);
+    }
+  });
+
+  test("Manage team keeps the gate open only when Team actually opened", async () => {
+    const seen: boolean[] = [];
+    // Notes could not save the open note: the switch fails and the flag is cleared again.
+    expect(await openTeamViaSettings((value) => seen.push(value), async () => false)).toBe(false);
+    expect(seen).toEqual([true, false]);
+    seen.length = 0;
+    expect(await openTeamViaSettings((value) => seen.push(value), async () => true)).toBe(true);
+    expect(seen).toEqual([true]);
   });
 });
