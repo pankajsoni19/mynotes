@@ -69,8 +69,8 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
-const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards"];
-const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "move_card", "update_card"];
+const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "search_cards"];
+const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "link_cards", "move_card", "update_card"];
 
 describe("MCP task tools", () => {
   test("task tools appear only for task scopes, write implies read, and there is nothing that deletes", async () => {
@@ -78,7 +78,7 @@ describe("MCP task tools", () => {
     expect(await toolNames(makeKey(user, ["tasks:read"]))).toEqual(TASK_READ_TOOLS);
     const writer = await toolNames(makeKey(user, ["tasks:write"]));
     expect(writer).toEqual([...TASK_READ_TOOLS, ...TASK_WRITE_TOOLS].sort());
-    expect(writer.some((name) => /delete|remove|purge|share|column|rename/.test(name))).toBe(false);
+    expect(writer.some((name) => /delete|remove|purge|share|column|rename|unlink/.test(name))).toBe(false);
     const notesOnly = makeKey(user, ["notes:read", "notes:write-draft", "files:read"]);
     const notesTools = await toolNames(notesOnly);
     for (const name of [...TASK_READ_TOOLS, ...TASK_WRITE_TOOLS]) expect(notesTools).not.toContain(name);
@@ -298,5 +298,106 @@ describe("MCP task tools", () => {
     expect((await callTool(key, "get_card", { cardId: s.cardId })).isError).toBe(false);
     // A refused write changed nothing.
     expect((await api(s.owner, "GET", `/boards/${s.boardId}`)).body.cards.map((card: { title: string }) => card.title)).toEqual(["Owner card"]);
+  });
+});
+
+describe("MCP card relations and search (WAVE_13 §5.5, T90, T91, T95, T99)", () => {
+  test("link_cards creates a relation seen from cardId, never bumps revisions, and is audited as MCP", async () => {
+    const s = await setup("MCP link");
+    const key = makeKey(s.member, ["tasks:write"]);
+    const second = (await api(s.member, "POST", `/boards/${s.boardId}/cards`, { columnId: s.doing, title: "Second" })).body.card as { id: string };
+    const linked = await callTool(key, "link_cards", { cardId: s.cardId, targetCardId: second.id, type: "depends_on" });
+    expect(linked.isError).toBe(false);
+    expect(linked.value).toEqual({ relation: { type: "depends_on", cardId: second.id, title: "Second", boardName: "MCP link board", columnName: "Doing", isDone: false } });
+    // The REST view from the other side is the inverse; revisions are unchanged (D107).
+    const other = (await api(s.member, "GET", `/cards/${second.id}`)).body;
+    expect(other.relations).toEqual([expect.objectContaining({ type: "needed_by", card: expect.objectContaining({ id: s.cardId }) })]);
+    expect(other.card.revision).toBe(1);
+    expect((await api(s.member, "GET", `/cards/${s.cardId}`)).body.card.revision).toBe(1);
+    // RELATION_EXISTS in either direction, with the existing relation.
+    const again = await callTool(key, "link_cards", { cardId: second.id, targetCardId: s.cardId, type: "relates_to" });
+    expect(again.isError).toBe(true);
+    expect(again.value).toMatchObject({ code: "RELATION_EXISTS", relation: { type: "needed_by", cardId: s.cardId } });
+    // get_card and list_cards carry the relation and the counts.
+    expect((await callTool(key, "get_card", { cardId: s.cardId })).value.relations).toEqual([linked.value.relation]);
+    const listed = (await callTool(key, "list_cards", { boardId: s.boardId })).value.cards as Array<Record<string, unknown>>;
+    expect(listed.find((card) => card.id === s.cardId)).toMatchObject({ relation_count: 1, open_blockers: 1 });
+    expect(listed.find((card) => card.id === second.id)).toMatchObject({ relation_count: 1, open_blockers: 0 });
+    // Audit with ids only, marked as MCP.
+    expect(auditRows(s.member.userId, "task.relation_create").at(-1)).toEqual({ boardId: s.boardId, cardId: s.cardId, relationId: expect.any(String), kind: "blocks", via: "mcp", keyId: key.id });
+    // Bad arguments.
+    expect((await callTool(key, "link_cards", { cardId: s.cardId, targetCardId: s.cardId, type: "relates_to" })).value).toMatchObject({ code: "INVALID" });
+    expect((await callTool(key, "link_cards", { cardId: s.cardId, targetCardId: second.id, type: "blocks" })).isError).toBe(true);
+  });
+
+  test("NOT_FOUND for unreadable, missing, or binned cards alike; restricted relations carry no data", async () => {
+    const s = await setup("MCP link access");
+    const memberKey = makeKey(s.member, ["tasks:write"]);
+    const ownerKey = makeKey(s.owner, ["tasks:write"]);
+    const missing = await callTool(memberKey, "link_cards", { cardId: s.cardId, targetCardId: crypto.randomUUID(), type: "relates_to" });
+    expect(missing.value).toMatchObject({ code: "NOT_FOUND" });
+    expect((await callTool(memberKey, "link_cards", { cardId: s.cardId, targetCardId: s.privateCardId, type: "relates_to" })).value).toEqual(missing.value);
+    expect((await callTool(memberKey, "link_cards", { cardId: s.privateCardId, targetCardId: s.cardId, type: "relates_to" })).value).toEqual(missing.value);
+    const strangerKey = makeKey(s.stranger, ["tasks:write"]);
+    expect((await callTool(strangerKey, "link_cards", { cardId: s.cardId, targetCardId: s.privateCardId, type: "relates_to" })).value).toEqual(missing.value);
+
+    // The owner links the shared card to their private card; the member's agent sees only a restricted row.
+    const linked = await callTool(ownerKey, "link_cards", { cardId: s.cardId, targetCardId: s.privateCardId, type: "duplicates" });
+    expect(linked.value.relation).toMatchObject({ type: "duplicates", cardId: s.privateCardId, title: "Secret" });
+    const seen = await callTool(memberKey, "get_card", { cardId: s.cardId });
+    expect(seen.value.relations).toEqual([{ type: "duplicates", restricted: true }]);
+    const raw = JSON.stringify(seen.value);
+    expect(raw).not.toContain(s.privateCardId);
+    expect(raw).not.toContain("Secret");
+    expect(raw).not.toContain("MCP link access private");
+    expect((await callTool(memberKey, "list_cards", { boardId: s.boardId })).value.cards[0]).toMatchObject({ relation_count: 1, open_blockers: 0 });
+
+    // A binned target is NOT_FOUND like a missing one, and hidden from its readers.
+    await api(s.owner, "DELETE", `/cards/${s.privateCardId}`);
+    expect((await callTool(ownerKey, "get_card", { cardId: s.cardId })).value.relations).toEqual([]);
+    const third = (await api(s.owner, "POST", `/boards/${s.boardId}/cards`, { columnId: s.todo, title: "Third" })).body.card as { id: string };
+    await api(s.owner, "DELETE", `/cards/${third.id}`);
+    expect((await callTool(ownerKey, "link_cards", { cardId: s.cardId, targetCardId: third.id, type: "relates_to" })).value).toEqual(missing.value);
+  });
+
+  test("search_cards returns readable live cards by title, bounded, and needs tasks:read", async () => {
+    const s = await setup("MCP find");
+    const key = makeKey(s.member, ["tasks:read"]);
+    const found = await callTool(key, "search_cards", { query: "owner CARD" });
+    expect(found.isError).toBe(false);
+    expect(found.value.results).toContainEqual({ id: s.cardId, board_id: s.boardId, board_name: "MCP find board", title: "Owner card", column_name: "To do", is_done: 0 });
+    expect(found.value.truncated).toBe(false);
+    // Private cards never appear; the owner's own key finds them.
+    expect(((await callTool(key, "search_cards", { query: "Secret" })).value.results as Array<{ id: string }>).map((hit) => hit.id)).not.toContain(s.privateCardId);
+    expect(((await callTool(makeKey(s.owner, ["tasks:read"]), "search_cards", { query: "Secret", boardId: s.privateBoardId })).value.results as Array<{ id: string }>)[0]!.id).toBe(s.privateCardId);
+    // Bounds.
+    expect((await callTool(key, "search_cards", { query: "" })).isError).toBe(true);
+    expect((await callTool(key, "search_cards", { query: "   " })).value).toMatchObject({ code: "INVALID" });
+    expect((await callTool(key, "search_cards", { query: "x", limit: 21 })).isError).toBe(true);
+    const direct = await invokeMcpToolForTests("search_cards", { query: "x", limit: 50 }, key.id);
+    expect(direct.isError).toBe(true);
+    // Hidden from keys without a tasks scope, and re-checked in the handler.
+    const notesOnly = makeKey(s.member, ["notes:read"]);
+    expect(await toolNames(notesOnly)).not.toContain("search_cards");
+    expect(JSON.parse((await invokeMcpToolForTests("search_cards", { query: "x" }, notesOnly.id)).content[0]!.text)).toMatchObject({ code: "SCOPE_REQUIRED" });
+    expect(JSON.parse((await invokeMcpToolForTests("link_cards", { cardId: s.cardId, targetCardId: s.privateCardId, type: "relates_to" }, key.id)).content[0]!.text))
+      .toMatchObject({ code: "SCOPE_REQUIRED" });
+  });
+
+  test("link_cards counts against the task_write bucket; taskErrorToMcp maps RELATION_EXISTS", async () => {
+    const s = await setup("MCP link daily");
+    const key = makeKey(s.member, ["tasks:write"]);
+    const second = (await api(s.member, "POST", `/boards/${s.boardId}/cards`, { columnId: s.doing, title: "Second" })).body.card as { id: string };
+    for (let index = 0; index < MCP_LIMITS.task_write.limit; index += 1) expect(consumeMcpLimits({ keyId: key.id }, ["task_write"])).toBe(0);
+    expect((await callTool(key, "link_cards", { cardId: s.cardId, targetCardId: second.id, type: "relates_to" })).value).toMatchObject({ code: "RATE_LIMITED" });
+    expect((await api(s.member, "GET", `/cards/${s.cardId}`)).body.relations).toEqual([]);
+    // search_cards is a read and still works.
+    expect((await callTool(key, "search_cards", { query: "Second" })).isError).toBe(false);
+
+    const mapped = taskErrorToMcp(new TaskError(409, "These cards are already related", "RELATION_EXISTS", {
+      relation: { id: crypto.randomUUID(), type: "relates_to", restricted: true, created_at: new Date().toISOString() }
+    }));
+    expect(mapped.code).toBe("RELATION_EXISTS");
+    expect(mapped.details).toEqual({ relation: { type: "relates_to", restricted: true } });
   });
 });
