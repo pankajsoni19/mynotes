@@ -41,8 +41,8 @@ const ids = (cards: readonly BoardCard[]) => cards.map((item) => item.id);
 const run = (search: string, change: Partial<BoardContext> = {}) => ids(applyBoardQuery(board, parseBoardSearch(search), { ...context, ...change }).cards);
 
 test("boardData fills the optional payload fields and orders columns", () => {
-  const plain = boardData({ columns: [column(todo, "To do", 1)], cards: [card("x", { assignees: undefined, assignee_id: asha, assignee_name: "Asha" })] });
-  expect(plain.cards[0]).toMatchObject({ description_excerpt: "", tag_ids: [], flags: [], assignees: [{ id: asha, display_name: "Asha", can_read: 1 }] });
+  const plain = boardData({ columns: [column(todo, "To do", 1)], cards: [card("x", { assignees: undefined })] });
+  expect(plain.cards[0]).toMatchObject({ description_excerpt: "", tag_ids: [], flags: [], assignees: [] });
   expect(plain.tags).toEqual([]);
   expect(board.columns.map((item) => item.name)).toEqual(["To do", "Doing", "Done"]);
 });

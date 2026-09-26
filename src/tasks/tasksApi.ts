@@ -55,11 +55,8 @@ export type CardSummary = {
   due_tz?: string | null;
   /** The UTC instant when `due_time` is set. */
   due_at?: string | null;
-  /** In assignment order, at most 20 (D102). */
+  /** In assignment order, at most 20 (D102). The board payload sends ids; `getBoard` fills these in. */
   assignees?: CardAssignee[];
-  /** Deprecated (D103): the first assignee. */
-  assignee_id: string | null;
-  assignee_name: string | null;
   /** Plain text of the description, at most 160 characters, '' without one (D111). */
   description_excerpt?: string;
   /** Tags of this board in tagging order, at most 10; resolve against the board's `tags` (D109). */
@@ -103,7 +100,27 @@ export const createBoard = (name: string, template?: BoardTemplateId) =>
 /** Owner only (D122): 409 `LEVEL_IN_USE` or `SPRINTS_IN_USE` when the change would hide cards. */
 export const updateBoardStructure = (boardId: string, structure: BoardStructure) =>
   api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { structure }));
-export const getBoard = (boardId: string) => api<BoardDetail>(`/tasks/boards/${boardId}`);
+/**
+ * The board payload on the wire (D113 trim, v0.9.0): cards carry `assignee_ids` and no `board_id`,
+ * and one board-level `users` map names every assignee once.
+ */
+export type BoardPayloadCard = Omit<CardSummary, "board_id" | "assignees"> & { assignee_ids: string[] };
+export type BoardPayload = Omit<BoardDetail, "cards"> & { cards: BoardPayloadCard[]; users: Record<string, { display_name: string; can_read: 0 | 1 }> };
+
+/** Rebuilds the in-memory card shape (`board_id`, `assignees[]`) from the trimmed payload. */
+export function hydrateBoard(payload: BoardPayload): BoardDetail {
+  const { users, cards, ...rest } = payload;
+  return {
+    ...rest,
+    cards: cards.map(({ assignee_ids, ...card }) => ({
+      ...card,
+      board_id: payload.board.id,
+      assignees: assignee_ids.map((id) => ({ id, display_name: users[id]?.display_name ?? "Former member", can_read: users[id]?.can_read ?? 0 }))
+    }))
+  };
+}
+
+export const getBoard = (boardId: string) => api<BoardPayload>(`/tasks/boards/${boardId}`).then(hydrateBoard);
 export const renameBoard = (boardId: string, name: string) => api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { name }));
 export type BoardReader = { id: string; displayName: string };
 /**

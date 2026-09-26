@@ -192,3 +192,22 @@ export function getBoardWithRelationCounts(userId: string, boardId: string) {
   const counts = relationCountsForBoard(boardId, userId);
   return { ...detail, cards: detail.cards.map((card) => ({ ...card, ...(counts.get(card.id) ?? { relation_count: 0, open_blockers: 0 }) })) };
 }
+
+/** One entry of the board payload's `users` map: every assignee on the board, once (D113 trim). */
+export type BoardPayloadUser = { display_name: string; can_read: 0 | 1 };
+
+/**
+ * `GET /api/tasks/boards/:b` (D113 trim, v0.9.0): each card lists `assignee_ids` and the board
+ * carries one `users` map `{ id: { display_name, can_read } }`; the per-card `board_id` and the
+ * deprecated `assignee_id`/`assignee_name` (Q2) are gone. `GET /cards/:k` and MCP keep the full
+ * `assignees[]` objects. `can_read` is per board, so one entry serves every card.
+ */
+export function boardPayload(userId: string, boardId: string) {
+  const detail = getBoardWithRelationCounts(userId, boardId);
+  const users: Record<string, BoardPayloadUser> = {};
+  const cards = detail.cards.map(({ board_id: _board, assignees, assignee_id: _id, assignee_name: _name, ...card }) => {
+    for (const assignee of assignees) users[assignee.id] ??= { display_name: assignee.display_name, can_read: assignee.can_read };
+    return { ...card, assignee_ids: assignees.map((assignee) => assignee.id) };
+  });
+  return { ...detail, cards, users };
+}

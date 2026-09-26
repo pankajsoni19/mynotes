@@ -321,7 +321,7 @@ Positions are computed by the server (D40) and never accepted from clients: a ne
 | --- | --- | --- | --- |
 | `GET /boards` | any | 200 `{ boards: BoardSummary[] }`: owned boards first, then shared ones, each by name (limit 500) | |
 | `POST /boards { name, template? }` | any | 201 `{ board, columns }`. Without `template` (or `kanban`): To do, Doing, Done at 1024, 2048, 3072. `template` (17A, D136) is one of `kanban`, `todo`, `checklist`, `scrum`, `epics`, `triage`, `content` (`shared/boardStructure.ts` `TEMPLATES`): it sets the columns with their states, the structure, and for `triage` the tags Bug and Regression; no template creates cards (the Scrum sprint is 17B). Audit `task.board_create` adds `template` when not `kanban` | 400 (an unknown template), 409 `LIMIT_REACHED` |
-| `GET /boards/:b` | reader | 200 `{ board, columns, cards: (CardSummary & RelationCounts)[], tags: BoardTag[] }` (columns and cards by position, tags by name). Wave 13 adds `tags`, and each card adds `relation_count` and `open_blockers` for this viewer (§ Relations) | 404 |
+| `GET /boards/:b` | reader | 200 `{ board, columns, cards: BoardCard[], users: Record<userId, { display_name, can_read }>, tags: BoardTag[] }` (columns and cards by position, tags by name). Wave 13 adds `tags`, and each card adds `relation_count` and `open_blockers` for this viewer (§ Relations). **v0.9.0 (D113 trim):** `BoardCard` is `CardSummary & RelationCounts` without `board_id`, `assignees`, `assignee_id`, and `assignee_name`, plus `assignee_ids: string[]` (assignment order); `users` names every assignee on the board once, with `can_read` for this board. `GET /cards/:k`, the card write responses, and MCP keep `assignees[]` objects. | 404 |
 | `PATCH /boards/:b { name }` | owner | 200 `{ board }` | 400, 403, 404 |
 | `DELETE /boards/:b` | owner | 200 `{ ok: true, purgeAfter }`: the board moves to the Bin for 30 days | 403, 404 |
 
@@ -363,8 +363,8 @@ type CardSummary = {
   due_tz: string | null;             // the IANA zone the setter's browser sent (D101), set exactly when due_time is
   due_at: string | null;             // computed UTC instant (ISO) when due_time is set
   assignees: CardAssignee[];         // Wave 13 (D102): at most 20, in assignment order
-  assignee_id: string | null;        // DEPRECATED (D103): assignees[0].id, kept through v0.8.x
-  assignee_name: string | null;      // DEPRECATED (D103): assignees[0].display_name
+  assignee_id: string | null;        // DEPRECATED (D103): assignees[0].id; gone from GET /boards/:b in v0.9.0 (D113 trim)
+  assignee_name: string | null;      // DEPRECATED (D103): assignees[0].display_name; same
   tag_ids: string[];                 // Wave 13 (D109): at most 10 tags of this board, in tagging order; resolve against the board's `tags`
   flags: Flag[];                     // Wave 13 (D110): in the fixed order below
   comment_count: number; attachment_count: number;

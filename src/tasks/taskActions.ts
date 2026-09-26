@@ -198,10 +198,9 @@ export function dueTimeNote(card: { due_time?: string | null; due_tz?: string | 
 
 type AssigneeLike = { id: string; display_name: string; can_read: 0 | 1 };
 
-/** The card's assignees, falling back to the deprecated single assignee of an older payload. */
-export function cardAssignees(card: { assignees?: AssigneeLike[]; assignee_id: string | null; assignee_name: string | null }): AssigneeLike[] {
-  if (card.assignees) return card.assignees;
-  return card.assignee_id ? [{ id: card.assignee_id, display_name: card.assignee_name ?? "Former member", can_read: 1 }] : [];
+/** The card's assignees (the deprecated single-assignee fields are gone since v0.9.0, D113). */
+export function cardAssignees(card: { assignees?: AssigneeLike[] }): AssigneeLike[] {
+  return card.assignees ?? [];
 }
 
 /** How a chip names an assignee: someone who lost access to the board is marked (T93). */

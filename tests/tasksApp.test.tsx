@@ -76,7 +76,7 @@ test("cards show a due chip and assignee, and no chip in a done column", async (
   const noop = () => undefined;
   const card = {
     id: "k1", board_id: "b1", column_id: "c1", position: 1024, title: "Pay rent", has_description: 0 as const, revision: 1, created_by: "u1", creator_name: "Ann",
-    due_on: "2020-01-01", assignee_id: "u2", assignee_name: "Bo", comment_count: 0, attachment_count: 0, created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z"
+    due_on: "2020-01-01", assignees: [{ id: "u2", display_name: "Bo", can_read: 1 }], comment_count: 0, attachment_count: 0, created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z"
   };
   const render = (isDone: 0 | 1, dueOn: string) => renderToStaticMarkup(<BoardColumnView
     column={{ id: "c1", board_id: "b1", name: "To do", position: 1024, is_done: isDone, created_at: "", updated_at: "" }}

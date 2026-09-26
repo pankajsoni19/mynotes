@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createUser, request, type Session } from "./support/harness";
 import { foldText, queryCards, sortCards, type CardFilter, type QueryCard } from "../shared/taskQuery";
+import { hydrateBoard, type BoardPayload } from "../src/tasks/tasksApi";
 
 /**
  * The card query of D113 (WAVE_13_TASK_CARD_UX.md §5.5, §7): the pure
@@ -100,7 +101,7 @@ describe("parity: client pipeline, server SQL, and MCP list_cards (D113)", () =>
       ids.push(response.body.card.id);
     }
     expect((await call(owner, "DELETE", `/cards/${ids.at(-1)}`)).status).toBe(200);
-    const board = (await call(viewer, "GET", `/boards/${boardId}`)).body as { cards: QueryCard[]; columns: Array<{ id: string; position: number }> };
+    const board = hydrateBoard((await call(viewer, "GET", `/boards/${boardId}`)).body as BoardPayload) as unknown as { cards: QueryCard[]; columns: Array<{ id: string; position: number }> };
     expect(board.cards).toHaveLength(6);
     fixture = {
       viewer, stranger, boardId, board, tags, columns,

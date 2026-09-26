@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 import { cardFilterFromQuery, format, matchesQuery, parse, queryCards, queryFromCardFilter, type CardFilter, type MemoryQueryCard, type QueryCard } from "../shared/taskQuery";
+import { hydrateBoard, type BoardPayload } from "../src/tasks/tasksApi";
 
 const { filterBoardCardIds } = await import("../server/tasks/cardQuery");
 const { runQuery } = await import("../server/tasks/query");
@@ -103,7 +104,7 @@ const resolve = (filter: CardFilter): CardFilter => JSON.parse(JSON.stringify(fi
 describe("one grammar across the board pipeline, list_cards SQL, and the cross-board query", () => {
   test.each(filters.map((filter, index) => [index, filter] as const))("filter %i gives the same cards everywhere", async (_index, template) => {
     const filter = resolve(template);
-    const board = (await call(owner, "GET", `/boards/${boardId}`)).body;
+    const board = hydrateBoard((await call(owner, "GET", `/boards/${boardId}`)).body as BoardPayload);
     const client = queryCards(board.cards as QueryCard[], board.columns, filter, { userId: owner.userId }).map((card) => card.id).sort();
     const boardSql = filterBoardCardIds(boardId, filter, { userId: owner.userId }).sort();
     const text = format(queryFromCardFilter(filter));

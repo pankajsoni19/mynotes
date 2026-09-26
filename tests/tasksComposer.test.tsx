@@ -60,7 +60,8 @@ test("assignees keep the names the picker passed; tags and flags replace the set
   expect(applyFieldChange(draft, { tagIds: [], flags: [] })).toMatchObject({ tagIds: [], flags: [] });
   // The card-shaped view that CardFields reads.
   const card = draftCard(draft, "b1");
-  expect(card).toMatchObject({ board_id: "b1", column_id: "todo", assignee_id: "u2", assignee_name: "Bo", due_on: null });
+  expect(card).toMatchObject({ board_id: "b1", column_id: "todo", assignees: [{ id: "u2", display_name: "Bo", can_read: 1 }], due_on: null });
+  expect(card).not.toHaveProperty("assignee_id");
   expect((card as unknown as { flags: string[] }).flags).toEqual(["urgent", "blocked"]);
 });
 

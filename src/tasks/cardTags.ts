@@ -73,8 +73,6 @@ export function mergeCardDetail(item: CardSummary, card: CardDetail): CardSummar
     due_tz: card.due_tz,
     due_at: card.due_at,
     assignees: card.assignees,
-    assignee_id: card.assignee_id,
-    assignee_name: card.assignee_name,
     tag_ids: card.tag_ids ?? item.tag_ids,
     flags: card.flags ?? item.flags,
     column_id: item.column_id,

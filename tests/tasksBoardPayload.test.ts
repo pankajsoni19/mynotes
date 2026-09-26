@@ -12,14 +12,17 @@ import { createUser, db, request, type Session } from "./support/harness";
  * target, so this test guards against growth past 1.5 MB instead and the
  * director decides the D113 follow-up. 17A adds four hierarchy fields to each
  * card (`parent_card_id`, `level`, `child_count`, `done_child_count`, about
- * 75 bytes a card, 1.50 MB for this fixture), so the ceiling is 1.6 MB; the
- * research plan's bound is 1.5× the v0.8 payload. Set MYNOTES_PAYLOAD_REPORT=1 to print
+ * 75 bytes a card, 1.50 MB for this fixture), so the ceiling was 1.6 MB; the
+ * research plan's bound is 1.5× the v0.8 payload. The D113 trim (v0.9.0) sends assignees as
+ * `assignee_ids` plus one board-level `users` map and drops the per-card `board_id` and the
+ * deprecated `assignee_id`/`assignee_name`: 1.15 MB for this fixture (1.11 MB with short
+ * names, from 1.52 MB), so the ceiling is 1.2 MB. Set MYNOTES_PAYLOAD_REPORT=1 to print
  * sizes (raw and gzip) and median timings, and MYNOTES_PAYLOAD_SHORT=1 for
  * short display names.
  */
 
 const CARDS = 1000;
-const CEILING_BYTES = 1_600_000;
+const CEILING_BYTES = 1_200_000;
 const short = Boolean(process.env.MYNOTES_PAYLOAD_SHORT);
 
 async function boardJson(session: Session, boardId: string) {
@@ -63,7 +66,7 @@ async function fixture(label: string, full: boolean) {
 }
 
 describe("board payload for 1000 cards (D113)", () => {
-  test("every Wave 13 field filled stays under the 1.6 MB regression ceiling", async () => {
+  test("every Wave 13 field filled stays under the 1.2 MB regression ceiling", async () => {
     const full = await fixture("Payload full", true);
     const bare = await fixture("Payload bare", false);
     await boardJson(full.owner, full.boardId);
@@ -76,9 +79,13 @@ describe("board payload for 1000 cards (D113)", () => {
     }
     const last = fullRuns.at(-1)!;
     expect(last.status).toBe(200);
-    const body = JSON.parse(last.text) as { cards: Array<{ assignees: unknown[]; tag_ids: unknown[]; description_excerpt: string }>; tags: unknown[] };
+    const body = JSON.parse(last.text) as { cards: Array<Record<string, unknown> & { assignee_ids: string[]; tag_ids: unknown[]; description_excerpt: string }>; tags: unknown[]; users: Record<string, { display_name: string; can_read: number }> };
     expect(body.cards).toHaveLength(CARDS);
-    expect(body.cards.every((card) => card.assignees.length === 3 && card.tag_ids.length === 3 && card.description_excerpt.length === 160)).toBe(true);
+    expect(body.cards.every((card) => card.assignee_ids.length === 3 && card.tag_ids.length === 3 && card.description_excerpt.length === 160)).toBe(true);
+    // The trim (D113): one users entry per assignee, and no per-card board id or deprecated fields.
+    expect(Object.keys(body.users)).toHaveLength(3);
+    expect(body.cards.every((card) => body.users[card.assignee_ids[0]!]?.can_read === 1)).toBe(true);
+    expect(body.cards.some((card) => "board_id" in card || "assignees" in card || "assignee_id" in card || "assignee_name" in card)).toBe(false);
     expect(last.bytes).toBeLessThan(CEILING_BYTES);
     if (process.env.MYNOTES_PAYLOAD_REPORT) {
       const median = (runs: Array<{ ms: number }>) => runs.map((item) => item.ms).sort((a, b) => a - b)[Math.floor(runs.length / 2)]!;

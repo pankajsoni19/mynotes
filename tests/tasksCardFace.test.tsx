@@ -79,8 +79,9 @@ test("a bare card shows only its title; a description without an excerpt keeps t
   expect(imageOnly).toContain('title="Has a description"');
   expect(imageOnly).not.toContain("task-card-excerpt");
   // An older payload without the Wave 13 fields still renders.
-  const legacy = renderToStaticMarkup(<CardFace card={{ ...base, description_excerpt: undefined, tag_ids: undefined, flags: undefined, assignees: undefined, assignee_id: "u9", assignee_name: "Old Name" }} tags={[]} done={false} today={today} excerptId="ex" />);
-  expect(legacy).toContain(">ON</span>");
+  const legacy = renderToStaticMarkup(<CardFace card={{ ...base, description_excerpt: undefined, tag_ids: undefined, flags: undefined, assignees: undefined }} tags={[]} done={false} today={today} excerptId="ex" />);
+  expect(legacy).toContain('<span class="task-card-title">Fix login</span>');
+  expect(legacy).not.toContain("task-avatar");
 });
 
 test("lane cards are named groups described by their excerpt, with the Move button outside the hidden face", () => {

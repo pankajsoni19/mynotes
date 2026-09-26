@@ -5,7 +5,7 @@ import { parseJson, uuid } from "../validation";
 import { MAX_ASSIGNEES } from "./assignees";
 import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
-import { getBoardWithRelationCounts, listRelations, MAX_RELATIONS_PER_CARD } from "./cardRelations";
+import { boardPayload, listRelations, MAX_RELATIONS_PER_CARD } from "./cardRelations";
 import { RELATION_TYPES, type RelationType } from "./relations";
 import { registerCardRelationRoutes } from "./relationRoutes";
 import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NAME_MAX, updateTag } from "./tags";
@@ -204,7 +204,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
 
   app.get("/api/tasks/boards/:boardId", (c) => {
     const boardId = id(c, "boardId");
-    return respond(c, () => getBoardWithRelationCounts(c.get("user").id, boardId));
+    return respond(c, () => boardPayload(c.get("user").id, boardId));
   });
 
   app.patch("/api/tasks/boards/:boardId", async (c) => {

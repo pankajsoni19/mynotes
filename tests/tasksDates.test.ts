@@ -36,7 +36,8 @@ describe("task due dates, assignees, and done columns", () => {
     expect(patched.status).toBe(200);
     expect(patched.body.card).toMatchObject({ due_on: "2026-10-01", assignee_id: owner.userId, assignee_name: "Due owner", revision: 2, title: "Plan" });
     const board = (await call(owner, "GET", `/boards/${boardId}`)).body;
-    expect(board.cards[0]).toMatchObject({ due_on: "2026-10-01", assignee_id: owner.userId, assignee_name: "Due owner" });
+    expect(board.cards[0]).toMatchObject({ due_on: "2026-10-01", assignee_ids: [owner.userId] });
+    expect(board.users[owner.userId]).toMatchObject({ display_name: "Due owner" });
     // Omitted fields are left alone; null clears.
     patched = await call(owner, "PATCH", `/cards/${card.id}`, { title: "Plan it", revision: 2 });
     expect(patched.body.card).toMatchObject({ title: "Plan it", due_on: "2026-10-01", assignee_id: owner.userId });

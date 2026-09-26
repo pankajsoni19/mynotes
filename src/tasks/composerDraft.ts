@@ -83,13 +83,12 @@ export function applyFieldChange(draft: ComposerDraft, change: Record<string, un
 
 /** A card-shaped view of the draft, so the composer reuses `CardFields` as the dialog does. */
 export function draftCard(draft: ComposerDraft, boardId: string): CardDetail {
-  const first = draft.assignees[0];
   const card = {
     id: "", board_id: boardId, column_id: draft.columnId, position: 0, title: draft.title, has_description: draft.description.trim() ? 1 : 0, revision: 0,
     created_by: null, creator_name: null, due_on: draft.dueOn, due_time: draft.dueTime, due_tz: draft.dueTz,
     // The instant the server will derive, so the due summary shows the time as the card dialog does.
     due_at: draft.dueOn && draft.dueTime && draft.dueTz ? wallTimeInstant(draft.dueOn, draft.dueTime, draft.dueTz) : null,
-    assignees: draft.assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null,
+    assignees: draft.assignees,
     comment_count: 0, attachment_count: draft.attachments.length, created_at: "", updated_at: "", description: draft.description,
     tag_ids: draft.tagIds, flags: draft.flags
   };

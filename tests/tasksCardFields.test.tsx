@@ -54,14 +54,15 @@ test("the zone note names the card's zone and the viewer's time only when they d
   expect(dueTimeNote({ due_time: null, due_tz: null, due_at: null })).toBeNull();
 });
 
-test("assignee copy: sentences, the legacy single assignee, and lost access", () => {
+test("assignee copy: sentences, no assignees, and lost access", () => {
   expect(assigneeSentence([])).toBe("");
   expect(assigneeSentence(["Asha"])).toBe("Asha");
   expect(assigneeSentence(["Asha", "Ben"])).toBe("Asha and Ben");
   expect(assigneeSentence(["Asha", "Ben", "Chen"])).toBe("Asha, Ben, and Chen");
   expect(assigneeSentence(["Asha", "Ben", "Chen", "Dee"])).toBe("Asha, Ben, and 2 others");
-  expect(cardAssignees({ assignee_id: "u2", assignee_name: "Bo" })).toEqual([{ id: "u2", display_name: "Bo", can_read: 1 }]);
-  expect(cardAssignees({ assignees: [], assignee_id: null, assignee_name: null })).toEqual([]);
+  // The deprecated single-assignee fields are gone since v0.9.0 (D113 trim): no assignees means none.
+  expect(cardAssignees({})).toEqual([]);
+  expect(cardAssignees({ assignees: [] })).toEqual([]);
   expect(assigneeLabel({ id: "u2", display_name: "Bo", can_read: 0 })).toBe("Bo (no access)");
   expect(sameIds(["a", "b"], ["a", "b"])).toBe(true);
   expect(sameIds(["a", "b"], ["b", "a"])).toBe(false);

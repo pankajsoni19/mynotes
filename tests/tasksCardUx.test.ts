@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
+import { hydrateBoard } from "../src/tasks/tasksApi";
 
 /** Wave 13B card fields over the REST API (WAVE_13_TASK_CARD_UX.md §7, API tests). */
 
@@ -42,8 +43,13 @@ describe("multiple card assignees (D102, D103)", () => {
     expect((db.query("SELECT assignee_id FROM cards WHERE id = ?").get(card.id) as { assignee_id: string }).assignee_id).toBe(member.userId);
     expect(lastAudit(member.userId, "task.card_update")).toMatchObject({ assigneesAdded: 2, assigneesRemoved: 0 });
 
+    // The board payload sends ids plus one users map (D113 trim); the card routes keep the objects.
     const board = (await call(owner, "GET", `/boards/${boardId}`)).body;
-    expect(board.cards[0].assignees.map((assignee: { id: string }) => assignee.id)).toEqual([member.userId, owner.userId]);
+    expect(board.cards[0].assignee_ids).toEqual([member.userId, owner.userId]);
+    expect(board.users[member.userId]).toEqual({ display_name: "Many member", can_read: 1 });
+    expect(board.cards[0]).not.toHaveProperty("assignees");
+    // The client rebuilds the in-memory shape from the trimmed payload.
+    expect(hydrateBoard(board).cards[0]).toMatchObject({ board_id: boardId, assignees: patched.body.card.assignees });
 
     // Replacing keeps the order of those who stay; the mirror follows the new first assignee.
     patched = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeIds: [owner.userId], revision: 2 });
