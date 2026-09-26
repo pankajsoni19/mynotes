@@ -79,6 +79,16 @@ export function isAppEnabled(disabled: readonly ModuleId[], app: AppSection) {
   return !owner || isModuleEnabled(disabled, owner.id);
 }
 
+/**
+ * The route gate (D92): the module that is off and owns this app, or null when the app may be shown.
+ * The app then replaces the entry with Home and shows `moduleOffHint`. Deep links, Back and Forward,
+ * and in-app links all pass through it; Home is never gated.
+ */
+export function hiddenModuleForApp(disabled: readonly ModuleId[], app: AppSection): ModuleId | null {
+  const owner = moduleForApp(app);
+  return owner && !isModuleEnabled(disabled, owner.id) ? owner.id : null;
+}
+
 /** The Today sections of modules that are off. */
 export function hiddenTodaySections(disabled: readonly ModuleId[]): string[] {
   return MODULES.filter((module) => disabled.includes(module.id)).flatMap((module) => module.todaySections);

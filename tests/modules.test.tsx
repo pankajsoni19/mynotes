@@ -1,18 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MODULE_IDS as SERVER_MODULE_IDS } from "../server/moduleIds";
+import { AccountActions } from "../src/AppShell";
 import { ModulesSettings } from "../src/ModulesSettings";
 import {
   DEFAULT_PREFERENCES,
+  hiddenModuleForApp,
+  hiddenTodaySections,
+  isAppEnabled,
   isModuleEnabled,
   MODULE_IDS,
   MODULES,
+  ModulesContext,
   moduleOffHint,
   normalizeDisabledModules,
   parsePreferences,
   SETTINGS_MODULES,
-  withModuleEnabled
+  withModuleEnabled,
+  type ModuleId
 } from "../src/modules";
+import { parseRoute } from "../src/router";
+import { TodayHome } from "../src/today/TodayHome";
+import { enabledTodayApps, TODAY_APPS } from "../src/today/todayApps";
 import { TODAY_SECTIONS } from "../src/today/todaySections";
 
 describe("module registry (D92)", () => {
@@ -84,5 +93,51 @@ describe("Settings → Modules", () => {
   test("a conflict is a status message and a failure is an alert", () => {
     expect(render([], { kind: "conflict", message: "Changed elsewhere" })).toContain('<p class="modules-notice" role="status">Changed elsewhere</p>');
     expect(render([], { kind: "error", message: "Offline" })).toContain('<p class="form-error" role="alert">Offline</p>');
+  });
+});
+
+describe("gating (client only)", () => {
+  const account = { displayName: "Ada Lovelace", onSettings: () => undefined, onSignOut: () => undefined };
+  const home = (disabled: ModuleId[]) => renderToStaticMarkup(<ModulesContext.Provider value={disabled}>
+    <TodayHome {...account} userId="u1" onOpen={() => undefined} onOpenRoute={() => undefined} />
+  </ModulesContext.Provider>);
+  const launcher = (markup: string) => [...markup.matchAll(/class="today-app today-app-([a-z]+)"/g)].map(([, section]) => section);
+
+  test("the launcher is derived from the registry and drops modules that are off", () => {
+    expect(TODAY_APPS.map((app) => app.section)).toEqual(["notes", "files", "tasks", "collections", "calendar"]);
+    expect(enabledTodayApps(["calendar", "search"]).map((app) => app.section)).toEqual(["notes", "files", "tasks", "collections"]);
+    expect(launcher(home([]))).toEqual(["notes", "files", "tasks", "collections", "calendar"]);
+    expect(launcher(home(["calendar", "tasks"]))).toEqual(["notes", "files", "collections"]);
+  });
+
+  test("Bin off removes the Bin button from Home and from any header, even when the app passes onBin", () => {
+    expect(home([])).toContain('title="Bin"');
+    expect(home(["bin"])).not.toContain('title="Bin"');
+    const header = renderToStaticMarkup(<ModulesContext.Provider value={["bin"]}><AccountActions {...account} onBin={() => undefined} binCount={2} /></ModulesContext.Provider>);
+    expect(header).not.toContain('title="Bin"');
+    expect(header).toContain('title="Settings"');
+  });
+
+  test("the Today sections of modules that are off are hidden", () => {
+    expect(hiddenTodaySections([])).toEqual([]);
+    expect(hiddenTodaySections(["calendar", "tasks", "bin"])).toEqual(["tasksDue", "tasksMine", "upcoming", "binSoon"]);
+    const markup = home(["tasks", "calendar"]);
+    expect(markup).not.toContain("today-section-tasksDue");
+    expect(markup).not.toContain("today-section-upcoming");
+    expect(markup).toContain("today-section-notesRecent");
+  });
+
+  test("a hidden module's routes redirect, and Home, Search, and unknown ids never do", () => {
+    const eventId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    expect(hiddenModuleForApp(["calendar"], parseRoute(`/calendar/event/${eventId}`).app)).toBe("calendar");
+    expect(hiddenModuleForApp(["calendar"], parseRoute("/calendar/month/2026-09").app)).toBe("calendar");
+    expect(hiddenModuleForApp(["tasks"], parseRoute("/tasks").app)).toBe("tasks");
+    expect(hiddenModuleForApp(["bin"], parseRoute("/bin").app)).toBe("bin");
+    expect(hiddenModuleForApp(["notifications"], parseRoute("/notifications").app)).toBe("notifications");
+    expect(hiddenModuleForApp(["notes"], parseRoute("/notes").app)).toBe("notes");
+    expect(hiddenModuleForApp(["calendar"], parseRoute("/tasks").app)).toBeNull();
+    expect(hiddenModuleForApp([...MODULE_IDS], parseRoute("/").app)).toBeNull();
+    expect(hiddenModuleForApp(normalizeDisabledModules(["home", "settings"]), parseRoute("/").app)).toBeNull();
+    expect(isAppEnabled(["search"], "notes")).toBe(true);
   });
 });

@@ -153,6 +153,19 @@ Deleting a note, a file, a card, a board, a collection, or a row moves it to the
 - **Delete forever** and **Empty Bin** remove items permanently. After 30 days an hourly sweeper (which also runs at boot) deletes expired items for you.
 - Files in the Bin still count towards your storage quota until they are deleted forever.
 
+## Settings → Modules
+
+Open **Settings → Modules** to choose which parts of Nook you see. Each module has a switch, and every module is on until you turn it off. A change applies at once and is saved to your account, so it follows you to every device you sign in to (another open tab picks it up when you return to it). Home and Settings are always on.
+
+| Module | Turning it off hides |
+| --- | --- |
+| Notes, Files, Tasks, Collections, Calendar | Its tile on Home and its Today sections (for Files, also Storage). Opening one of its URLs, from a bookmark, a link, Back, or a notification, goes to Home with a one-line hint and a **Turn on in Settings** button. |
+| Search | The search box in Notes and <kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>/</kbd>. The note list stays. Pickers inside other apps keep working. |
+| Bin | The **Bin** buttons and **Leaving the Bin soon**. Deleting still moves items to the Bin, and they are still deleted forever after 30 days; turn the Bin back on to restore something. |
+| Notifications | The bell and `/notifications`. Reminders are still created, and push notifications still arrive on devices where you turned them on. |
+
+**A hidden module is not a security boundary.** Turning a module off only hides it in this app for you. Nothing is deleted, sharing is unchanged, people you share with still see what you share, MCP keys keep every permission they were given, and calendar feed links keep working. To stop an MCP client or a feed, revoke its key or link instead.
+
 ## MCP server
 
 Nook includes an authenticated [Model Context Protocol](https://modelcontextprotocol.io/) server over Streamable HTTP, so trusted AI clients can search and read your notes and files, and write drafts for you to review.
