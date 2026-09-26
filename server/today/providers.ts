@@ -8,6 +8,7 @@ import { storageUsage } from "../documents";
 import { hasScope, type McpScope } from "../mcpScopes";
 import { checksum } from "../storage";
 import { readableBoardPredicate } from "../tasks/access";
+import { dueAt as dueAtOf } from "../tasks/dueTime";
 import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
 
 /**
@@ -26,34 +27,52 @@ import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
 export const TASKS_DUE_DAYS = 7;
 export const BIN_SOON_MS = 3 * 86_400_000;
 
-type TaskRow = { cardId: string; boardId: string; boardName: string; title: string; dueOn: string | null; assigneeId: string | null };
+type TaskRow = {
+  cardId: string; boardId: string; boardName: string; title: string;
+  dueOn: string | null; dueTime: string | null; dueTz: string | null; assigned: 0 | 1;
+};
+
+/** Whether `$userId` is one of the card's assignees (card_assignees, migration 015). */
+const assignedToCaller = "EXISTS (SELECT 1 FROM card_assignees ca WHERE ca.card_id = k.id AND ca.user_id = $userId)";
 
 const taskSelect = `
-  SELECT k.id AS cardId, b.id AS boardId, b.name AS boardName, k.title, k.due_on AS dueOn, k.assignee_id AS assigneeId
+  SELECT k.id AS cardId, b.id AS boardId, b.name AS boardName, k.title, k.due_on AS dueOn, k.due_time AS dueTime, k.due_tz AS dueTz,
+         ${assignedToCaller} AS assigned
   FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id
   WHERE k.deleted_at IS NULL AND col.is_done = 0 AND ${readableBoardPredicate}`;
 
-const taskItem = (row: TaskRow, today: string) => ({
-  cardId: row.cardId, boardId: row.boardId, boardName: row.boardName, title: row.title,
-  dueOn: row.dueOn, overdue: row.dueOn !== null && row.dueOn < today
-});
+/**
+ * A card as a Today item. A timed card (WAVE_13 §5.1) is overdue once its exact
+ * instant has passed; a date-only card once its date is before the caller's today.
+ */
+const taskItem = (row: TaskRow, today: string, now: Date) => {
+  const dueAt = dueAtOf({ due_on: row.dueOn, due_time: row.dueTime, due_tz: row.dueTz });
+  return {
+    cardId: row.cardId, boardId: row.boardId, boardName: row.boardName, title: row.title,
+    dueOn: row.dueOn, dueTime: row.dueTime, dueTz: row.dueTz, dueAt,
+    overdue: dueAt !== null ? now.getTime() > Date.parse(dueAt) : row.dueOn !== null && row.dueOn < today
+  };
+};
+
+/** Within a day, cards with a time come first, by wall time, then date-only ones; approximate across zones, which is accepted (§5.1). */
+const dueOrder = "k.due_on, k.due_time IS NULL, k.due_time";
 
 registerTodayProvider("tasksDue", {
   mcpScope: "tasks:read",
   href: "/tasks",
-  load: ({ userId, today }) => page((db.query(`${taskSelect} AND k.due_on IS NOT NULL AND k.due_on <= $horizon
-      ORDER BY k.due_on, k.updated_at DESC, k.id LIMIT $limit`)
-    .all({ userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[]).map((row) => taskItem(row, today)))
+  load: ({ userId, today, now }) => page((db.query(`${taskSelect} AND k.due_on IS NOT NULL AND k.due_on <= $horizon
+      ORDER BY ${dueOrder}, k.updated_at DESC, k.id LIMIT $limit`)
+    .all({ userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[]).map((row) => taskItem(row, today, now)))
 });
 
 registerTodayProvider("tasksMine", {
   mcpScope: "tasks:read",
   href: "/tasks",
-  load: ({ userId, today }) => page((db.query(`${taskSelect} AND (k.assignee_id = $userId OR k.created_by = $userId)
+  load: ({ userId, today, now }) => page((db.query(`${taskSelect} AND (${assignedToCaller} OR k.created_by = $userId)
       AND (k.due_on IS NULL OR k.due_on > $horizon)
-      ORDER BY k.due_on IS NULL, k.due_on, k.updated_at DESC, k.id LIMIT $limit`)
+      ORDER BY k.due_on IS NULL, ${dueOrder}, k.updated_at DESC, k.id LIMIT $limit`)
     .all({ userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[])
-    .map((row) => ({ ...taskItem(row, today), reason: row.assigneeId === userId ? "assigned" as const : "created" as const })))
+    .map((row) => ({ ...taskItem(row, today, now), reason: row.assigned ? "assigned" as const : "created" as const })))
 });
 
 const EMPTY_CHECKSUM = checksum("");

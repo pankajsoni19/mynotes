@@ -48,9 +48,46 @@ describe("the Tasks due overlay", () => {
     expect(overlay.enabled).toBe(true);
     const range = { fromDate: "2026-05-01", toDate: "2026-06-01" };
     expect(overlay.list("owner", range).map((task) => task.cardId)).toEqual(["k1", "k6"]);
-    expect(overlay.list("member", range)).toEqual([{ cardId: "k1", boardId: "shared", boardName: "Home", title: "Pay rent", dueOn: "2026-05-01" }]);
+    expect(overlay.list("member", range)).toEqual([
+      { cardId: "k1", boardId: "shared", boardName: "Home", title: "Pay rent", dueOn: "2026-05-01", dueTime: null, dueTz: null, dueAt: null, date: "2026-05-01" }
+    ]);
     expect(overlay.list("stranger", range)).toEqual([]);
+
+    // Timed cards land on the viewer's local day of their exact instant (WAVE_13 §5.2, T94).
+    const timed = db.query("UPDATE cards SET due_on = ?, due_time = ?, due_tz = ? WHERE id = ?");
+    timed.run("2026-05-10", "23:30", "Pacific/Kiritimati", "k1"); // 2026-05-10T09:30Z
+    timed.run("2026-05-10", "23:30", "Etc/GMT+12", "k6"); // 2026-05-11T11:30Z
+    const day = (viewerTz: string, fromDate: string) => overlay.list("owner", { fromDate, toDate: `2026-05-${String(Number(fromDate.slice(8)) + 1).padStart(2, "0")}` }, viewerTz)
+      .map((task) => [task.cardId, task.date, task.dueAt]);
+    // A UTC−12 viewer sees the UTC+14 card on 9 May, a day before its civil date.
+    expect(day("Etc/GMT+12", "2026-05-09")).toEqual([["k1", "2026-05-09", "2026-05-10T09:30:00.000Z"]]);
+    // ...while the UTC−12 card sits on its own civil date.
+    expect(day("Etc/GMT+12", "2026-05-10")).toEqual([["k6", "2026-05-10", "2026-05-11T11:30:00.000Z"]]);
+    // A UTC+14 viewer sees the UTC−12 card on 12 May, two days after its civil date.
+    expect(day("Pacific/Kiritimati", "2026-05-12")).toEqual([["k6", "2026-05-12", "2026-05-11T11:30:00.000Z"]]);
+    expect(day("Pacific/Kiritimati", "2026-05-10")).toEqual([["k1", "2026-05-10", "2026-05-10T09:30:00.000Z"]]);
+    // UTC viewers see both on their own UTC days; date-only cards sort before timed ones on a day.
+    db.query("UPDATE cards SET due_on = '2026-05-10', column_id = 'todo', deleted_at = NULL, purge_after = NULL WHERE id = 'k4'").run();
+    expect(overlay.list("owner", { fromDate: "2026-05-10", toDate: "2026-05-12" }, "UTC").map((task) => [task.cardId, task.date]))
+      .toEqual([["k4", "2026-05-10"], ["k1", "2026-05-10"], ["k6", "2026-05-11"]]);
+    // Without a zone argument the overlay uses UTC.
+    expect(overlay.list("owner", { fromDate: "2026-05-11", toDate: "2026-05-12" }).map((task) => task.cardId)).toEqual(["k6"]);
     db.close();
+  });
+
+  test("GET /api/events?include=tasks places a timed card by the viewer's tz", async () => {
+    const owner = await createUser("Overlay timed");
+    const created = await (await request("/tasks/boards", { method: "POST", body: JSON.stringify({ name: "Timed overlay" }) }, owner)).json() as { board: { id: string }; columns: Array<{ id: string }> };
+    const card = await request(`/tasks/boards/${created.board.id}/cards`, {
+      method: "POST",
+      body: JSON.stringify({ columnId: created.columns[0]!.id, title: "Late call", dueOn: "2026-10-01", dueTime: "23:30", dueTz: "Pacific/Kiritimati" })
+    }, owner);
+    expect(card.status).toBe(201);
+    const list = async (from: string, to: string, tz: string) =>
+      ((await (await request(`/events?from=${from}&to=${to}&tz=${encodeURIComponent(tz)}&include=tasks`, {}, owner)).json()) as { tasks: Array<{ title: string; date: string; dueAt: string }> }).tasks;
+    expect(await list("2026-09-30", "2026-10-01", "Etc/GMT+12")).toMatchObject([{ title: "Late call", date: "2026-09-30", dueAt: "2026-10-01T09:30:00.000Z" }]);
+    expect(await list("2026-10-01", "2026-10-02", "Etc/GMT+12")).toEqual([]);
+    expect(await list("2026-10-01", "2026-10-02", "Pacific/Kiritimati")).toMatchObject([{ title: "Late call", date: "2026-10-01" }]);
   });
 });
 
