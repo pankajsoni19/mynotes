@@ -1,0 +1,189 @@
+/* Board views (Wave 13E): the view switch, table, grouped list, filter bar, and calendar.
+   Tokens follow tasks.css. Mobile-first checks at 390 px: no horizontal page scroll. */
+
+.task-view-switch { flex: none; display: inline-flex; gap: 2px; border: 1px solid #2a2a2f; border-radius: 10px; padding: 2px; background: #121214; }
+.task-view-switch .icon-button { width: 34px; height: 34px; border-radius: 8px; color: #9a9aa1; }
+.task-view-switch .icon-button svg { width: 17px; }
+.task-view-switch .icon-button.active { background: #2b271d; color: #f5cf79; }
+.task-view-switch .icon-button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+
+.task-view-body { flex: 1; min-height: 0; overflow-y: auto; padding: 6px clamp(16px, 3vw, 32px) calc(24px + env(safe-area-inset-bottom)); }
+.task-view-empty { margin: 18px 0; color: #8d8d94; font-size: .86rem; }
+
+/* Shared pieces */
+.task-flags { display: inline-flex; flex: none; gap: 3px; vertical-align: middle; }
+.task-flag { display: inline-grid; place-items: center; }
+.task-flag svg { width: 14px; height: 14px; }
+.task-tags { display: inline-flex; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; }
+.task-tag { max-width: 120px; overflow: hidden; border-radius: 999px; padding: 1px 8px; background: #2a2a2f; color: #d0d0d4; font-size: .72rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.task-tag.more { background: transparent; color: #8d8d94; padding: 1px 2px; }
+
+/* Table: scrolls sideways inside its region, with a sticky title column. */
+/* Positioned, so absolutely positioned screen-reader text inside is clipped with the table. */
+.task-table-region { position: relative; max-width: 100%; overflow-x: auto; border: 1px solid #242428; border-radius: 12px; background: #121214; overscroll-behavior-x: contain; }
+.task-table-region:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.task-table { width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; font-size: .82rem; }
+.task-table th, .task-table td { height: 44px; border-bottom: 1px solid #1f1f23; padding: 0 10px; color: #c9c9ce; text-align: left; vertical-align: middle; white-space: nowrap; }
+.task-table thead th { position: sticky; top: 0; z-index: 1; height: 40px; background: #17171a; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.task-table tbody tr { cursor: pointer; }
+.task-table tbody tr:hover td, .task-table tbody tr:hover th { background: #18181b; }
+.task-table tbody tr.done .task-table-open { color: #8d8d94; }
+.task-table .task-table-title { position: sticky; left: 0; z-index: 2; width: 320px; max-width: 320px; background: #121214; box-shadow: 1px 0 0 #242428; }
+.task-table thead .task-table-title { z-index: 3; background: #17171a; }
+.task-table-title-cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.task-table-open { flex: 1; min-width: 0; min-height: 36px; overflow: hidden; border: 0; border-radius: 7px; padding: 0 4px; background: transparent; color: #ededee; font: inherit; font-size: .86rem; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.task-table-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: 0; }
+.task-table-more { flex: none; width: 30px; height: 30px; opacity: .6; }
+.task-table-more svg { width: 15px; }
+.task-table tr:hover .task-table-more, .task-table-more:focus-visible { opacity: 1; }
+.task-table-sort { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; border: 0; border-radius: 7px; padding: 0 4px; margin-left: -4px; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.task-table-sort svg { width: 13px; height: 13px; opacity: .5; }
+.task-table-sort.active { color: #f5cf79; }
+.task-table-sort.active svg { opacity: 1; }
+.task-table-sort:focus-visible { outline: 2px solid var(--yellow); outline-offset: 0; }
+.task-table-people { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.task-table-date { color: #8d8d94; }
+.task-table-empty { color: #55555c; }
+.task-table-region .task-view-empty { margin: 14px; }
+
+/* Grouped list */
+.task-grouped { display: grid; gap: 14px; }
+.task-grouped-bar { display: flex; align-items: center; gap: 8px; color: #8d8d94; font-size: .8rem; }
+.task-group h3 { margin: 0; }
+.task-group-toggle { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 9px; padding: 0 6px; background: transparent; color: #e4e4e6; font: inherit; font-size: .88rem; font-weight: 650; text-align: left; cursor: pointer; }
+.task-group-toggle:hover { background: #17171a; }
+.task-group-toggle svg { width: 16px; flex: none; color: #8d8d94; }
+.task-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-group-count { min-width: 22px; border-radius: 999px; padding: 1px 7px; background: rgb(255 255 255 / 7%); color: #a8a8ae; font-size: .7rem; text-align: center; }
+.task-group-list { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.task-group-row { display: flex; align-items: center; gap: 4px; border: 1px solid #242428; border-radius: 10px; padding: 0 4px 0 0; background: #161618; }
+.task-group-row:hover { border-color: #3a3a40; }
+.task-group-row.done .task-group-title { color: #8d8d94; }
+.task-group-open { flex: 1; min-width: 0; min-height: 44px; display: grid; gap: 4px; border: 0; border-radius: 9px; padding: 8px 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.task-group-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.task-group-title { display: flex; align-items: center; gap: 6px; min-width: 0; color: #ededee; font-size: .88rem; font-weight: 600; }
+.task-group-title > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-group-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; color: #85858c; font-size: .74rem; }
+.task-group-meta .task-due-chip { justify-self: auto; }
+.task-group-also { color: #7c7c83; font-style: italic; }
+.task-group-excerpt { min-width: 0; overflow: hidden; color: #8d8d94; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.task-group-people { display: inline-flex; }
+.task-group-people .task-card-people, .task-table-people .task-card-people { display: inline-flex; align-items: center; }
+.task-table-people .task-card-people { margin-right: 6px; vertical-align: middle; }
+.task-table-names { vertical-align: middle; }
+.task-group-more { flex: none; width: 36px; height: 36px; }
+.task-group-more svg { width: 16px; }
+.task-group-empty { margin: 4px 8px 0; color: #6f6f76; font-size: .78rem; }
+
+@media (max-width: 760px) {
+  .task-board-header { flex-wrap: wrap; }
+  /* The heading keeps room for the name; the switch wraps to its own row beside the owner actions. */
+  .task-board-header .task-board-heading { min-width: 120px; }
+  .task-view-switch { order: 5; }
+  .task-view-switch .icon-button { width: 44px; height: 44px; }
+  .task-view-body { padding: 4px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .task-table { min-width: 760px; }
+  .task-table .task-table-title { width: 190px; max-width: 190px; }
+  .task-table-more, .task-group-more { width: 44px; height: 44px; opacity: 1; }
+  .task-table-open { min-height: 44px; }
+  .task-group-toggle { min-height: 44px; }
+  .task-table-sort { min-height: 40px; }
+}
+
+/* Filter bar (§4.6): chips wrap; nothing scrolls sideways at 390 px. */
+.task-filter-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 clamp(16px, 3vw, 32px) 8px; min-width: 0; }
+.task-filter-chip { max-width: 100%; min-height: 32px; display: inline-flex; align-items: center; border: 1px solid #3a3a40; border-radius: 999px; background: #1c1c20; color: #e4e4e7; font-size: .8rem; }
+.task-filter-chip.negated { border-style: dashed; }
+.task-filter-chip-body { min-width: 0; overflow: hidden; border: 0; padding: 0 4px 0 12px; background: transparent; color: inherit; font: inherit; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+span.task-filter-chip-body { cursor: default; }
+.task-filter-chip-remove { position: relative; width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: 999px; background: transparent; color: #a8a8ae; cursor: pointer; }
+.task-filter-chip-remove:hover { background: rgb(255 255 255 / 8%); color: #f2f2f3; }
+.task-filter-chip-remove svg { width: 14px; }
+.task-filter-chip-body:focus-visible, .task-filter-chip-remove:focus-visible, .task-filter-clear:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.task-filter-add .ui-option-icon svg { width: 14px; }
+.task-filter-editor { max-width: 100%; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; border: 1px solid #4a3f24; border-radius: 12px; padding: 4px 4px 4px 10px; background: #17150f; }
+.task-filter-editor-label { color: #c9c9ce; font-size: .8rem; font-weight: 600; }
+.task-filter-editor .ui-combobox { min-width: 200px; max-width: 100%; flex: 1; }
+.task-filter-date { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.task-filter-date input { min-height: 32px; border: 1px solid #333338; border-radius: 8px; padding: 0 8px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .82rem; color-scheme: dark; }
+.task-filter-date .secondary-button { min-height: 32px; margin: 0; padding: 0 10px; font-size: .8rem; }
+.task-filter-done { width: 32px; height: 32px; }
+.task-filter-done svg { width: 16px; }
+.task-filter-text { min-width: 160px; flex: 0 1 220px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #333338; border-radius: 999px; padding: 0 10px; background: #0b0b0d; color: #8d8d94; }
+.task-filter-text:focus-within { border-color: #6b582f; }
+.task-filter-text svg { width: 14px; flex: none; }
+.task-filter-text input { min-width: 0; flex: 1; border: 0; padding: 0; background: transparent; color: #ededee; font: inherit; font-size: .82rem; outline: 0; }
+.task-filter-clear { min-height: 32px; border: 0; border-radius: 999px; padding: 0 10px; background: transparent; color: #c9a85c; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.task-filter-clear:hover { background: #1c1c20; }
+.task-filter-count { color: #7c7c83; font-size: .76rem; }
+.task-filter-count:empty { display: none; }
+
+@media (max-width: 760px) {
+  .task-filter-bar { padding: 0 16px 8px; }
+  .task-filter-chip { min-height: 44px; font-size: .88rem; }
+  .task-filter-chip-remove { width: 36px; height: 36px; }
+  .task-filter-chip-remove::after { content: ""; position: absolute; inset: -4px; }
+  .task-filter-editor { width: 100%; }
+  .task-filter-editor .ui-combobox { min-width: 0; flex-basis: 100%; }
+  .task-filter-date input, .task-filter-date .secondary-button, .task-filter-clear { min-height: 44px; }
+  .task-filter-done { width: 44px; height: 44px; }
+  .task-filter-text { min-height: 44px; min-width: 0; flex: 1 1 180px; }
+  .task-filter-text input { font-size: 1rem; }
+}
+
+/* Board calendar view (§4.5a): the shared grid (calendar.css) plus card chips and the tray. */
+.task-board-calendar { display: grid; gap: 10px; }
+.task-cal-subtitle { margin: 0; color: #8d8d94; font-size: .8rem; }
+.task-cal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.task-cal-layout { display: inline-flex; gap: 2px; border: 1px solid #2a2a2f; border-radius: 999px; padding: 2px; background: #121214; }
+.task-cal-layout button { min-height: 30px; border: 0; border-radius: 999px; padding: 0 12px; background: transparent; color: #9a9aa1; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.task-cal-layout button.active { background: #2b271d; color: #f5cf79; }
+.task-cal-layout button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.task-cal-tray-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.task-cal-tray-button svg { width: 16px; }
+.task-cal-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; align-items: start; gap: 16px; }
+.task-cal-main { min-width: 0; }
+.task-cal-note { margin: 12px 0 0; color: #8d8d94; font-size: .84rem; }
+.task-cal-help { margin: 0 0 8px; color: #7c7c83; font-size: .76rem; line-height: 1.45; }
+.task-board-calendar .calendar-cell.drop-target { background: #1f1b10; box-shadow: inset 0 0 0 2px #6b572c; }
+.task-cal-chip { min-width: 0; min-height: 24px; display: flex; align-items: center; gap: 4px; overflow: hidden; border-left: 3px solid #c9a85c; border-radius: 6px; padding: 2px 6px; background: #1c1c20; color: #e1e1e3; font-size: .74rem; white-space: nowrap; cursor: grab; outline: 0; }
+.task-cal-chip:hover { background: #26262b; }
+.task-cal-chip:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.task-cal-chip.done { border-left-color: #55555c; color: #8d8d94; }
+.task-cal-chip.done .task-cal-title { text-decoration: line-through; text-decoration-color: #55555c; }
+.task-cal-flag { width: 6px; height: 6px; flex: none; border-radius: 999px; background: #ff8f86; }
+.task-cal-time { flex: none; color: #9a9aa1; font-variant-numeric: tabular-nums; }
+.task-cal-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.calendar-dot.task-cal-dot { background: #c9a85c; }
+.calendar-dot.task-cal-dot.flagged { background: #ff8f86; }
+.task-board-calendar .calendar-day-list ul, .task-cal-tray-list ul, .task-board-calendar .calendar-day-group ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.task-cal-row { display: flex; align-items: center; gap: 4px; border: 1px solid #242428; border-radius: 10px; padding-right: 4px; background: #161618; }
+.task-cal-row.done .task-cal-row-title { color: #8d8d94; }
+.task-cal-row-open { flex: 1; min-width: 0; min-height: 44px; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; column-gap: 8px; border: 0; border-radius: 9px; padding: 6px 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.task-cal-row-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.task-cal-row-time { grid-row: span 2; color: #9a9aa1; font-size: .76rem; font-variant-numeric: tabular-nums; }
+.task-cal-row-title { min-width: 0; display: flex; align-items: center; gap: 6px; color: #ededee; font-size: .86rem; font-weight: 600; }
+.task-cal-row-title > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-cal-row-open small { color: #7c7c83; font-size: .72rem; }
+.task-cal-row-due { flex: none; width: 36px; height: 36px; }
+.task-cal-row-due svg { width: 16px; }
+.task-cal-tray { position: sticky; top: 0; max-height: calc(100dvh - 200px); overflow-y: auto; border: 1px dashed #34343a; border-radius: 14px; padding: 12px; background: #111113; }
+.task-cal-tray.drop-target { border-color: #6b572c; background: #17150f; }
+.task-cal-tray h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; color: #ededee; font-size: .9rem; }
+.task-cal-tray-list .task-cal-row-open { grid-template-columns: minmax(0, 1fr); }
+.task-cal-tray-list .task-cal-row-time { display: none; }
+.task-cal-sheet { padding: 0 14px 14px; overflow-y: auto; }
+.task-cal-due-form { display: grid; gap: 12px; padding: 14px; }
+.task-cal-due-form label { display: grid; gap: 6px; }
+.task-cal-due-form label span { display: inline-flex; align-items: center; gap: 6px; color: #c9c9ce; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.task-cal-due-form label svg { width: 15px; }
+.task-cal-due-form input { min-height: 40px; border: 1px solid #333338; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #ededee; font: inherit; color-scheme: dark; }
+.task-cal-due-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.task-cal-due-actions button { min-height: 40px; margin: 0; }
+
+@media (max-width: 760px) {
+  .task-cal-body { grid-template-columns: minmax(0, 1fr); }
+  .task-cal-layout button { min-height: 40px; }
+  .task-cal-row-due { width: 44px; height: 44px; }
+  .task-cal-due-form input, .task-cal-due-actions button { min-height: 44px; font-size: 1rem; }
+}

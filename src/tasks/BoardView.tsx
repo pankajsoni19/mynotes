@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
@@ -17,6 +17,17 @@ import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
 import { canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
+import { BoardGroupedList } from "./BoardGroupedList";
+import { BoardTable } from "./BoardTable";
+import { BoardViewSwitch } from "./BoardViewSwitch";
+import { applyBoardQuery, boardData, type BoardContext } from "./boardQuery";
+import { hasBoardFilter, withBoardQuery, type BoardQuery } from "./boardUrl";
+import { localDateString, viewerTimeZone } from "./taskActions";
+import { FilterBar } from "./FilterBar";
+import { BoardCalendar } from "./BoardCalendar";
+import { displayedDay, displayedTime, dueAnnouncement, shiftedDueAt } from "./calendarPlacement";
+import { daysBetween } from "../calendarRoute";
+import "./boardViews.css";
 import { applyCardDetail, applyTagChange, recountTags } from "./cardTags";
 import {
   createColumn,
@@ -25,6 +36,7 @@ import {
   deleteColumn,
   restoreTaskItem,
   getBoard,
+  updateCard,
   moveCard,
   renameBoard,
   taskErrorCode,
@@ -55,6 +67,10 @@ type BoardViewProps = {
   onOpenBoard: (boardId: string) => void;
   /** Opens a card on any board (a relation link): pushes its route. */
   onOpenCardRoute?: (boardId: string, cardId: string) => void;
+  /** The view, grouping, sort, and filters from the URL query (D112). */
+  query: BoardQuery;
+  /** `push` for a view switch; filter, sort, and group edits replace the entry (§4.7). */
+  onQueryChange: (query: BoardQuery, options?: { push?: boolean }) => void;
 };
 
 type BoardDialog =
@@ -64,7 +80,7 @@ type BoardDialog =
 
 export const MAX_COLUMNS = 20;
 
-export function BoardView({ userId, boardId, openCardId, openCardFull = false, onExpandCard, onCollapseCard, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard, onOpenCardRoute }: BoardViewProps) {
+export function BoardView({ userId, boardId, openCardId, openCardFull = false, onExpandCard, onCollapseCard, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard, onOpenCardRoute, query, onQueryChange }: BoardViewProps) {
   const focusCardId = openCardId;
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -161,6 +177,17 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const dialogColumn = dialog && "columnId" in dialog ? columns.find((column) => column.id === dialog.columnId) ?? null : null;
   const dialogCard = dialog?.kind === "moveCard" ? cards.find((card) => card.id === dialog.cardId) ?? null : null;
 
+  // One pipeline for every view (§4.5): filter, sort, and (in the list view) group the loaded board.
+  const data = useMemo(() => detail ? boardData(detail) : null, [detail]);
+  const viewContext: BoardContext = { userId, today: localDateString(), now: Date.now(), timeZone: viewerTimeZone() };
+  const result = data ? applyBoardQuery(data, query, viewContext) : null;
+  const filtered = hasBoardFilter(query);
+  const view = query.view;
+  // The lanes show the matching cards; drag and keyboard moves anchor on the cards in view.
+  const laneCards: CardSummary[] = filtered && result ? result.cards : cards;
+  const laneCardsRef = useRef(laneCards);
+  laneCardsRef.current = laneCards;
+
   const setCards = (change: (cards: CardSummary[]) => CardSummary[]) =>
     setDetail((current) => current ? { ...current, cards: change(current.cards) } : current);
 
@@ -169,8 +196,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     if (hintTimerRef.current !== null) window.clearTimeout(hintTimerRef.current);
     hintTimerRef.current = window.setTimeout(() => {
       hintTimerRef.current = null;
+      // Only on this board's own entry (not a card's); the URL, query included, stays as it is.
       if (window.location.pathname !== formatRoute(tasksRoute(boardId))) return;
-      window.history.replaceState(createTasksHistoryState(userId, { boardId, column: index }, window.history.state), "", window.location.pathname);
+      window.history.replaceState(createTasksHistoryState(userId, { boardId, column: index }, window.history.state), "", `${window.location.pathname}${window.location.search}`);
     }, 150);
   }
 
@@ -195,7 +223,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   }
 
   function focusCard(cardId: string) {
-    window.setTimeout(() => window.document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(cardId)}"]`)?.focus(), 0);
+    // Lane cards are focusable themselves; table, list, and calendar rows focus their open button.
+    window.setTimeout(() => (window.document.querySelector<HTMLElement>(`[data-open-card="${CSS.escape(cardId)}"]`)
+      ?? window.document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(cardId)}"]`))?.focus(), 0);
   }
 
   /**
@@ -256,15 +286,44 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     // Only cards of this board; a foreign or malformed payload is ignored.
     if (!cardId || !current?.cards.some((card) => card.id === cardId)) return;
     if (refuseFull(cardId, columnId)) return;
-    void move(cardId, columnId, afterCardIdAt(columnCards(current.cards, columnId), index, cardId));
+    void move(cardId, columnId, afterCardIdAt(columnCards(laneCardsRef.current, columnId), index, cardId));
   }
 
   function keyMove(card: CardSummary, key: MoveKey) {
     const current = detailRef.current;
     if (!current) return;
-    const target = keyboardMoveTarget(current.cards, current.columns, card.id, key);
+    const target = keyboardMoveTarget(laneCardsRef.current, current.columns, card.id, key);
     if (!target || refuseFull(card.id, target.columnId)) return;
     void move(card.id, target.columnId, target.afterCardId, { focus: true });
+  }
+
+  /**
+   * The calendar view's date change (D115): only `dueOn` is sent with the card's revision, so the
+   * server keeps the time and zone; `null` clears the date and time. The card moves at once; on
+   * CARD_CHANGED (or any failure) it moves back and the board reloads. WIP limits do not apply.
+   */
+  async function setDue(cardId: string, dueOn: string | null) {
+    const current = detailRef.current;
+    const card = current?.cards.find((item) => item.id === cardId);
+    if (!current || !card || card.due_on === dueOn) return;
+    const before = current.cards;
+    const shift = dueOn && card.due_on ? daysBetween(card.due_on, dueOn) : 0;
+    setCards((items) => items.map((item) => item.id !== cardId ? item : dueOn === null
+      ? { ...item, due_on: null, due_time: null, due_tz: null, due_at: null }
+      : { ...item, due_on: dueOn, due_at: shiftedDueAt(item.due_at, shift) }));
+    try {
+      const { card: saved } = await updateCard(cardId, { dueOn, revision: card.revision });
+      setCards((items) => items.map((item) => item.id === cardId
+        ? { ...item, revision: saved.revision, due_on: saved.due_on, due_time: saved.due_time, due_tz: saved.due_tz, due_at: saved.due_at, updated_at: saved.updated_at }
+        : item));
+      const zone = viewerTimeZone();
+      setAnnouncement(`${card.title}: ${dueAnnouncement(displayedDay(saved, zone), displayedTime(saved, zone))}`);
+      focusCard(cardId);
+    } catch (reason) {
+      setCards(() => before);
+      notify(taskErrorCode(reason) === "CARD_CHANGED" ? "Someone else changed this card. It was reloaded." : taskErrorMessage(reason, "Could not change the due date"));
+      void load();
+    }
   }
 
   /** The composer created a card: it joins the board, then closes, opens, or starts another (§4.3). */
@@ -411,6 +470,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       </div>
       {board && <span className="task-board-count">{cardCountLabel(board.card_count)}</span>}
       {detail && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
+      {detail && <BoardViewSwitch value={view} onChange={(next) => onQueryChange(withBoardQuery(query, { view: next }), { push: true })} />}
       {owner && <span className="task-board-actions">
         <button className="icon-button" onClick={(event) => openDialog({ kind: "rename" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Rename board" title="Rename board"><Pencil /></button>
         <button className="icon-button" onClick={(event) => openDialog({ kind: "share" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Share board" title="Share board"><Share2 /></button>
@@ -427,7 +487,25 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!loadError && !detail && <p className="bin-loading task-board-state" role="status">Loading the board…</p>}
-    {detail && <nav className="task-column-tabs" aria-label="Columns">
+    {detail && data && result && <FilterBar board={data} context={viewContext} filter={query.filter} shown={result.cards.length} total={cards.length}
+      onChange={(filter) => onQueryChange(withBoardQuery(query, { filter }))} />}
+    {detail && data && result && view === "table" && <div className="task-view-body">
+      <BoardTable board={data} cards={result.cards} sort={query.sort} today={viewContext.today} filtered={filtered}
+        onSort={(sort) => onQueryChange(withBoardQuery(query, { sort }))}
+        onOpenCard={(card) => onOpenCard(card.id)} onCardMenu={(card, trigger) => openDialog({ kind: "moveCard", cardId: card.id }, trigger)} />
+    </div>}
+    {detail && data && result?.groups && view === "list" && <div className="task-view-body">
+      <BoardGroupedList board={data} groups={result.groups} group={query.group ?? "column"} today={viewContext.today} filtered={filtered}
+        onGroup={(group) => onQueryChange(withBoardQuery(query, { group: group === "column" ? null : group }))}
+        onOpenCard={(card) => onOpenCard(card.id)} onCardMenu={(card, trigger) => openDialog({ kind: "moveCard", cardId: card.id }, trigger)} />
+    </div>}
+    {detail && data && result && view === "calendar" && <div className="task-view-body">
+      <BoardCalendar board={data} cards={result.cards} layout={query.cal} month={query.month} today={viewContext.today} viewerZone={viewContext.timeZone} filtered={filtered}
+        onMonth={(month) => onQueryChange(withBoardQuery(query, { month }))}
+        onLayout={(cal) => onQueryChange(withBoardQuery(query, { cal }), { push: true })}
+        onOpenCard={(card) => onOpenCard(card.id)} onSetDue={(card, dueOn) => { void setDue(card.id, dueOn); }} />
+    </div>}
+    {detail && view === "board" && <nav className="task-column-tabs" aria-label="Columns">
       {columns.map((column, index) => {
         const count = columnCards(cards, column.id).length;
         const wip = wipState(count, column.wip_limit);
@@ -437,11 +515,12 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       })}
       {owner && columns.length < MAX_COLUMNS && <button className="task-tab-add" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Add column"><Plus /></button>}
     </nav>}
-    {detail && <div className="task-columns" ref={trackRef} onScroll={onTrackScroll}>
+    {detail && view === "board" && <div className="task-columns" ref={trackRef} onScroll={onTrackScroll}>
       {columns.map((column, index) => <BoardColumnView
         key={column.id}
         column={column}
-        cards={columnCards(cards, column.id)}
+        cards={columnCards(laneCards, column.id)}
+        totalCount={filtered ? columnCards(cards, column.id).length : undefined}
         tags={detail.tags}
         owner={owner}
         isFirst={index === 0}

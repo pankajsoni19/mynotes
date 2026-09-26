@@ -65,7 +65,7 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 import { DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
 import { McpKeyScopeChips } from "./McpKeyScopes";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
-import { formatRoute, parseRoute, type Route } from "./router";
+import { formatRoute, locationUrl, parseRoute, routeFromLocation, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
@@ -641,7 +641,7 @@ function historyStateFor(userId: string, route: Route, panel: MobilePanel, files
 function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push", filesPanel?: FilesPanel, search: SearchHint | null = null) {
   const url = formatRoute(route);
   const current: unknown = window.history.state;
-  const samePath = url === window.location.pathname;
+  const samePath = url === locationUrl(window.location);
   const currentSnapshot = readHistorySnapshot(current, userId);
   const currentFilesSnapshot = readFilesHistorySnapshot(current, userId);
   const sameEntry = samePath && resolveAppHistorySection(current, userId) === route.app
@@ -659,7 +659,7 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
 export function App() {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [checking, setChecking] = useState(true);
-  const [activeApp, setActiveApp] = useState<AppSection>(() => parseRoute(window.location.pathname).app);
+  const [activeApp, setActiveApp] = useState<AppSection>(() => routeFromLocation(window.location).app);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<FolderSelection>("all");
@@ -719,7 +719,7 @@ export function App() {
   const switchingRef = useRef(false);
   const autosaveTimerRef = useRef<number | null>(null);
   // The route requested before the workspace was ready (deep link, or the URL shown on the login page).
-  const pendingRouteRef = useRef<Route | null>(parseRoute(window.location.pathname));
+  const pendingRouteRef = useRef<Route | null>(routeFromLocation(window.location));
   const routeAppliedUserRef = useRef<string | null>(null);
   // Set when the first data load for a user failed, so the next route change retries it.
   const startupFailedUserRef = useRef<string | null>(null);
@@ -777,7 +777,7 @@ export function App() {
       const applyRoute = routeAppliedUserRef.current !== userId;
       loadNavigation(userId).then(({ folders: folderRows, notes: noteRows, stale }) => {
         if (stale || sessionUserRef.current !== userId || !applyRoute) return;
-        const route = pendingRouteRef.current ?? parseRoute(window.location.pathname);
+        const route = pendingRouteRef.current ?? routeFromLocation(window.location);
         pendingRouteRef.current = null;
         routeAppliedUserRef.current = userId;
         startupFailedUserRef.current = null;
@@ -1333,7 +1333,7 @@ export function App() {
     if (!session) return;
     if (await leaveNotes()) {
       setActiveApp(route.app);
-      if (formatRoute(route) !== window.location.pathname) navigate(route, { replace: true });
+      if (formatRoute(route) !== locationUrl(window.location)) navigate(route, { replace: true });
       return;
     }
     // Browser Back already moved off the note; rewrite this entry so the URL matches the open note.
@@ -1449,7 +1449,7 @@ export function App() {
       const previousDepth = recordPopDepth(historyDepthRef, poppedDepth);
       // Back/Forward while a Files dialog is open only closes the dialog (D18).
       if (popStateClosedDialog(event)) return;
-      const route = parseRoute(window.location.pathname);
+      const route = routeFromLocation(window.location);
       if (session.totp.setupRequired) return;
       // D92: Back or Forward onto a module that is off skips that entry instead of replacing it
       // with a second Home entry. Depth 0 still falls through to the gate below, which replaces it.
@@ -1481,7 +1481,7 @@ export function App() {
           return;
         }
         setActiveApp(route.app);
-        if (formatRoute(route) !== window.location.pathname) navigate(route, { replace: true });
+        if (formatRoute(route) !== locationUrl(window.location)) navigate(route, { replace: true });
         return;
       }
       // Each Notes entry records the search it showed; entries from before a search clear it.
@@ -1595,7 +1595,7 @@ export function App() {
     newlyCreatedNoteIdRef.current = null;
     routeAppliedUserRef.current = null;
     // Land on the URL that was requested before signing in (kept in memory only).
-    setActiveApp((pendingRouteRef.current ?? parseRoute(window.location.pathname)).app);
+    setActiveApp((pendingRouteRef.current ?? routeFromLocation(window.location)).app);
     setSession(result);
     setChecking(false);
   }} />;

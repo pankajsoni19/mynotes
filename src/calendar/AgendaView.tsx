@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { CalendarDays, CircleCheck, Repeat, RotateCcw, TriangleAlert } from "lucide-react";
 import { addDays, AGENDA_DAYS } from "../calendarRoute";
 import { listOccurrences, viewerTimeZone, type DueTask, type Occurrence, type OccurrenceList } from "./calendarApi";
-import { agendaDays, dayHeading, occurrenceTimeLabel, tasksByDay, taskTimeLabel } from "./calendarFormat";
+import { AgendaList } from "../ui/calendarGrid/AgendaList";
+import { agendaDays, occurrenceTimeLabel, tasksByDay, taskTimeLabel } from "./calendarFormat";
 
 type AgendaViewProps = {
   today: string;
@@ -43,23 +44,21 @@ export function AgendaView({ today, calendarIds, showTasks, reloadKey, onOpen }:
   const events = new Map(agendaDays(data.occurrences, zone, from, to));
   const tasks = tasksByDay(showTasks ? data.tasks ?? [] : []);
   const days = [...new Set([...events.keys(), ...tasks.keys()])].sort();
-  return <section className="calendar-agenda" aria-label="Agenda for the next 60 days">
-    {!days.length && <div className="calendar-state">
+  type Row = { kind: "task"; task: DueTask } | { kind: "event"; occurrence: Occurrence };
+  const rows = days.map((day) => ({ day, items: [
+    ...(tasks.get(day) ?? []).map((task): Row => ({ kind: "task", task })),
+    ...(events.get(day) ?? []).map((occurrence): Row => ({ kind: "event", occurrence }))
+  ] }));
+  return <AgendaList days={rows} today={today} label="Agenda for the next 60 days"
+    itemKey={(row) => row.kind === "task" ? `task:${row.task.cardId}` : `${row.occurrence.eventId}:${row.occurrence.date}`}
+    renderItem={(row, day) => row.kind === "task" ? <TaskRow task={row.task} /> : <OccurrenceRow occurrence={row.occurrence} day={day} zone={zone} onOpen={onOpen} />}
+    empty={<div className="calendar-state">
       <CalendarDays />
       <h2>Nothing planned</h2>
       <p>Events in the next 60 days appear here.</p>
-    </div>}
-    {days.map((day) => <section key={day} className="calendar-day-group" aria-labelledby={`agenda-${day}`}>
-      <h2 id={`agenda-${day}`} className={day === today ? "today" : undefined}>{dayHeading(day, today)}</h2>
-      <ul>
-        {(tasks.get(day) ?? []).map((task) => <li key={`task:${task.cardId}`}><TaskRow task={task} /></li>)}
-        {(events.get(day) ?? []).map((occurrence) => <li key={`${occurrence.eventId}:${occurrence.date}`}>
-          <OccurrenceRow occurrence={occurrence} day={day} zone={zone} onOpen={onOpen} />
-        </li>)}
-      </ul>
-    </section>)}
+    </div>}>
     {data.truncated && <p className="calendar-note">Showing the first 1000 events. Hide some calendars to see the rest.</p>}
-  </section>;
+  </AgendaList>;
 }
 
 export function OccurrenceRow({ occurrence, day, zone, onOpen }: { occurrence: Occurrence; day: string; zone: string; onOpen: (occurrence: Occurrence) => void }) {
