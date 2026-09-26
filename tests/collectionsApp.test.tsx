@@ -58,6 +58,16 @@ test("owned collection rows offer Rename, Share, and Move to Bin; shared rows sh
   expect(collectionBinMessage(summary)).toBe("Move “Pantry” and its 3 rows to the Bin? Everyone it is shared with loses access. You can restore it for 30 days.");
 });
 
+test("header actions whose label phones hide keep an accessible name", async () => {
+  const css = await Bun.file(new URL("../src/collections/collections.css", import.meta.url)).text();
+  expect(css).toContain(".collection-action span { display: none; }");
+  const source = await Bun.file(new URL("../src/collections/CollectionView.tsx", import.meta.url)).text();
+  const buttons = source.split("\n").filter((line) => /<button[^\n]*className="[^"]*collection-action/.test(line));
+  expect(buttons.length).toBeGreaterThanOrEqual(2);
+  for (const button of buttons) expect(button).toMatch(/aria-label="[^"]+"/);
+  expect(buttons.some((button) => button.includes('aria-label="Fields"'))).toBe(true);
+});
+
 test("collection list actions get 44 px hit areas on phones", async () => {
   const css = await Bun.file(new URL("../src/collections/collections.css", import.meta.url)).text();
   const phone = css.slice(css.indexOf("@media (max-width: 760px)"));

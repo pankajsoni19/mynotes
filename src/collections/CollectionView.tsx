@@ -272,7 +272,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       </span>
       {isOwner && <span className="collection-header-actions">
         <button className="icon-button" onClick={() => setDialog({ kind: "rename" })} aria-haspopup="dialog" aria-label="Rename collection" title="Rename"><Pencil /></button>
-        <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "fields" })} aria-haspopup="dialog"><Columns3 /><span>Fields</span></button>
+        <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "fields" })} aria-haspopup="dialog" aria-label="Fields"><Columns3 /><span>Fields</span></button>
         <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "share" })} aria-haspopup="dialog" aria-label="Share collection"><Share2 /><span>Share</span></button>
         <button className="icon-button" onClick={() => setDialog({ kind: "deleteCollection" })} aria-haspopup="dialog" aria-label="Move collection to the Bin" title="Move to Bin"><Trash2 /></button>
       </span>}
