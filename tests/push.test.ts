@@ -178,8 +178,11 @@ describe("subscriptions and delivery", () => {
     expect((await send(user, "POST", "/push/subscriptions", subscription(endpoint("delivery")))).status).toBe(201);
     expect((await send(user, "POST", "/reminders", { title: "Push me", fireAt: "2032-02-01T09:00", tz: "UTC" })).status).toBe(201);
     expect((await send(user, "POST", "/reminders", { title: "And me", fireAt: "2032-02-01T09:00", tz: "UTC" })).status).toBe(201);
-    reminders.runDispatch({ nowMs: Date.parse("2032-02-01T09:00:10Z") });
-    await Bun.sleep(50);
+    // A slow resolver stands in for a loaded machine: a fixed sleep here raced delivery.
+    push.pushNet.resolve = async () => { await Bun.sleep(80); return ["142.250.1.1"]; };
+    expect(reminders.runDispatch({ nowMs: Date.parse("2032-02-01T09:00:10Z") })?.notified).toBe(2);
+    // The dispatcher starts delivery synchronously; an empty call resolves when the queue drains.
+    await push.deliverNotifications([]);
     expect(sent.length).toBe(1);
     const [{ url, init }] = sent as [Sent];
     expect(url).toBe(endpoint("delivery"));
