@@ -1,0 +1,106 @@
+// The board's presentation state in the URL query (WAVE_13_TASK_CARD_UX.md D112, §4.6, T102).
+// Pure: no DOM access. Filters are the one task grammar of shared/taskQuery.ts, carried as a
+// canonical `q=` by its URL codec (`decodeFilterParams` / `encodeFilterParams`, which still read
+// the older per-key parameters). This module only adds the presentation keys the grammar leaves
+// to its callers: `view`, `group`, `sort`, `cal`, and `month`.
+//
+// Decoding never throws: unknown keys and invalid values are dropped (the grammar decodes
+// leniently, within its limits). Encoding is canonical (fixed key order, defaults left out,
+// canonical filter text), so `sameRoute` is stable and a shared link reads the same everywhere.
+import { decodeFilterParams, encodeFilterParams, type TaskQuery } from "../../shared/taskQuery";
+
+export const BOARD_VIEWS = ["board", "table", "list", "calendar"] as const;
+export type BoardViewId = typeof BOARD_VIEWS[number];
+
+/**
+ * Grouping dimensions of the list view (§4.5). The hierarchy wave adds `parent` and `sprint`
+ * here and in `GROUP_DIMENSIONS` (src/tasks/boardQuery.ts); nothing else changes.
+ */
+export const BOARD_GROUPS = ["column", "assignee", "tag", "flag", "due"] as const;
+export type BoardGroupId = typeof BOARD_GROUPS[number];
+
+/** Sortable table columns (§4.5). */
+export const BOARD_SORT_FIELDS = ["title", "column", "assignees", "due", "tags", "flags", "created", "updated"] as const;
+export type BoardSortField = typeof BOARD_SORT_FIELDS[number];
+export type BoardSort = { field: BoardSortField; direction: "asc" | "desc" };
+
+export type CalendarLayout = "month" | "agenda";
+
+export type BoardQuery = {
+  view: BoardViewId;
+  /** The list view's grouping; null means the default (by column). */
+  group: BoardGroupId | null;
+  /** Null keeps the board order. */
+  sort: BoardSort | null;
+  cal: CalendarLayout;
+  /** `YYYY-MM` for the calendar view; null means the current month. */
+  month: string | null;
+  /** The filter bar's terms, board-scoped (`column:` is valid without `board:`). */
+  filter: TaskQuery;
+};
+
+const emptyFilter = (): TaskQuery => ({ terms: [] });
+export const DEFAULT_BOARD_QUERY: BoardQuery = Object.freeze({ view: "board", group: null, sort: null, cal: "month", month: null, filter: Object.freeze({ terms: Object.freeze([]) }) }) as unknown as BoardQuery;
+
+/** The same rule as `isRouteMonth` in src/router.ts (kept here so the codec has no import cycle). */
+const monthPattern = /^(\d{4})-(0[1-9]|1[0-2])$/;
+export function isBoardMonth(value: string) {
+  const match = monthPattern.exec(value);
+  return match !== null && Number(match[1]) >= 1900 && Number(match[1]) <= 2200;
+}
+
+const oneOf = <T extends string>(list: readonly T[], value: string | null | undefined): T | null =>
+  value !== null && value !== undefined && (list as readonly string[]).includes(value) ? value as T : null;
+
+/** A `field:asc|desc` sort, or null. */
+export function parseBoardSort(value: string | null | undefined): BoardSort | null {
+  const match = value ? /^([a-z]+):(asc|desc)$/.exec(value) : null;
+  const field = oneOf(BOARD_SORT_FIELDS, match?.[1]);
+  return field && match ? { field, direction: match[2] as "asc" | "desc" } : null;
+}
+
+/** A search string (with or without its leading `?`) as a board query. Oversized input reads as the default. */
+export function parseBoardSearch(search: string): BoardQuery {
+  if (!search || search.length > 4096) return { ...DEFAULT_BOARD_QUERY, filter: emptyFilter() };
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  } catch {
+    return { ...DEFAULT_BOARD_QUERY, filter: emptyFilter() };
+  }
+  const month = params.get("month");
+  return {
+    view: oneOf(BOARD_VIEWS, params.get("view")) ?? "board",
+    group: oneOf(BOARD_GROUPS, params.get("group")),
+    sort: parseBoardSort(params.get("sort")),
+    cal: oneOf(["month", "agenda"] as const, params.get("cal")) ?? "month",
+    month: month && isBoardMonth(month) ? month : null,
+    filter: decodeFilterParams(params, { boardScoped: true })
+  };
+}
+
+/** The canonical search string of a query: "" for the default, otherwise "?view=…&…". */
+export function formatBoardSearch(query: BoardQuery): string {
+  const params = new URLSearchParams();
+  if (query.view !== "board" && oneOf(BOARD_VIEWS, query.view)) params.set("view", query.view);
+  if (query.group && oneOf(BOARD_GROUPS, query.group)) params.set("group", query.group);
+  if (query.sort && oneOf(BOARD_SORT_FIELDS, query.sort.field) && (query.sort.direction === "asc" || query.sort.direction === "desc")) params.set("sort", `${query.sort.field}:${query.sort.direction}`);
+  if (query.cal === "agenda") params.set("cal", "agenda");
+  if (query.month && isBoardMonth(query.month)) params.set("month", query.month);
+  encodeFilterParams(query.filter, params);
+  // `:` and `,` are legal in a query; keeping them readable makes shared links easier to read
+  // ("sort=due:asc&q=assignee:me+flag:blocked,urgent").
+  const text = params.toString().replace(/%3A/gi, ":").replace(/%2C/gi, ",");
+  return text ? `?${text}` : "";
+}
+
+/** Whether a query is the default one (no query string at all). */
+export const isDefaultBoardQuery = (query: BoardQuery) => formatBoardSearch(query) === "";
+
+/** Whether a query filters any cards (the filter bar's Clear, and the "matching" copy). */
+export const hasBoardFilter = (query: BoardQuery) => query.filter.terms.length > 0;
+
+/** A copy of `query` with changes, keeping every other key. */
+export function withBoardQuery(query: BoardQuery, change: Partial<BoardQuery>): BoardQuery {
+  return { ...query, ...change, filter: change.filter ?? query.filter };
+}

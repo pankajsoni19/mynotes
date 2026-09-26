@@ -1,19 +1,25 @@
 import type { Route } from "./router";
+import { isDefaultBoardQuery, type BoardQuery } from "./tasks/boardUrl";
 
 export type TasksRoute = Extract<Route, { app: "tasks" }>;
 
-export function tasksRoute(boardId: string | null = null, cardId: string | null = null, full = false): TasksRoute {
+/**
+ * A Tasks route. `full` opens the card as a page (13D); `query` (the board's view and filters,
+ * D112) is kept only with a board and when it is not the default.
+ */
+export function tasksRoute(boardId: string | null = null, cardId: string | null = null, full = false, query?: BoardQuery | null): TasksRoute {
   const card = boardId ? cardId : null;
-  return card && full ? { app: "tasks", boardId, cardId: card, full: true } : { app: "tasks", boardId, cardId: card };
+  const route: TasksRoute = card && full ? { app: "tasks", boardId, cardId: card, full: true } : { app: "tasks", boardId, cardId: card };
+  return boardId && query && !isDefaultBoardQuery(query) ? { ...route, query } : route;
 }
 
 /**
  * The view one level up, used when in-app Back has no history entry of this visit to step back
- * to (a deep link): full page → card dialog → board → board list → Home (null).
+ * to (a deep link): full page → card dialog → board (each in the same view) → board list → Home (null).
  */
 export function parentTasksRoute(route: TasksRoute): TasksRoute | null {
-  if (route.cardId && route.full) return tasksRoute(route.boardId, route.cardId);
-  if (route.cardId) return tasksRoute(route.boardId);
+  if (route.cardId && route.full) return tasksRoute(route.boardId, route.cardId, false, route.query);
+  if (route.cardId) return tasksRoute(route.boardId, null, false, route.query);
   if (route.boardId) return tasksRoute();
   return null;
 }
@@ -50,6 +56,6 @@ export function hasFromDialogHint(state: unknown) {
  */
 export function fullPageAction(action: "collapse" | "close", route: TasksRoute, state: unknown, depth: number): { kind: "history"; delta: number } | { kind: "replace"; route: TasksRoute } {
   const hint = hasFromDialogHint(state);
-  if (action === "collapse") return hint && depth > 0 ? { kind: "history", delta: -1 } : { kind: "replace", route: tasksRoute(route.boardId, route.cardId) };
-  return hint && depth >= 2 ? { kind: "history", delta: -2 } : { kind: "replace", route: tasksRoute(route.boardId) };
+  if (action === "collapse") return hint && depth > 0 ? { kind: "history", delta: -1 } : { kind: "replace", route: tasksRoute(route.boardId, route.cardId, false, route.query) };
+  return hint && depth >= 2 ? { kind: "history", delta: -2 } : { kind: "replace", route: tasksRoute(route.boardId, null, false, route.query) };
 }

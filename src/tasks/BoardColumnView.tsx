@@ -29,6 +29,8 @@ type BoardColumnViewProps = {
   onMoveColumn: (direction: -1 | 1) => void;
   /** Opens the card composer on this column (§4.3; it replaced the inline quick add, §11 Q4). */
   onAddCard: () => void;
+  /** With filters on (13E), `cards` are the matching ones and this is the column's real count (for WIP). */
+  totalCount?: number;
 };
 
 /** Which slot a pointer at `clientY` points to among the column's card elements (the dragged one excluded). */
@@ -74,15 +76,16 @@ export function BoardColumnView(props: BoardColumnViewProps) {
 
   const indicator = (index: number) => dropIndex === index ? <li className="task-drop-indicator" aria-hidden="true" /> : null;
 
-  const wip = wipState(cards.length, column.wip_limit);
+  const count = props.totalCount ?? cards.length;
+  const wip = wipState(count, column.wip_limit);
 
   return <section className={`task-column${dropIndex !== null ? " drop-active" : ""}${props.refuseDrop ? " drop-refused" : ""}`} aria-labelledby={`column-${column.id}`} data-column-id={column.id}
     onDragOver={dragOver} onDragEnter={dragOver} onDrop={drop}
     onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onDragOverIndex(null); }}>
     <header className="task-column-header">
       <h2 id={`column-${column.id}`} title={column.name}>{column.name}</h2>
-      <b className={wip ? `task-wip ${wip}` : undefined} aria-label={wipCountLabel(cards.length, column.wip_limit)} title={wip ? `WIP limit ${column.wip_limit}` : undefined}>
-        {wip ? `${cards.length} / ${column.wip_limit}` : cards.length}
+      <b className={wip ? `task-wip ${wip}` : undefined} aria-label={wipCountLabel(count, column.wip_limit)} title={wip ? `WIP limit ${column.wip_limit}` : undefined}>
+        {wip ? `${count} / ${column.wip_limit}` : count}
       </b>
       {owner && <span className="task-column-controls">
         <button className="icon-button desktop-only" onClick={() => props.onMoveColumn(-1)} disabled={isFirst} aria-label={`Move ${column.name} left`} title="Move column left"><ChevronLeft /></button>
@@ -131,7 +134,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
       </li>;
       })}
       {dropIndex !== null && dropIndex >= others.length && <li className="task-drop-indicator" aria-hidden="true" />}
-      {!cards.length && dropIndex === null && <li className="task-column-empty">No cards yet</li>}
+      {!cards.length && dropIndex === null && <li className="task-column-empty">{count > 0 ? "No matching cards" : "No cards yet"}</li>}
     </ul>
     <footer className="task-column-footer">
       <button className="task-add-card" onClick={props.onAddCard} aria-haspopup="dialog" aria-label={`Add a card to ${column.name}`}><Plus />Add a card</button>

@@ -168,6 +168,16 @@ describe("typed card relations (D104, D105, D107)", () => {
     expect(db.query("SELECT COUNT(*) AS count FROM card_relations WHERE id = ?").get(toB.body.relation.id)).toEqual({ count: 0 });
   });
 
+  test("relations made in the same millisecond list newest first, whatever their random ids", async () => {
+    const s = await setup("Rel tie");
+    const created_at = new Date().toISOString();
+    // The newer relation gets the smaller id, so ordering by id instead of insertion would flip them.
+    const insert = db.query("INSERT INTO card_relations (id, source_card_id, target_card_id, kind, created_by, created_at) VALUES (?, ?, ?, 'blocks', ?, ?)");
+    insert.run("ffffffff-0000-4000-8000-000000000000", s.a.id, s.b.id, s.owner.userId, created_at);
+    insert.run("00000000-0000-4000-8000-000000000000", s.a.id, s.p.id, s.owner.userId, created_at);
+    expect((await relations(s.owner, s.a.id)).map((relation) => relation.id)).toEqual(["00000000-0000-4000-8000-000000000000", "ffffffff-0000-4000-8000-000000000000"]);
+  });
+
   test("delete: any reader of either end; through an unrelated card is 404; a restricted relation may be removed", async () => {
     const s = await setup("Rel delete");
     const toP = await tasks(s.owner, "POST", `/cards/${s.a.id}/relations`, { type: "relates_to", cardId: s.p.id });

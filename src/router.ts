@@ -1,10 +1,13 @@
 // Pure URL routing for the SPA. No DOM access, so it can be unit tested directly.
+import { formatBoardSearch, isDefaultBoardQuery, parseBoardSearch, type BoardQuery } from "./tasks/boardUrl";
 
 export type Route =
   | { app: "home" }
   | { app: "notes"; folder: "all" | "shared" | string; noteId: string | null }
   | { app: "files"; folder: "all" | "shared" | string; documentId: string | null }
-  | { app: "tasks"; boardId: string | null; cardId: string | null; full?: true }
+  // `query` (D112): a board's view, grouping, sort, and filters, carried in the URL query. It is
+  // left out when it is the default, and never set without a board. `full` (13D): the card as a page.
+  | { app: "tasks"; boardId: string | null; cardId: string | null; full?: true; query?: BoardQuery }
   | { app: "collections"; collectionId: string | null; viewId: string | null; rowId: string | null }
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "notifications" }
@@ -30,14 +33,17 @@ function parseCollection(segments: string[]): { folder: string; itemId: string |
 
 // /tasks, /tasks/:boardId, /tasks/:boardId/card/:cardId, and /tasks/:boardId/card/:cardId/full (the
 // card as a page, 13D). Anything malformed after a valid board id still opens that board; a
-// malformed board id opens the board list.
-function parseTasks(segments: string[]): Route {
+// malformed board id opens the board list. The query (view, filters) belongs to the board: it is
+// kept on its cards' URLs too, so closing a card returns to the same view (D112).
+function parseTasks(segments: string[], search: string): Route {
   const [board, kind, card, view] = segments;
   if (board === undefined || !isRouteId(board)) return { app: "tasks", boardId: null, cardId: null };
   const boardId = board.toLowerCase();
   const full = segments.length === 4 && view === "full";
   const cardId = (segments.length === 3 || full) && kind === "card" && card !== undefined && isRouteId(card) ? card.toLowerCase() : null;
-  return cardId && full ? { app: "tasks", boardId, cardId, full: true } : { app: "tasks", boardId, cardId };
+  const query = parseBoardSearch(search);
+  const route: Route = cardId && full ? { app: "tasks", boardId, cardId, full: true } : { app: "tasks", boardId, cardId };
+  return isDefaultBoardQuery(query) ? route : { ...route, query };
 }
 
 // /collections, /collections/:c, /collections/:c/view/:v, and /collections/:c/row/:r. Anything
@@ -68,7 +74,18 @@ function parseCalendar(segments: string[]): Route {
   return { app: "calendar", view: "agenda", month: null, eventId: null };
 }
 
-export function parseRoute(pathname: string): Route {
+/**
+ * A location's route. `search` is the location's query (`location.search`): only Tasks reads it
+ * (D112), and every Tasks caller must pass it, or a reload or Back drops the board's view and
+ * filters (`tests/routerSearch.test.ts` checks the call sites). A `pathname` that still carries
+ * its own `?query` (an in-app href) is split first.
+ */
+export function parseRoute(pathname: string, search = ""): Route {
+  const mark = pathname.indexOf("?");
+  if (mark >= 0) {
+    if (!search) search = pathname.slice(mark);
+    pathname = pathname.slice(0, mark);
+  }
   const segments = pathname.split("/").filter(Boolean);
   const [app, ...rest] = segments;
   if (app === "notes") {
@@ -79,7 +96,7 @@ export function parseRoute(pathname: string): Route {
     const { folder, itemId } = parseCollection(rest);
     return { app: "files", folder, documentId: itemId };
   }
-  if (app === "tasks") return parseTasks(rest);
+  if (app === "tasks") return parseTasks(rest, search);
   if (app === "collections") return parseCollections(rest);
   if (app === "calendar") return parseCalendar(rest);
   if (app === "notifications" && rest.length === 0) return { app: "notifications" };
@@ -103,8 +120,9 @@ export function formatRoute(route: Route): string {
   if (route.app === "tasks") {
     if (!route.boardId || !isRouteId(route.boardId)) return "/tasks";
     const board = `/tasks/${route.boardId.toLowerCase()}`;
-    if (!route.cardId || !isRouteId(route.cardId)) return board;
-    return `${board}/card/${route.cardId.toLowerCase()}${route.full ? "/full" : ""}`;
+    const search = route.query ? formatBoardSearch(route.query) : "";
+    if (!route.cardId || !isRouteId(route.cardId)) return `${board}${search}`;
+    return `${board}/card/${route.cardId.toLowerCase()}${route.full ? "/full" : ""}${search}`;
   }
   if (route.app === "collections") {
     if (!route.collectionId || !isRouteId(route.collectionId)) return "/collections";
@@ -122,6 +140,17 @@ export function formatRoute(route: Route): string {
   if (route.app === "bin") return "/bin";
   if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : "/team";
   return "/";
+}
+
+/** A location's route, with its query (the one way DOM callers should parse the current URL). */
+export const routeFromLocation = (location: { pathname: string; search: string }) => parseRoute(location.pathname, location.search);
+
+/**
+ * The part of a location `formatRoute` produces, to compare against it: the path, plus the query
+ * on Tasks URLs (the only app whose URLs carry one).
+ */
+export function locationUrl(location: { pathname: string; search: string }) {
+  return /^\/tasks(\/|$)/.test(location.pathname) ? `${location.pathname}${location.search}` : location.pathname;
 }
 
 export function sameRoute(left: Route, right: Route) {

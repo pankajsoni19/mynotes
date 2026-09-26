@@ -725,3 +725,82 @@ function dueFromTerms(terms: readonly string[][]): CardFilter["due"] | null {
   }
   return { ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}), ...(none ? { none: true } : {}) };
 }
+
+// ---------------------------------------------------------------------------
+// In-memory evaluation of the grammar over a loaded board (13E, D113). The
+// board views filter the board JSON on the client. A query `cardFilterFromQuery`
+// models runs through `queryCards`; anything else (negation, relative due
+// windows, `has:`, tag names, `state:`, `creator:`) runs through
+// `matchesQuery`, which mirrors the server compiler (`server/tasks/query.ts`)
+// term by term: values OR, terms AND, `-` negates, and dates compare the
+// card's civil `due_on`. One refinement: a timed card is overdue once its exact
+// instant (`due_at`) has passed, where the server compares wall times.
+
+/** The card fields `matchesQuery` reads beyond `QueryCard` (all in the board JSON). */
+export type MemoryQueryCard = QueryCard & {
+  board_id?: string;
+  created_by?: string | null;
+  due_time?: string | null;
+  due_at?: string | null;
+  relation_count?: number;
+  open_blockers?: number;
+};
+
+export type MemoryQueryContext = {
+  userId: string;
+  /** The viewer's local date, YYYY-MM-DD, for the relative due windows. */
+  today: string;
+  /** The viewer's clock in ms, for timed overdue cards. */
+  now?: number;
+  /** The board's tags, to match `tag:` names (case-insensitively). */
+  tags?: ReadonlyArray<{ id: string; name: string }>;
+  /** Each column's state (migration 020); a column missing here counts as `doing`. */
+  columnStates?: Readonly<Record<string, TaskState>>;
+};
+
+function matchesDueValue(card: MemoryQueryCard, value: string, context: MemoryQueryContext) {
+  const window = dueWindow(value, context.today);
+  const due = card.due_on;
+  if (window.kind === "none") return due === null;
+  if (due === null) return false;
+  switch (window.kind) {
+    case "overdue": {
+      const at = card.due_time && card.due_at ? Date.parse(card.due_at) : Number.NaN;
+      return Number.isFinite(at) ? at <= (context.now ?? Date.now()) : due < window.before;
+    }
+    case "range": return due >= window.from && due <= window.to;
+    case "before": return due < window.date;
+    case "after": return due > window.date;
+  }
+}
+
+function matchesTerm(card: MemoryQueryCard, term: FilterTerm, context: MemoryQueryContext) {
+  const values = term.values;
+  const user = (value: string) => value === "me" ? context.userId.toLowerCase() : value;
+  switch (term.key) {
+    case "board": return card.board_id !== undefined && values.includes(card.board_id);
+    case "column": return values.includes(card.column_id);
+    case "state": return values.includes(context.columnStates?.[card.column_id] ?? "doing");
+    case "creator": return !!card.created_by && values.map(user).includes(card.created_by);
+    case "assignee": {
+      const ids = card.assignees.map((assignee) => assignee.id);
+      return (values.includes("none") && ids.length === 0) || values.filter((value) => value !== "none").map(user).some((value) => ids.includes(value));
+    }
+    case "tag": {
+      if (values.includes("none") && card.tag_ids.length === 0) return true;
+      const names = values.filter((value) => value !== "none" && !isUuid(value)).map((value) => value.toLowerCase());
+      const ids = new Set(values.filter(isUuid));
+      for (const tag of context.tags ?? []) if (names.includes(tag.name.toLowerCase())) ids.add(tag.id);
+      return card.tag_ids.some((id) => ids.has(id));
+    }
+    case "flag": return (values.includes("none") && card.flags.length === 0) || card.flags.some((flag) => values.includes(flag));
+    case "due": return values.some((value) => matchesDueValue(card, value, context));
+    case "has": return values.some((value) => value === "blocked" ? (card.open_blockers ?? 0) > 0 : (card.relation_count ?? 0) > 0);
+    case "text": return matchesText(card, foldText(values[0] ?? ""));
+  }
+}
+
+/** Whether a loaded card matches a parsed query (every term, negated terms inverted). */
+export function matchesQuery(card: MemoryQueryCard, query: TaskQuery, context: MemoryQueryContext) {
+  return query.terms.every((term) => matchesTerm(card, term, context) !== term.negate);
+}

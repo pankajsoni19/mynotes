@@ -330,11 +330,15 @@ export function notificationHref(eventId: string | null) {
 
 type NotificationRow = { id: string; event_id: string | null; reminder_title: string | null; late: number; read_at: string | null; created_at: string; occurrence_start: string | null };
 
-/** The caller's notifications, newest first. Titles are resolved now, for the caller (T67). */
+/**
+ * The caller's notifications, newest first. Titles are resolved now, for the caller (T67). One
+ * dispatch tick stamps several rows with the same `created_at`; rowid (insertion order) breaks the
+ * tie, not the random id.
+ */
 export function listNotifications(userId: string, options: { unread: boolean; limit: number }) {
   const rows = db.query(`SELECT n.id, n.event_id, r.title AS reminder_title, n.late, n.read_at, n.created_at, n.occurrence_start
       FROM notifications n LEFT JOIN reminders r ON r.id = n.reminder_id
-      WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.id LIMIT $limit`)
+      WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
     .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit }) as NotificationRow[];
   const items = rows.map((row): NotificationItem => {
     const event = row.event_id ? readableEvent(row.event_id, userId) : null;

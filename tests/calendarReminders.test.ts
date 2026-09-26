@@ -267,6 +267,17 @@ describe("notifications API", () => {
     for (const hostile of ["javascript:alert(1)", "//evil.example", "../../x", `${event.id}/../../evil`, null]) expect(reminders.notificationHref(hostile)).toBe("/notifications");
   });
 
+  test("notifications made in the same millisecond list newest first, whatever their random ids", async () => {
+    const user = await createUser("Notify tie");
+    const createdAt = new Date().toISOString();
+    // The newer row gets the larger id, so the old ascending-id tie-break would list it last.
+    const insert = db.query("INSERT INTO notifications (id, user_id, created_at) VALUES (?, ?, ?)");
+    insert.run("00000000-0000-4000-8000-000000000000", user.userId, createdAt);
+    insert.run("ffffffff-0000-4000-8000-000000000000", user.userId, createdAt);
+    const listed = await json<{ items: Array<{ id: string }> }>(await send(user, "GET", "/notifications"));
+    expect(listed.items.map((item) => item.id)).toEqual(["ffffffff-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000000"]);
+  });
+
   test("the sweeper deletes notifications older than 30 days", async () => {
     const user = await createUser("Notify sweep");
     const old = crypto.randomUUID();

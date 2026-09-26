@@ -4,10 +4,11 @@ import { House, Sparkles } from "lucide-react";
 import { AccountActions, useBinCount } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
-import { formatRoute, parseRoute, type Route } from "../router";
+import { formatRoute, locationUrl, routeFromLocation, type Route } from "../router";
 import { fullPageAction, tasksBackAction, tasksRoute, withFromDialogHint, type TasksRoute } from "../tasksRoute";
 import { BoardList } from "./BoardList";
 import { BoardView } from "./BoardView";
+import { DEFAULT_BOARD_QUERY, type BoardQuery } from "./boardUrl";
 import "../bin/bin.css";
 import "../files/files.css";
 import "./tasks.css";
@@ -28,7 +29,7 @@ type TasksAppProps = {
 };
 
 const currentTasksRoute = (): TasksRoute => {
-  const route = parseRoute(window.location.pathname);
+  const route = routeFromLocation(window.location);
   return route.app === "tasks" ? route : tasksRoute();
 };
 
@@ -57,7 +58,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       if (popStateClosedDialog(event)) return;
-      const next = parseRoute(window.location.pathname);
+      const next = routeFromLocation(window.location);
       if (next.app === "tasks") setRoute(next);
     };
     window.addEventListener("popstate", onPopState);
@@ -67,7 +68,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
 
   const go = useCallback((next: TasksRoute, replace = false) => {
     setRoute(next);
-    if (formatRoute(next) !== window.location.pathname || replace) navigateRef.current(next, { replace });
+    if (formatRoute(next) !== locationUrl(window.location) || replace) navigateRef.current(next, { replace });
   }, []);
 
   const back = useCallback(() => {
@@ -78,18 +79,19 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
   }, [go, onHome]);
 
   // A card is a view with its own entry: opening pushes it, and closing steps back to the board
-  // (or replaces a deep-linked card entry with its board).
+  // (or replaces a deep-linked card entry with its board). The card's URL carries the board's
+  // query, so closing it returns to the same view and filters (D112).
   const openCard = useCallback((cardId: string) => {
-    const boardId = routeRef.current.boardId;
-    if (boardId) go(tasksRoute(boardId, cardId));
+    const { boardId, query } = routeRef.current;
+    if (boardId) go(tasksRoute(boardId, cardId, false, query));
   }, [go]);
   // Expand pushes the card as a full page with a hint that the dialog is the entry below (§4.7);
   // Collapse and Close step back through those entries, or replace a deep-linked one.
   const expandCard = useCallback(() => {
     const current = routeRef.current;
     if (!current.boardId || !current.cardId || current.full) return;
-    go(tasksRoute(current.boardId, current.cardId, true));
-    window.history.replaceState(withFromDialogHint(window.history.state), "", window.location.pathname);
+    go(tasksRoute(current.boardId, current.cardId, true, current.query));
+    window.history.replaceState(withFromDialogHint(window.history.state), "", `${window.location.pathname}${window.location.search}`);
   }, [go]);
   const leaveFullPage = useCallback((action: "collapse" | "close") => {
     const step = fullPageAction(action, routeRef.current, window.history.state, readHistoryDepth(window.history.state));
@@ -102,8 +104,15 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
     if (!current.cardId) return;
     if (current.full) leaveFullPage("close");
     else if (readHistoryDepth(window.history.state) > 0) window.history.back();
-    else go(tasksRoute(current.boardId), true);
+    else go(tasksRoute(current.boardId, null, false, current.query), true);
   }, [go, leaveFullPage]);
+
+  // The board's view and filters live in the URL query (D112): switching the view pushes an
+  // entry, and filter, sort, and group edits replace it, so Back steps through views, not chips.
+  const changeQuery = useCallback((query: BoardQuery, options: { push?: boolean } = {}) => {
+    const current = routeRef.current;
+    if (current.boardId) go(tasksRoute(current.boardId, current.cardId, current.full === true, query), !options.push);
+  }, [go]);
 
   const onMissing = useCallback(() => {
     notify("Board not found");
@@ -117,7 +126,9 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
     {route.boardId
-      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} openCardFull={route.full === true} onExpandCard={expandCard} onCollapseCard={collapseCard} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} onOpenCardRoute={(boardId, cardId) => go(tasksRoute(boardId, cardId))} />
+      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} openCardFull={route.full === true} onExpandCard={expandCard} onCollapseCard={collapseCard} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))}
+        onOpenCardRoute={(boardId, cardId) => go(tasksRoute(boardId, cardId, false, boardId === routeRef.current.boardId ? routeRef.current.query : null))}
+        query={route.query ?? DEFAULT_BOARD_QUERY} onQueryChange={changeQuery} />
       : <BoardList onOpen={(board) => go(tasksRoute(board.id))} onOpenBoard={(boardId) => go(tasksRoute(boardId))} notify={notify} />}
     {toast && <div className="toast file-toast" role="status">
       <span>{toast.message}</span>
