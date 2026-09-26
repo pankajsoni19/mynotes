@@ -18,14 +18,18 @@ test("the first registration becomes the only admin, and the host CLI manages ro
   expect(result.lastAdmin.code).toBe(1);
   expect(result.lastAdmin.err).toContain("LAST_ADMIN");
   expect(result.promote.code).toBe(0);
-  // Viewer and guest are not selectable yet; unknown accounts and commands fail.
-  expect(result.viewer).toBe(2);
+  // Every role is selectable from the host; unknown accounts and commands fail.
+  expect(result.viewer).toBe(0);
   expect(result.unknown).toBe(1);
   expect(result.notBlocked.code).toBe(1);
   expect(result.notBlocked.err).toContain("NOT_BLOCKED");
   expect(result.usage).toBe(2);
-  expect(result.cliEvents).toEqual([{ via: "cli", action: "role_change", from_role: "member", to_role: "admin", actor_id: null }]);
-  expect(result.cliAudit).toEqual({ count: 1 });
+  // The promotion, then the demotion to viewer (the first admin remains, so it is allowed).
+  expect(result.cliEvents).toEqual([
+    { via: "cli", action: "role_change", from_role: "member", to_role: "admin", actor_id: null },
+    { via: "cli", action: "role_change", from_role: "admin", to_role: "viewer", actor_id: null }
+  ]);
+  expect(result.cliAudit).toEqual({ count: 2 });
 }, 30_000);
 
 test("with accounts but no active admin, boot warns and the next registration becomes the admin", () => {

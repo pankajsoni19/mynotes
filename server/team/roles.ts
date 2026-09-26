@@ -13,11 +13,10 @@ export type Role = typeof ROLES[number];
 export const isRole = (value: unknown): value is Role => typeof value === "string" && (ROLES as readonly string[]).includes(value);
 
 /**
- * Roles an admin can assign in this release. Viewer and guest exist in the schema but are only
- * enforced from Wave 15 (Team B), so the API refuses them with 400 ROLE_NOT_ENABLED until then.
+ * Roles an admin can assign: all four since Wave 15 enforces viewer and guest (the write gate, the
+ * guest audience exclusion, and the MCP scope filter).
  */
-export const SELECTABLE_ROLES: readonly Role[] = ["admin", "member"];
-export const isSelectableRole = (role: Role) => SELECTABLE_ROLES.includes(role);
+export const SELECTABLE_ROLES: readonly Role[] = ROLES;
 
 export type Capability =
   /** Anything that creates or changes owned or shared content. */

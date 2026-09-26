@@ -81,15 +81,17 @@ describe("Team formatting", () => {
 });
 
 describe("Team role picker (shared Select, D91)", () => {
-  test("offers every role with its description, and only this release's roles are selectable", () => {
+  test("offers every role with its description, and all four are selectable (Wave 15)", () => {
     const options = roleOptions();
     expect(options.map((option) => option.value)).toEqual([...ROLES]);
     expect(options.filter((option) => !option.disabled).map((option) => option.value)).toEqual([...SELECTABLE_ROLES]);
+    expect([...SELECTABLE_ROLES]).toEqual([...ROLES]);
     expect(options[0]!.description).toBe(ROLE_DESCRIPTIONS.admin);
-    expect(options.find((option) => option.value === "viewer")!.description).toContain("Available in a later release.");
+    expect(options.find((option) => option.value === "viewer")!.description).toBe(ROLE_DESCRIPTIONS.viewer);
+    expect(options.find((option) => option.value === "guest")!.description).toContain("shared with them by name");
   });
 
-  test("renders the shared listbox with descriptions and disabled options, never a native select", () => {
+  test("renders the shared listbox with every role enabled, never a native select", () => {
     const closed = renderToStaticMarkup(<Select label="Team role" value="member" options={roleOptions()} onChange={() => undefined} />);
     expect(closed).not.toContain("<select");
     expect(closed).toContain('aria-haspopup="listbox"');
@@ -98,7 +100,8 @@ describe("Team role picker (shared Select, D91)", () => {
     const open = renderToStaticMarkup(<Select label="Team role" value="member" options={roleOptions()} onChange={() => undefined} presentation="popup" defaultOpen />);
     expect(open).toContain('role="listbox"');
     expect(open).toContain(ROLE_DESCRIPTIONS.member);
-    expect(open).toMatch(/aria-disabled="true"[^>]*>[\s\S]*?Viewer|Viewer[\s\S]*?aria-disabled="true"/);
+    expect(open).toContain(ROLE_DESCRIPTIONS.guest);
+    expect(open).not.toContain('aria-disabled="true"');
   });
 });
 

@@ -9,7 +9,7 @@
 import { revokeUserPushSubscriptions } from "../calendar/push";
 import { isEmailAllowed } from "../config";
 import { audit, db, now, type UserRow } from "../db";
-import { can, isSelectableRole, roleChangeNeedsReauth, type Role } from "./roles";
+import { can, roleChangeNeedsReauth, type Role } from "./roles";
 import { userRole } from "./userRole";
 
 export type TeamVia = "web" | "cli" | "mcp";
@@ -20,7 +20,6 @@ export type TeamErrorCode =
   | "NOT_FOUND"
   | "ADMIN_ONLY"
   | "ROLE_CHANGED"
-  | "ROLE_NOT_ENABLED"
   | "LAST_ADMIN"
   | "SELF_ACTION"
   | "ALREADY_BLOCKED"
@@ -224,9 +223,6 @@ const auditMeta = (via: TeamVia, extra: Record<string, unknown>) => ({ ...extra,
  */
 export function setRole(actor: TeamActor, targetId: string, input: { role: Role; expectedRole: Role }, options: { via: TeamVia; reauthenticated: boolean }) {
   requireManager(actor);
-  if (!isSelectableRole(input.role)) {
-    throw new TeamError(400, "ROLE_NOT_ENABLED", "This role is not available yet. Choose Admin or Member.");
-  }
   return write(() => {
     const target = loadTarget(targetId);
     if (!target) throw notFound();

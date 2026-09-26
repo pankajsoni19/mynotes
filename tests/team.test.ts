@@ -160,13 +160,17 @@ describe("Team API: roles", () => {
     expect(eventsFor(target)).toHaveLength(2);
   });
 
-  test("viewer and guest are refused until they are enabled, and strict bodies reject extra fields", async () => {
+  test("viewer and guest can be assigned (Wave 15), and strict bodies reject extra fields", async () => {
     const admin = await user("Enable admin", "admin");
     const target = await user("Enable target");
-    for (const role of ["viewer", "guest"]) {
-      const refused = await call(admin, "PUT", `/${target.userId}/role`, { role, expectedRole: "member" });
-      expect(refused).toMatchObject({ status: 400, body: { code: "ROLE_NOT_ENABLED" } });
+    let expectedRole = "member";
+    for (const role of ["viewer", "guest", "member"]) {
+      const changed = await call(admin, "PUT", `/${target.userId}/role`, { role, expectedRole });
+      expect(changed).toMatchObject({ status: 200, body: { changed: true, role, member: { role } } });
+      expect(roleOf(target)).toBe(role);
+      expectedRole = role;
     }
+    expect(eventsFor(target).map((event) => [event.from_role, event.to_role])).toEqual([["member", "viewer"], ["viewer", "guest"], ["guest", "member"]]);
     expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "owner", expectedRole: "member" })).status).toBe(400);
     expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "member", email: "x@example.test" })).status).toBe(400);
     expect(roleOf(target)).toBe("member");
