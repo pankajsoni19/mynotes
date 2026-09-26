@@ -17,6 +17,7 @@ import {
   normalizeDisabledModules,
   openTeamViaSettings,
   parsePreferences,
+  recordPopDepth,
   SETTINGS_MODULES,
   settingsModulesFor,
   withModuleEnabled,
@@ -193,6 +194,40 @@ describe("gating (client only)", () => {
     expect(hiddenEntryStep(null, 2)).toBe("replace");
     expect(hiddenEntryStep("forward", 3)).toBe("undo");
     expect(hiddenEntryStep("back", 3)).toBe("back");
+  });
+
+  test("consecutive Forwards onto a hidden entry are each undone, with no duplicate Home", () => {
+    // A browser whose go() fires popstate later, as real browsers do, and the popstate handler in
+    // App's order: record the depth first (every popstate), then skip ignored ones, then gate.
+    const entries = [{ path: "/", depth: 0 }, { path: "/team", depth: 1 }];
+    let index = 1;
+    const depthRef = { current: 1 };
+    const queued: number[] = [];
+    let ignoring = 0;
+    const onPopState = () => {
+      const entry = entries[index]!;
+      const previousDepth = recordPopDepth(depthRef, entry.depth);
+      if (ignoring > 0) { ignoring -= 1; return; }
+      if (!hiddenModuleForApp(["team"], parseRoute(entry.path).app)) return;
+      const step = hiddenEntryStep(dialogPopDirection(previousDepth, entry.depth), entry.depth);
+      if (step === "replace") { entries[index] = { path: "/", depth: entry.depth }; return; }
+      if (step === "undo") { depthRef.current = previousDepth; ignoring += 1; queued.push(-1); return; }
+      queued.push(-1);
+    };
+    const go = (delta: number) => { index += delta; onPopState(); };
+    const settle = () => { while (queued.length) go(queued.shift()!); };
+    // Settings → Manage team pushed /team at depth 1; Team is off. Back to Home.
+    go(-1); settle();
+    expect(index).toBe(0);
+    for (let forward = 0; forward < 3; forward += 1) {
+      go(1);
+      // A render while the undo is in flight must not re-read the depth: history.state is still /team.
+      expect(depthRef.current).toBe(0);
+      settle();
+      expect(index).toBe(0);
+      expect(depthRef.current).toBe(0);
+      expect(entries.map((entry) => entry.path)).toEqual(["/", "/team"]);
+    }
   });
 
   test("Manage team keeps the gate open only when Team actually opened", async () => {

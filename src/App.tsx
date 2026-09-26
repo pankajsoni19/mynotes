@@ -73,7 +73,7 @@ import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type Se
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { ModulesSettings } from "./ModulesSettings";
-import { hiddenEntryStep, hiddenModuleForApp, openTeamViaSettings, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
+import { hiddenEntryStep, hiddenModuleForApp, openTeamViaSettings, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
 import { useHistoryDialogGuard } from "./tasks/useHistoryDialogGuard";
 
@@ -282,7 +282,7 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
 
 function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security" }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
-  const [appInfo, setAppInfo] = useState({ version: "0.7.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState({ version: "0.8.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -1435,16 +1435,21 @@ export function App() {
   }
 
   // Re-registered every render so the handler never finalizes a note from a stale editor snapshot.
+  // The depth of the entry on screen: read once per signed-in user, then kept by navigate() and by
+  // every popstate (recordPopDepth), never re-read on render (see recordPopDepth).
+  const sessionUserId = session?.user.id ?? null;
+  useEffect(() => {
+    if (sessionUserId) historyDepthRef.current = readHistoryDepth(window.history.state);
+  }, [sessionUserId]);
+
   useEffect(() => {
     if (!session) return;
-    historyDepthRef.current = readHistoryDepth(window.history.state);
     const onPopState = (event: PopStateEvent) => {
+      const poppedDepth = readHistoryDepth(event.state);
+      const previousDepth = recordPopDepth(historyDepthRef, poppedDepth);
       // Back/Forward while a Files dialog is open only closes the dialog (D18).
       if (popStateClosedDialog(event)) return;
       const route = parseRoute(window.location.pathname);
-      const previousDepth = historyDepthRef.current;
-      const poppedDepth = readHistoryDepth(event.state);
-      historyDepthRef.current = poppedDepth;
       if (session.totp.setupRequired) return;
       // D92: Back or Forward onto a module that is off skips that entry instead of replacing it
       // with a second Home entry. Depth 0 still falls through to the gate below, which replaces it.

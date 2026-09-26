@@ -74,12 +74,17 @@ describe("creating a card with tags, flags, relations, and attachments in one ca
     }
     expect(relationRows()).toBe(before);
     expect(await cardTitles(s.owner, s.boardId)).toEqual(["Target"]);
-    // Two relations to the same card are RELATION_EXISTS, rolled back together.
-    const twice = await call(s.member, "POST", `/boards/${s.boardId}/cards`, {
-      columnId: s.columnId, title: "Twice", relations: [{ targetCardId: s.targetId, type: "relates_to" }, { targetCardId: s.targetId, type: "depends_on" }]
-    });
-    expect(twice.status).toBe(409);
-    expect(twice.body.code).toBe("RELATION_EXISTS");
+    // Two relations to the same card (in any letter case) are a 400 before anything is written, not a
+    // 409 RELATION_EXISTS carrying a relation id the same call rolled back.
+    for (const second of [s.targetId, s.targetId.toUpperCase()]) {
+      const twice = await call(s.member, "POST", `/boards/${s.boardId}/cards`, {
+        columnId: s.columnId, title: "Twice", relations: [{ targetCardId: s.targetId, type: "relates_to" }, { targetCardId: second, type: "depends_on" }]
+      });
+      expect(twice.status).toBe(400);
+      expect(twice.body.code).toBeUndefined();
+      expect(twice.body.relation).toBeUndefined();
+    }
+    expect(relationRows()).toBe(before);
     expect(await cardTitles(s.owner, s.boardId)).toEqual(["Target"]);
     // Unknown types, extra keys, and more than 50 relations are 400.
     for (const relations of [[{ targetCardId: s.targetId, type: "blocks" }], [{ targetCardId: s.targetId, type: "relates_to", extra: 1 }],

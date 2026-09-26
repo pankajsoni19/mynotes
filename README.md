@@ -20,6 +20,15 @@ After sign-in, **Home** opens the apps. Every app, folder, note, and file has it
 | **Search** | Full-text search across note titles and bodies, accent- and case-insensitive, with prefix and phrase matching. Results respect sharing exactly. |
 | **MCP server** | An authenticated Streamable HTTP endpoint that lets trusted AI clients list and read your published notes with revocable API keys. Read-only today. |
 
+### What's new in v0.8.0
+
+- **Team:** admin and member roles (the first account on a new Nook is the admin), block and unblock, sign out everywhere, `/team`, a `team:read` MCP scope, and the host CLI `server/team-admin.ts`.
+- **Settings → Modules:** turn each module on or off for your account; nothing is deleted and sharing is unchanged.
+- **Task cards:** due time, multiple assignees, column WIP limits, tags, flags, relations between cards, and one-call card create; relations and card search APIs and the MCP tools `update_card`, `link_cards`, and `search_cards`, with filters on `list_cards`.
+- Custom dropdowns everywhere, rename / share / Move to Bin on the Collections list, and review fixes.
+
+**Upgrade note:** migrations 015–017 run on the first boot, so back up first (`./scripts/backup.sh --force`). The oldest active account becomes the admin; fix it with `docker compose exec mynotes bun server/team-admin.ts set-role <email> admin`, and keep registration closed until an admin exists. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
 Planned: **Task Boards** (shared boards with draggable cards), **Collections**, and **Calendar** with reminders. See [TODO.md](TODO.md) for status.
 
 ## Quick start
@@ -29,7 +38,7 @@ You need Git, Docker Engine, and Docker Compose.
 1. Clone the repository: `git clone https://github.com/pankajsoni19/nook.git && cd nook`.
 2. Copy `.env.example` to `.env` and adjust it if needed (for example `ALLOWED_EMAILS`, `TOTP_POLICY`, `APP_ORIGINS`).
 3. Create `/srv/mynotes` writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-4. Build and start: `APP_VERSION=0.7.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+4. Build and start: `APP_VERSION=0.8.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 5. Open `http://localhost:2026` and create the first account; later registrations stay disabled unless you enable them.
 
 Internal identifiers such as the `mynotes.sqlite` database, the `mynotes_session` cookie, the `mynotes` container, `MYNOTES_DATA_DIR`, and the `mynotes-*` backup archives keep the original `mynotes` prefix for compatibility with existing installs.

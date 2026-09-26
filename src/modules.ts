@@ -112,6 +112,19 @@ export function hiddenEntryStep(direction: "back" | "forward" | null, poppedDept
 }
 
 /**
+ * Records the depth of the entry a popstate landed on and returns the depth of the entry it left.
+ * Called for every popstate, including the ones a dialog consumed and the ignored popstate of an
+ * undo (history.go), so the next Forward onto a hidden entry still sees which way it moved. The ref
+ * is never re-read from history.state on render: while an undo is in flight, history.state still
+ * reads the entry being undone.
+ */
+export function recordPopDepth(ref: { current: number }, poppedDepth: number) {
+  const previous = ref.current;
+  ref.current = poppedDepth;
+  return previous;
+}
+
+/**
  * Settings → "Manage team" (Team plan §6.2): opens the gate for this visit, then closes it again when
  * the switch did not happen (Notes kept open by a note that could not be saved), so a later Back or
  * Forward onto /team still follows the toggle. The flag is set first so the render that shows Team
