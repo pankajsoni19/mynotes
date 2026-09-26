@@ -19,8 +19,11 @@
  * - `due`: `before`/`after` are exclusive bounds on `due_on` (the civil date
  *   in the card's zone) and are AND-ed into one range over dated cards;
  *   `none` adds cards without a date. `{ none: true }` alone means undated
- *   cards only. The relative buckets (overdue, today, this week) depend on
- *   the viewer's clock and zone and arrive with the 13E filter bar.
+ *   cards only. The relative `buckets` (13E: overdue, today, this week) are
+ *   OR-ed with the range and `none`; they need the viewer's `today` in the
+ *   context and never match without it (the server does not send them).
+ * - `relations` (13E): `any` (a relation), `blocked` (an open blocker),
+ *   `none` (no relation), from the board JSON's per-viewer counts.
  * - `columns`: column ids.
  * - `text`: 1–100 characters, matched as a substring of the title and the
  *   description excerpt, ignoring case and accents.
@@ -46,6 +49,11 @@ export type QueryCard = {
   flags: readonly string[];
   created_at: string;
   updated_at: string;
+  /** 13E: the UTC instant of a timed card, for the relative due buckets. */
+  due_at?: string | null;
+  /** 13E (13D payload): relations and open blockers the viewer can see. */
+  relation_count?: number;
+  open_blockers?: number;
 };
 export type QueryColumn = { id: string; position: number };
 
@@ -72,7 +80,11 @@ export const CARD_SORT_KEYS = ["board", "due", "title", "created", "updated"] as
 export type CardSortKey = typeof CARD_SORT_KEYS[number];
 export type CardSort = { key: CardSortKey; direction: "asc" | "desc" };
 
-export type QueryContext = { userId: string };
+/**
+ * `today` (the viewer's local date), `now` (ms), and `timeZone` (IANA) are for the relative due
+ * buckets (13E); without `today` a bucket matches nothing.
+ */
+export type QueryContext = { userId: string; today?: string; now?: number; timeZone?: string };
 
 /** A filter with `me` resolved, ids lower-cased and deduplicated, and `none` split out. */
 export type NormalizedFilter = {
@@ -82,6 +94,10 @@ export type NormalizedFilter = {
   due: { before: string | null; after: string | null; none: boolean } | null;
   columns: string[] | null;
   text: string | null;
+  /** 13E: relative due buckets with the viewer's clock, OR-ed with `due`. */
+  dueBuckets: { values: DueBucket[]; today: string | null; now: number; timeZone: string | null } | null;
+  /** 13E: relation filters (OR-ed). */
+  relations: RelationFilter[] | null;
 };
 
 function idSet(values: readonly string[] | undefined, me?: string) {
@@ -114,8 +130,82 @@ export function normalizeFilter(filter: CardFilter, context: QueryContext): Norm
     flags,
     due,
     columns: filter.columns?.length ? [...new Set(filter.columns.map((id) => id.toLowerCase()))] : null,
-    text
+    text,
+    dueBuckets: filter.due?.buckets?.length
+      ? { values: DUE_BUCKETS.filter((bucket) => filter.due!.buckets!.includes(bucket)), today: context.today ?? null, now: context.now ?? Date.now(), timeZone: context.timeZone ?? null }
+      : null,
+    relations: filter.relations?.length ? RELATION_FILTERS.filter((value) => filter.relations!.includes(value)) : null
   };
+}
+
+const dayNumber = (date: string) => {
+  const [year, month, day] = date.split("-").map(Number) as [number, number, number];
+  return Math.round(Date.UTC(year, month - 1, day) / 86_400_000);
+};
+const fromDayNumber = (value: number) => new Date(value * 86_400_000).toISOString().slice(0, 10);
+
+/** The last day (Sunday) of the Monday-first week holding `today`. */
+export function weekEnd(today: string) {
+  const number = dayNumber(today);
+  const weekday = (new Date(number * 86_400_000).getUTCDay() + 6) % 7;
+  return fromDayNumber(number + 6 - weekday);
+}
+
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+/**
+ * The day a card is due for the viewer: the viewer-local date of `due_at` for a timed card (when
+ * a zone is given), otherwise its civil `due_on`.
+ */
+export function viewerDueDate(card: Pick<QueryCard, "due_on" | "due_at">, timeZone?: string | null) {
+  if (!card.due_on) return null;
+  if (!card.due_at || !timeZone) return card.due_on;
+  const at = Date.parse(card.due_at);
+  if (!Number.isFinite(at)) return card.due_on;
+  let formatter = zoneFormatters.get(timeZone);
+  if (!formatter) {
+    try {
+      formatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+    } catch {
+      return card.due_on;
+    }
+    zoneFormatters.set(timeZone, formatter);
+  }
+  const parts = formatter.formatToParts(new Date(at));
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+export type DueGroup = "overdue" | "today" | "week" | "later" | "none";
+
+/**
+ * The one due group a card falls in for the viewer (the grouped list's buckets): overdue (a
+ * timed card once its instant passed, a dated card from the day after), today, the rest of this
+ * week, later, or no date.
+ */
+export function dueGroupOf(card: Pick<QueryCard, "due_on" | "due_at">, context: { today: string; now?: number; timeZone?: string | null }): DueGroup {
+  const day = viewerDueDate(card, context.timeZone);
+  if (!day) return "none";
+  const at = card.due_at ? Date.parse(card.due_at) : Number.NaN;
+  if (Number.isFinite(at) ? at <= (context.now ?? Date.now()) : day < context.today) return "overdue";
+  if (day === context.today) return "today";
+  return day <= weekEnd(context.today) ? "week" : "later";
+}
+
+/** Whether a card is in any of the filter's relative buckets (`week` runs from today to Sunday). */
+function matchesBuckets(buckets: NonNullable<NormalizedFilter["dueBuckets"]>, card: QueryCard) {
+  if (buckets.today === null) return false;
+  const day = viewerDueDate(card, buckets.timeZone);
+  if (!day) return false;
+  return buckets.values.some((bucket) => {
+    if (bucket === "overdue") return dueGroupOf(card, { today: buckets.today!, now: buckets.now, timeZone: buckets.timeZone }) === "overdue";
+    if (bucket === "today") return day === buckets.today;
+    return day >= buckets.today! && day <= weekEnd(buckets.today!);
+  });
+}
+
+function matchesRelations(values: RelationFilter[], card: QueryCard) {
+  const count = card.relation_count ?? 0;
+  return values.some((value) => value === "any" ? count > 0 : value === "blocked" ? (card.open_blockers ?? 0) > 0 : count === 0);
 }
 
 const anyOf = (set: { ids: string[]; none: boolean }, present: readonly string[]) =>
@@ -138,7 +228,8 @@ export function matchesCard(card: QueryCard, filter: NormalizedFilter) {
   if (filter.assignees && !anyOf(filter.assignees, card.assignees.map((assignee) => assignee.id))) return false;
   if (filter.tags && !anyOf(filter.tags, card.tag_ids)) return false;
   if (filter.flags && !((filter.flags.none && card.flags.length === 0) || card.flags.some((flag) => (filter.flags!.values as readonly string[]).includes(flag)))) return false;
-  if (filter.due && !matchesDue(filter.due, card.due_on)) return false;
+  if ((filter.due || filter.dueBuckets) && !((filter.due !== null && matchesDue(filter.due, card.due_on)) || (filter.dueBuckets !== null && matchesBuckets(filter.dueBuckets, card)))) return false;
+  if (filter.relations && !matchesRelations(filter.relations, card)) return false;
   if (filter.text !== null && !matchesText(card, filter.text)) return false;
   return true;
 }
