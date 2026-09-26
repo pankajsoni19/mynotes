@@ -238,6 +238,14 @@ export function canEnterColumn(cards: readonly { id: string; column_id: string }
 export const columnFullMessage = (name: string, limit: number | null | undefined) =>
   `“${name}” is full${limit ? ` (limit ${limit})` : ""}. Move a card out of it first.`;
 
+/**
+ * "Add a card to <column>" on a full column: the same refusal a drag gets, instead of a composer
+ * that quietly starts in another column. Null when the column has room.
+ */
+export function addCardRefusal(cards: readonly { id: string; column_id: string }[], column: { id: string; name: string; wip_limit?: number | null }) {
+  return canEnterColumn(cards, column, null) ? null : columnFullMessage(column.name, column.wip_limit);
+}
+
 /** The WIP limit dialog's field: empty means no limit, otherwise a whole number from 1 to 1000. */
 export function validateWipLimit(input: string): { ok: true; value: number | null } | { ok: false; error: string } {
   const value = input.trim();

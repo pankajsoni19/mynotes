@@ -15,7 +15,7 @@ import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute } from "../router";
 import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
-import { canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
+import { addCardRefusal, canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
 import { BoardGroupedList } from "./BoardGroupedList";
 import { BoardTable } from "./BoardTable";
@@ -540,7 +540,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         onOpenCard={(card) => onOpenCard(card.id)}
         onColumnMenu={(trigger) => openDialog({ kind: "columnMenu", columnId: column.id }, trigger)}
         onMoveColumn={(direction) => { void moveColumn(column.id, direction); }}
-        onAddCard={() => setComposer({ columnId: column.id })}
+        onAddCard={() => {
+          const refusal = addCardRefusal(cards, column);
+          if (refusal) { notify(refusal); setAnnouncement(refusal); } else setComposer({ columnId: column.id });
+        }}
       />)}
       {owner && columns.length < MAX_COLUMNS && <button className="task-add-column" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog"><Plus />Add column</button>}
     </div>}
