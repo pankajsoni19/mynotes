@@ -575,7 +575,7 @@ type TaskView = {
 | `GET /views/:v` | reader | `{ view }` | 404 |
 | `PATCH /views/:v { name?, query?, display?, afterViewId?, revision }` | owner | `{ view }` with `revision + 1`. `display` merges into the stored one; `afterViewId` reorders among the owner's views (`null` = first) | 400, 403 `OWNER_ONLY`, 404 (view or anchor), 409 `VIEW_CHANGED` with the current `view` |
 | `DELETE /views/:v` | owner | `{ ok: true }` (the client offers Undo by re-creating the same body) | 403, 404 |
-| `GET /views/:v/sharing` / `PUT /views/:v/sharing { visibility, userIds ≤ 100 }` | owner | `{ visibility, users: { id, display_name }[] }` / `{ ok: true }`, as board sharing | 400 (owner as recipient, `selected` without users, unknown or disabled users), 403, 404 |
+| `GET /views/:v/sharing` / `PUT /views/:v/sharing { visibility, userIds ≤ 100 }` | owner | `{ visibility, users: { id, display_name }[] }` / `{ ok: true }`, as board sharing; `PUT` bumps the view's `revision`, so a PATCH with the old one is 409 `VIEW_CHANGED` | 400 (owner as recipient, `selected` without users, unknown or disabled users), 403, 404 |
 | `POST /views/:v/duplicate` | reader | 201 `{ view }`: a private copy owned by the caller, named "… (copy)" | 404, 409 `LIMIT_REACHED` |
 | `GET /views/:v/cards?cursor&limit&tz` | reader | `{ view, query, cards, nextCursor, total?, refs? }`: the stored filter run as the caller with the view's sort and server-side group (`board`, `state`, `due`; `assignee` and `tag` group on the client) | 400, 404, 429 (shares the query limit) |
 

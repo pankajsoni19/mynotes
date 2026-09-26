@@ -231,7 +231,8 @@ export function putViewSharing(userId: string, viewId: string, visibility: Board
         const insert = db.query("INSERT INTO task_view_members (view_id, user_id, created_at) VALUES (?, ?, ?)");
         for (const recipientId of uniqueIds) insert.run(viewId, recipientId, now());
       }
-      db.query("UPDATE task_views SET visibility = ?, updated_at = ? WHERE id = ?").run(visibility, now(), viewId);
+      // Sharing is part of the view: bump the revision so an editor holding the old one gets 409 VIEW_CHANGED.
+      db.query("UPDATE task_views SET visibility = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(visibility, now(), viewId);
       audit(userId, null, "task.view_sharing_changed", { viewId, visibility, recipientCount: visibility === "selected" ? uniqueIds.length : 0 });
     })();
     return { ok: true as const };

@@ -216,6 +216,17 @@ describe("task views: owner-only changes, CAS, duplicate, delete", () => {
     expect((await call(alice, "PUT", `/views/${view.id}/sharing`, { visibility: "selected", userIds: [crypto.randomUUID()] })).status).toBe(400);
   });
 
+  test("a sharing change bumps the revision, so an editor holding the old one gets 409 VIEW_CHANGED", async () => {
+    const { alice, bob, view } = await sharing("Share revision");
+    expect(view.revision).toBe(1);
+    expect((await call(alice, "PUT", `/views/${view.id}/sharing`, { visibility: "selected", userIds: [bob.userId] })).status).toBe(200);
+    const stale = await call(alice, "PATCH", `/views/${view.id}`, { name: "Stale editor", revision: 1 });
+    expect(stale).toMatchObject({ status: 409, body: { code: "VIEW_CHANGED", view: { visibility: "selected", revision: 2 } } });
+    expect((await call(alice, "PUT", `/views/${view.id}/sharing`, { visibility: "private" })).status).toBe(200);
+    expect((await call(alice, "GET", `/views/${view.id}`)).body.view).toMatchObject({ visibility: "private", revision: 3 });
+    expect((await call(alice, "PATCH", `/views/${view.id}`, { name: "Fresh editor", revision: 3 })).body.view).toMatchObject({ name: "Fresh editor", revision: 4 });
+  });
+
   test("patch uses a revision compare-and-swap, re-canonicalizes the query, and merges display", async () => {
     const { alice, view } = await sharing("Patch");
     const patched = await call(alice, "PATCH", `/views/${view.id}`, { name: "Renamed", query: "due:week   assignee:me", display: { layout: "board" }, revision: 1 });
