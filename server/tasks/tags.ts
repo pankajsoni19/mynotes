@@ -1,5 +1,6 @@
 import { audit, db, now } from "../db";
 import { OPTION_COLORS, type OptionColor } from "../collections/schema";
+import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
 import { readableBoardPredicate } from "./access";
 import { limitReached, ownerOnly, requireReadableBoard, TaskError, withBoardLock } from "./service";
 
@@ -24,9 +25,9 @@ export const MAX_TAGS_PER_BOARD = 100;
 export const MAX_TAGS_PER_CARD = 10;
 export const TAG_NAME_MAX = 40;
 export const TAG_COLORS = OPTION_COLORS;
-/** The fixed flag set, in display order (D110). The `card_flags` CHECK lists the same values. */
-export const CARD_FLAGS = ["urgent", "blocked", "needs_review", "on_hold"] as const;
-export type CardFlag = typeof CARD_FLAGS[number];
+/** The fixed flag set, in display order (D110), shared with the client. The `card_flags` CHECK lists the same values. */
+export const CARD_FLAGS = TASK_FLAGS;
+export type CardFlag = TaskFlag;
 
 export type BoardTag = { id: string; board_id: string; name: string; color: OptionColor; card_count: number };
 

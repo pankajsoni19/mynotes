@@ -7,6 +7,7 @@ FROM dependencies AS build
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
+COPY shared ./shared
 RUN bun run build
 
 FROM dependencies AS verify
@@ -14,6 +15,7 @@ COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
 COPY server ./server
+COPY shared ./shared
 COPY tests ./tests
 COPY bunfig.toml ./
 RUN bun run typecheck && bun test && bun run build
@@ -36,6 +38,7 @@ COPY --chown=bun:bun --from=production-dependencies /app/node_modules ./node_mod
 COPY --chown=bun:bun --from=production-dependencies /app/package.json ./package.json
 COPY --chown=bun:bun --from=build /app/dist ./dist
 COPY --chown=bun:bun server ./server
+COPY --chown=bun:bun shared ./shared
 RUN mkdir -p /data && chown bun:bun /data
 USER bun
 EXPOSE 2026
