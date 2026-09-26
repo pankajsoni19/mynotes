@@ -7,7 +7,7 @@ import { AgendaList } from "../ui/calendarGrid/AgendaList";
 import { MonthGrid } from "../ui/calendarGrid/MonthGrid";
 import { useIsPhone } from "../ui/Listbox";
 import { CARD_DRAG_TYPE, isCardDrag, readCardDragPayload } from "./boardOrder";
-import { displayedDay, displayedTime, dropDueOn, keyboardDayDelta, placeCards } from "./calendarPlacement";
+import { cardsDueInMonth, displayedDay, displayedTime, dropDueOn, emptyMonthNote, keyboardDayDelta, placeCards, selectGridDay } from "./calendarPlacement";
 import type { BoardCard, BoardData } from "./boardQuery";
 import type { CalendarLayout } from "./boardUrl";
 import { FlagIcons } from "./boardViewParts";
@@ -55,7 +55,7 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
   const { byDay, unscheduled } = placeCards(cards, viewerZone);
   const done = new Set(board.columns.filter((column) => column.is_done === 1).map((column) => column.id));
   const day = selected && selected.startsWith(month) ? selected : today.startsWith(month) ? today : `${month}-01`;
-  const monthCount = [...byDay.entries()].filter(([key]) => key.startsWith(month)).reduce((sum, [, list]) => sum + list.length, 0);
+  const monthCount = cardsDueInMonth(byDay, month);
   const sheetCard = sheet?.kind === "due" ? cards.find((card) => card.id === sheet.cardId) ?? board.cards.find((card) => card.id === sheet.cardId) ?? null : null;
 
   function dropOn(target: string | null, payload: string | null) {
@@ -141,7 +141,11 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
         {layout === "month"
           ? <MonthGrid month={month} today={today} selectedDay={day} compact={phone} titleId="task-cal-title"
             countFor={(cell) => byDay.get(cell)?.length ?? 0}
-            onSelectDay={setSelected}
+            onSelectDay={(cell) => {
+              const next = selectGridDay(cell, month, today);
+              setSelected(next.selected);
+              if (next.month !== undefined) onMonth(next.month);
+            }}
             onShiftMonth={(delta) => onMonth(shiftMonth(month, delta))}
             onToday={() => { setSelected(null); onMonth(null); }}
             drop={phone ? undefined : { accepts: (types) => isCardDrag(types), type: CARD_DRAG_TYPE, onDropOnDay: (target, payload) => dropOn(target, payload) }}
@@ -153,7 +157,7 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
                 {items.length > CHIPS_PER_DAY && <button className="calendar-more" onClick={() => setSelected(cell)}>+{items.length - CHIPS_PER_DAY} more</button>}
               </>;
             }}>
-            {monthCount === 0 && <p className="task-cal-note">{filtered ? "No matching cards are due this month." : "No cards are due this month."}</p>}
+            {monthCount === 0 && <p className="task-cal-note">{emptyMonthNote(month, filtered)}</p>}
             {(phone || (byDay.get(day)?.length ?? 0) > CHIPS_PER_DAY || selected) && <section className="calendar-day-list" aria-labelledby="task-cal-day-title">
               <header><h3 id="task-cal-day-title">{dayHeading(day, today)}</h3></header>
               {(byDay.get(day) ?? []).length
