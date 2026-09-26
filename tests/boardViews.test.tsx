@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardGroupedList } from "../src/tasks/BoardGroupedList";
 import { BoardTable, nextSort } from "../src/tasks/BoardTable";
@@ -60,6 +61,17 @@ test("table headers sort with aria-sort and cycle asc, desc, then board order", 
   expect(markup).toContain('<tr class="done" data-card-id="k2">');
   expect(markup).not.toContain("Overdue");
   expect(markup).not.toContain("<select");
+});
+
+test("the sticky title column paints over scrolled cells, avatar stacks included", () => {
+  const css = readFileSync(new URL("../src/tasks/boardViews.css", import.meta.url), "utf8");
+  const rule = (selector: string) => css.match(new RegExp(`^${selector.replace(/[.*]/g, "\\$&")} \\{([^}]*)\\}`, "m"))?.[1] ?? "";
+  const zIndex = (selector: string) => Number(/z-index: (\d+)/.exec(rule(selector))?.[1] ?? 0);
+  // The avatars stack with z-index 1–3 (tasks.css); isolated, those stay inside the cell.
+  expect(rule(".task-table-people .task-card-people")).toContain("isolation: isolate");
+  expect(rule(".task-table .task-table-title")).toContain("background: #121214");
+  expect(zIndex(".task-table .task-table-title")).toBeGreaterThan(3);
+  expect(zIndex(".task-table thead .task-table-title")).toBeGreaterThan(zIndex(".task-table .task-table-title"));
 });
 
 test("an empty table says whether filters hide the cards", () => {

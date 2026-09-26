@@ -28,8 +28,9 @@
 .task-table tbody tr { cursor: pointer; }
 .task-table tbody tr:hover td, .task-table tbody tr:hover th { background: #18181b; }
 .task-table tbody tr.done .task-table-open { color: #8d8d94; }
-.task-table .task-table-title { position: sticky; left: 0; z-index: 2; width: 320px; max-width: 320px; background: #121214; box-shadow: 1px 0 0 #242428; }
-.task-table thead .task-table-title { z-index: 3; background: #17171a; }
+/* The sticky title sits above every scrolled cell; the avatar stacks' own z-index stays inside them (isolation below). */
+.task-table .task-table-title { position: sticky; left: 0; z-index: 4; width: 320px; max-width: 320px; background: #121214; box-shadow: 1px 0 0 #242428; }
+.task-table thead .task-table-title { z-index: 5; background: #17171a; }
 .task-table-title-cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .task-table-open { flex: 1; min-width: 0; min-height: 36px; overflow: hidden; border: 0; border-radius: 7px; padding: 0 4px; background: transparent; color: #ededee; font: inherit; font-size: .86rem; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .task-table-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: 0; }
@@ -69,7 +70,7 @@
 .task-group-excerpt { min-width: 0; overflow: hidden; color: #8d8d94; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
 .task-group-people { display: inline-flex; }
 .task-group-people .task-card-people, .task-table-people .task-card-people { display: inline-flex; align-items: center; }
-.task-table-people .task-card-people { margin-right: 6px; vertical-align: middle; }
+.task-table-people .task-card-people { margin-right: 6px; vertical-align: middle; isolation: isolate; }
 .task-table-names { vertical-align: middle; }
 .task-group-more { flex: none; width: 36px; height: 36px; }
 .task-group-more svg { width: 16px; }
