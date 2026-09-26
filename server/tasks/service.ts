@@ -708,6 +708,13 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
     const due = setDue ? requireDue(card, input) : null;
     const current = db.query("SELECT parent_card_id, level FROM cards WHERE id = ?").get(cardId) as { parent_card_id: string | null; level: number };
     const hierarchyChange = input.parentId !== undefined || input.level !== undefined;
+    // A card with children keeps its level, whatever else the change says (D128).
+    if (input.level !== undefined && input.level !== current.level) {
+      const children = liveChildCount(cardId);
+      if (children > 0) {
+        throw new TaskError(409, `Move its ${children === 1 ? "child" : `${children} children`} to another card first`, "HAS_CHILDREN", { childCount: children });
+      }
+    }
     const placement = hierarchyChange
       ? resolvePlacement(board.id, {
         parentId: input.parentId === undefined ? current.parent_card_id : input.parentId === null ? null : input.parentId.toLowerCase(),

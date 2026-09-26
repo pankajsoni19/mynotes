@@ -15,6 +15,8 @@ import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema,
 import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchCard, TaskError, type CardSummary } from "./service";
 import { listBoardTags, type BoardTag } from "./tags";
 import { taskViewTools } from "./viewMcpTools";
+import { boardStructure, cardHierarchy } from "./hierarchy";
+import { levelName, type BoardStructure } from "../../shared/boardStructure";
 
 /**
  * MCP tools for Task Boards (docs/plan/WAVES_7-9.md §4.2, D38–D40, D70).
@@ -46,7 +48,9 @@ export function taskErrorToMcp(error: TaskError) {
     CARD_CHANGED: "CARD_CHANGED",
     OWNER_ONLY: "OWNER_ONLY",
     COLUMN_FULL: "COLUMN_FULL",
-    RELATION_EXISTS: "RELATION_EXISTS"
+    RELATION_EXISTS: "RELATION_EXISTS",
+    // A level change on a card with children (17A): reported as INVALID with the reason and childCount.
+    HAS_CHILDREN: "INVALID"
   };
   const code = (error.code ? known[error.code] : undefined) ?? (error.status === 404 ? "NOT_FOUND" : error.status === 400 ? "INVALID" : "INTERNAL");
   if (code === "CARD_CHANGED") {
@@ -105,7 +109,7 @@ const tagNames = (tags: readonly BoardTag[]) => new Map(tags.map((tag) => [tag.i
  * Fields every card view shares (Wave 13): the zone and instant with a time,
  * assignees and tags as names, flags, and the plain-text excerpt.
  */
-const cardFields = (card: CardSummary, tags: Map<string, string>) => ({
+const cardFields = (card: CardSummary, tags: Map<string, string>, structure?: BoardStructure) => ({
   description_excerpt: card.description_excerpt,
   due_on: card.due_on,
   due_time: card.due_time,
@@ -114,7 +118,13 @@ const cardFields = (card: CardSummary, tags: Map<string, string>) => ({
   assignees: card.assignees.map((assignee) => assignee.display_name),
   assignee_name: card.assignee_name,
   tags: card.tag_ids.map((id) => tags.get(id)).filter((name): name is string => name !== undefined),
-  flags: card.flags
+  flags: card.flags,
+  // Hierarchy (17A, D139): the parent on the same board, the level and its name, and live direct children.
+  parent_id: card.parent_card_id,
+  level: card.level,
+  ...(structure ? { level_name: levelName(structure, card.level) } : {}),
+  child_count: card.child_count,
+  done_child_count: card.done_child_count
 });
 
 /**
@@ -135,7 +145,7 @@ function resolveTags(tags: readonly BoardTag[], refs: readonly string[], allowNo
   return ids;
 }
 
-function listedCard(card: CardWithDescription, columnName: string | undefined, tags: Map<string, string>, counts: RelationCounts) {
+function listedCard(card: CardWithDescription, columnName: string | undefined, tags: Map<string, string>, counts: RelationCounts, structure?: BoardStructure) {
   return {
     id: card.id,
     column_id: card.column_id,
@@ -145,7 +155,7 @@ function listedCard(card: CardWithDescription, columnName: string | undefined, t
     description_preview: card.description === undefined ? undefined : preview(card.description),
     revision: card.revision,
     creator_name: card.creator_name,
-    ...cardFields(card, tags),
+    ...cardFields(card, tags, structure),
     comment_count: card.comment_count,
     relation_count: counts.relation_count,
     open_blockers: counts.open_blockers,
@@ -158,7 +168,14 @@ const uuid = z.string().uuid();
 
 /** A card as create_card and update_card return it. */
 const writtenCard = (card: CardSummary) => ({
-  id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, revision: card.revision, ...cardFields(card, tagNames(listBoardTags(card.board_id)))
+  id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, revision: card.revision,
+  ...cardFields(card, tagNames(listBoardTags(card.board_id)), boardStructure(card.board_id))
+});
+
+/** A child as get_card and list_children return it (live, by column then position, at most 100). */
+const mcpChild = (child: ReturnType<typeof cardHierarchy>["children"][number], structure: BoardStructure) => ({
+  id: child.id, title: child.title, level: child.level, level_name: levelName(structure, child.level), column_id: child.column_id, column_name: child.column_name,
+  is_done: child.is_done === 1, due_on: child.due_on, child_count: child.child_count, done_child_count: child.done_child_count
 });
 
 const dueTimeInput = z.string().describe("Due time as HH:MM (24-hour), in dueTz; needs a due date");
@@ -213,12 +230,13 @@ export const taskTools: McpToolSpec[] = [
       const matching = new Set(filterBoardCardIds(board.id, filter, { userId: key.userId }));
       const names = new Map(columns.map((column) => [column.id, column.name]));
       const tagName = tagNames(boardTags);
+      const structure = board.structure;
       return {
-        board: { id: board.id, name: board.name, owner_name: board.owner_name, is_owner: board.is_owner },
+        board: { id: board.id, name: board.name, owner_name: board.owner_name, is_owner: board.is_owner, levels: structure.levels.map((level) => level.name), work_level: structure.workLevel },
         columns: columns.map((column) => ({ id: column.id, name: column.name, position: column.position, wip_limit: column.wip_limit })),
         tags: boardTags.map((tag) => ({ id: tag.id, name: tag.name, color: tag.color })),
         // Cards come from the board just authorized above.
-        cards: cards.filter((card) => matching.has(card.id)).map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id), tagName, card))
+        cards: cards.filter((card) => matching.has(card.id)).map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id), tagName, card, structure))
       };
     })
   }),
@@ -233,6 +251,7 @@ export const taskTools: McpToolSpec[] = [
       const { card, board } = getCard(key.userId, cardId);
       const { columns, tags } = getBoard(key.userId, board.id);
       const page = listComments(key.userId, cardId);
+      const hierarchy = cardHierarchy(cardId);
       return {
         card: {
           id: card.id,
@@ -244,15 +263,30 @@ export const taskTools: McpToolSpec[] = [
           description: plainText(card.description),
           revision: card.revision,
           creator_name: card.creator_name,
-          ...cardFields(card, tagNames(tags)),
+          ...cardFields(card, tagNames(tags), boardStructure(board.id)),
+          parent_title: hierarchy.parent?.title ?? null,
           created_at: card.created_at,
           updated_at: card.updated_at
         },
+        children: hierarchy.children.map((child) => mcpChild(child, boardStructure(board.id))),
         comments: page.comments.map((comment) => ({ id: comment.id, author_name: comment.author_name, body: comment.body, created_at: comment.created_at, edited_at: comment.edited_at })),
         hasMoreComments: page.hasMore,
         attachments: attachmentNames(cardId),
         relations: listRelations(key.userId, cardId).map(mcpRelation)
       };
+    })
+  }),
+  defineTool({
+    name: "list_children",
+    title: "List a card's children",
+    description: "List the live direct children of a card (its subtasks, or the stories of an epic), in checklist order: by column, then position. At most 100. Children are always on the card's own board.",
+    scopes: ["tasks:read"],
+    write: false,
+    inputSchema: z.object({ cardId: uuid }),
+    handler: async ({ cardId }, key) => service(key, () => {
+      const { board } = getCard(key.userId, cardId);
+      const structure = boardStructure(board.id);
+      return { children: cardHierarchy(cardId).children.map((child) => mcpChild(child, structure)) };
     })
   }),
   defineTool({
@@ -291,6 +325,8 @@ export const taskTools: McpToolSpec[] = [
       assigneeIds: assigneeIdsInput.optional(),
       tags: tagsInput.optional(),
       flags: flagsInput.optional(),
+      parentId: uuid.nullable().optional().describe("A card on the same board one level up to put this card under (see the board's levels in list_cards); its level then defaults to the parent's plus one"),
+      level: z.number().int().min(0).max(2).optional().describe("0 is the top level; defaults to the parent's level plus one, else the board's work level"),
       afterCardId: uuid.nullable().optional()
     }),
     handler: async ({ boardId, tags, ...fields }, key) => {
@@ -319,7 +355,9 @@ export const taskTools: McpToolSpec[] = [
       dueTz: dueTzInput.nullable().optional(),
       assigneeIds: assigneeIdsInput.optional(),
       tags: tagsInput.optional(),
-      flags: flagsInput.optional()
+      flags: flagsInput.optional(),
+      parentId: uuid.nullable().optional().describe("Move the card under a card on the same board one level up, or null to take it out of its parent; the level stays unless level is also sent"),
+      level: z.number().int().min(0).max(2).optional().describe("Change the card's level; refused (reason HAS_CHILDREN) while it has children")
     }).strict(),
     handler: async ({ cardId, baseRevision, tags, ...fields }, key) => {
       return service(key, async () => {

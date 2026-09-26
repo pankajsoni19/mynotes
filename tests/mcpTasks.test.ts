@@ -69,7 +69,7 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
-const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "list_views", "query_cards", "search_cards"];
+const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "list_children", "list_views", "query_cards", "search_cards"];
 const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "link_cards", "move_card", "update_card"];
 
 describe("MCP task tools", () => {
@@ -486,5 +486,42 @@ describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5
     }
     // Filters never widen access: the member cannot list the private board at all.
     expect((await callTool(key, "list_cards", { boardId: s.privateBoardId, assigneeIds: ["none"] })).value).toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("MCP task tools: hierarchy (17A, D139, T119)", () => {
+  test("create_card and update_card take parentId and level; list_cards, get_card, and list_children show the tree", async () => {
+    const owner = await createUser("MCP tree owner");
+    const stranger = await createUser("MCP tree stranger");
+    const created = await api(owner, "POST", "/boards", { name: "MCP tree", template: "epics" });
+    const boardId = created.body.board.id as string;
+    const [todo, , done] = created.body.columns as Array<{ id: string }>;
+    const key = makeKey(owner, ["tasks:read", "tasks:write"]);
+    const epic = (await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Checkout", level: 0 })).value.card;
+    expect(epic).toMatchObject({ level: 0, level_name: "Epic", parent_id: null, child_count: 0 });
+    const story = (await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Refunds", parentId: epic.id })).value.card;
+    expect(story).toMatchObject({ level: 1, level_name: "Story", parent_id: epic.id });
+    const sub = (await callTool(key, "create_card", { boardId, columnId: done!.id, title: "Form", parentId: story.id })).value.card;
+    expect(sub.level).toBe(2);
+    expect(JSON.parse((db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'task.card_create' ORDER BY rowid DESC LIMIT 1").get() as { metadata_json: string }).metadata_json))
+      .toMatchObject({ via: "mcp", parentId: story.id, level: 2 });
+    // Invalid parents are INVALID with the service reason; a level change with children is refused.
+    expect((await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Bad", parentId: sub.id })).value).toMatchObject({ code: "INVALID", reason: "PARENT_INVALID" });
+    expect((await callTool(key, "update_card", { cardId: story.id, baseRevision: story.revision, level: 2 })).value).toMatchObject({ code: "INVALID", reason: "HAS_CHILDREN", childCount: 1 });
+    const listed = (await callTool(key, "list_cards", { boardId })).value;
+    expect(listed.board).toMatchObject({ levels: ["Epic", "Story", "Subtask"], work_level: 1 });
+    expect(listed.cards.find((card: { id: string }) => card.id === story.id)).toMatchObject({ parent_id: epic.id, level: 1, level_name: "Story", child_count: 1, done_child_count: 1 });
+    const detail = (await callTool(key, "get_card", { cardId: story.id })).value;
+    expect(detail.card).toMatchObject({ parent_id: epic.id, parent_title: "Checkout", child_count: 1 });
+    expect(detail.children).toEqual([expect.objectContaining({ id: sub.id, title: "Form", level_name: "Subtask", is_done: true })]);
+    expect((await callTool(key, "list_children", { cardId: epic.id })).value.children.map((child: { id: string }) => child.id)).toEqual([story.id]);
+    // Detach under the revision CAS; a stale revision is CARD_CHANGED.
+    const detached = (await callTool(key, "update_card", { cardId: story.id, baseRevision: story.revision, parentId: null })).value.card;
+    expect(detached).toMatchObject({ parent_id: null, level: 1 });
+    expect((await callTool(key, "update_card", { cardId: story.id, baseRevision: story.revision, parentId: epic.id })).value).toMatchObject({ code: "CARD_CHANGED" });
+    // query_cards names the parent; a stranger's key cannot list the children.
+    const queried = (await callTool(key, "query_cards", { filter: `board:${boardId} level:2` })).value;
+    expect(queried.cards).toEqual([expect.objectContaining({ id: sub.id, parent_id: story.id, parent_title: "Refunds", level: 2 })]);
+    expect((await callTool(makeKey(stranger, ["tasks:read"]), "list_children", { cardId: epic.id })).value).toMatchObject({ code: "NOT_FOUND" });
   });
 });
