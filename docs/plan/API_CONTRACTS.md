@@ -1,4 +1,4 @@
-# API contracts: Files, content, Bin, Search, Tasks, Today, MCP, Collections, and Calendar
+# API contracts: Files, content, Bin, Search, Tasks, Today, Preferences, MCP, Collections, and Calendar
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every endpoint lives under `/api` and inherits the existing middleware:
 
@@ -429,6 +429,27 @@ type CardAttachment = {
 | `storage` | one item `{ usedBytes, binnedBytes, quotaBytes }`: bytes counted against the quota (live and binned), the binned part, and the quota (`null` = unlimited) |
 
 Errors: 400 when `tz` is not an IANA zone `Intl` accepts (list entries and the aliases browsers still report) or `sections` names an unknown section; 429 `RATE_LIMITED` with `Retry-After` above 30 requests a minute per user.
+
+## Preferences (Wave 13, D92, D114)
+
+Per-user settings that follow the account across devices. Today they hold only the modules the user turned off in **Settings → Modules** (migration 016, `server/preferences.ts`).
+
+```ts
+type ModuleId = "notes" | "files" | "tasks" | "collections" | "calendar" | "search" | "bin" | "notifications" | "team";
+type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null };
+```
+
+- **A hidden module is not a security boundary (T97).** Preferences only hide UI in the web app. Every API route, ACL, MCP tool, calendar feed, reminder, and push keeps working for a module that is turned off, and keeps enforcing its own access rules. MCP never reads preferences, and there is no MCP tool to change them.
+- `team` is reserved for Wave 14. Home and Settings are not modules and cannot be turned off.
+- A user without a row has every module on: `{ disabledModules: [], revision: 0, updatedAt: null }`. Modules added later start on.
+- `disabledModules` is returned unique and in the order above. Ids the server no longer knows are dropped on read.
+
+| Endpoint | Body | Returns | Errors |
+| --- | --- | --- | --- |
+| `GET /api/preferences` | | 200 `{ preferences }` | |
+| `PUT /api/preferences` | `{ disabledModules: ModuleId[], revision }` (strict; unique known ids, at most one per module; `revision` is the one last read, `0` before the first save) | 200 `{ preferences }` with `revision` + 1 (the first save creates revision 1) | 400 for an unknown or repeated id, a missing or negative `revision`, or an extra key. 409 `PREFERENCES_CHANGED` with the current `preferences` when `revision` is stale (compare-and-swap, one writer wins) |
+
+`GET /api/auth/me` adds `preferences: Preferences`, so the app knows which modules to show before its first render. It is served before the TOTP setup gate, like the rest of `/auth/me`; `/api/preferences` is behind it. Each successful PUT is audited as `preferences.update { disabledModules, revision }` (module ids only).
 
 ## MCP keys and tools (Wave 8)
 

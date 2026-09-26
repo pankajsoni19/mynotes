@@ -22,6 +22,7 @@ import { registerTodayRoutes } from "./today/routes";
 import { registerCollectionRoutes } from "./collections/routes";
 import { reconcileCollectionSearchIndex } from "./collections/search";
 import { registerCalendarRoutes } from "./calendar/routes";
+import { readPreferences, registerPreferenceRoutes } from "./preferences";
 import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
@@ -282,7 +283,9 @@ app.get("/api/auth/me", (c) => {
   return c.json({
     user: { id: user.id, email: user.email, displayName: user.display_name },
     csrfToken: c.get("csrfToken"),
-    totp: totpState(user)
+    totp: totpState(user),
+    // UI-only (D92): which modules this user hid. Never used for authorization (T97).
+    preferences: readPreferences(user.id)
   });
 });
 
@@ -817,6 +820,7 @@ registerTaskRoutes(app);
 registerTodayRoutes(app);
 registerCollectionRoutes(app);
 registerCalendarRoutes(app);
+registerPreferenceRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);

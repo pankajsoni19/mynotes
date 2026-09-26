@@ -13,10 +13,19 @@ import { taskDatesMigration } from "./011_task_dates";
 import { collectionsMigration } from "./012_collections";
 import { calendarMigration } from "./013_calendar";
 import { eventNextOccurrenceMigration } from "./014_event_next_occurrence";
+import { userPreferencesMigration } from "./016_user_preferences";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, userPreferencesMigration];
 
-/** Ids of every registered migration, in order. Tests assert against this list. */
+/**
+ * Ids of every registered migration, in order. Tests assert against this list.
+ *
+ * The ids may have gaps during development. Wave 13 fixes 015 (task card UX, sub-wave 13B) and
+ * 016 (user preferences, 13F), and 017 onwards belong to Team (Wave 14), but the sub-waves merge
+ * in any order, so 015 can be missing here for a while. `runMigrations` only needs the ids to
+ * ascend and applies each missing id on its own, so a database that already has 016 still gets
+ * 015 when it lands. Releases are contiguous.
+ */
 export const registeredMigrationIds: readonly number[] = migrations.map((migration) => migration.id);
 
 export function runMigrations(db: Database) {
