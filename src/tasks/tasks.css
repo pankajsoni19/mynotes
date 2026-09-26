@@ -476,3 +476,13 @@
   .task-breadcrumb button { min-height: 36px; }
   .task-level-row input { height: 44px; }
 }
+
+/* New board: templates (17A, D136). */
+.task-new-board { gap: 8px; }
+.task-template-label { margin-top: 8px; color: #a9a9b0; font-size: .8rem; font-weight: 600; }
+.task-template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 7px; }
+.task-template { grid-template-columns: 1fr; }
+.task-template-columns { color: #a3a3ab !important; }
+@media (max-width: 760px) {
+  .task-template-grid { grid-template-columns: 1fr; }
+}

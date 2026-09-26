@@ -287,6 +287,30 @@ describe("board structure (D122, T120)", () => {
   });
 });
 
+describe("board templates (D136)", () => {
+  test("each template sets its columns, states, structure, and tags, and never creates cards", async () => {
+    const { TEMPLATES, BOARD_TEMPLATES } = await import("../shared/boardStructure");
+    const user = await createUser("Templates");
+    for (const id of BOARD_TEMPLATES) {
+      const created = await call(user, "POST", "/boards", { name: `From ${id}`, template: id });
+      expect(created.status).toBe(201);
+      const template = TEMPLATES[id];
+      expect(created.body.board.structure).toEqual(template.structure);
+      expect(created.body.columns.map((column: { name: string; state: string; is_done: number }) => [column.name, column.state, column.is_done]))
+        .toEqual(template.columns.map((column) => [column.name, column.state, column.state === "done" ? 1 : 0]));
+      const board = (await call(user, "GET", `/boards/${created.body.board.id}`)).body;
+      expect(board.cards).toEqual([]);
+      expect(board.tags.map((tag: { name: string; color: string }) => [tag.name, tag.color]).sort()).toEqual((template.tags ?? []).map((tag) => [tag.name, tag.color]).sort());
+    }
+    // No template is the Simple kanban; an unknown one is 400.
+    const plain = await call(user, "POST", "/boards", { name: "Plain" });
+    expect(plain.body.columns.map((column: { name: string }) => column.name)).toEqual(["To do", "Doing", "Done"]);
+    expect(plain.body.board.structure.levels).toHaveLength(1);
+    expect((await call(user, "POST", "/boards", { name: "Bad", template: "gantt" })).status).toBe(400);
+    expect(JSON.parse(lastAudit("task.board_create")!.metadata_json).template).toBeUndefined();
+  });
+});
+
 describe("roll-ups", () => {
   test("the board payload counts live direct children and those in a done column, with one grouped query (D134)", async () => {
     const { owner, member, boardId, columns } = await setup("Rollup");

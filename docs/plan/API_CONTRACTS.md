@@ -320,7 +320,7 @@ Positions are computed by the server (D40) and never accepted from clients: a ne
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `GET /boards` | any | 200 `{ boards: BoardSummary[] }`: owned boards first, then shared ones, each by name (limit 500) | |
-| `POST /boards { name }` | any | 201 `{ board, columns }` with To do, Doing, Done at 1024, 2048, 3072 | 400, 409 `LIMIT_REACHED` |
+| `POST /boards { name, template? }` | any | 201 `{ board, columns }`. Without `template` (or `kanban`): To do, Doing, Done at 1024, 2048, 3072. `template` (17A, D136) is one of `kanban`, `todo`, `checklist`, `scrum`, `epics`, `triage`, `content` (`shared/boardStructure.ts` `TEMPLATES`): it sets the columns with their states, the structure, and for `triage` the tags Bug and Regression; no template creates cards (the Scrum sprint is 17B). Audit `task.board_create` adds `template` when not `kanban` | 400 (an unknown template), 409 `LIMIT_REACHED` |
 | `GET /boards/:b` | reader | 200 `{ board, columns, cards: (CardSummary & RelationCounts)[], tags: BoardTag[] }` (columns and cards by position, tags by name). Wave 13 adds `tags`, and each card adds `relation_count` and `open_blockers` for this viewer (§ Relations) | 404 |
 | `PATCH /boards/:b { name }` | owner | 200 `{ board }` | 400, 403, 404 |
 | `DELETE /boards/:b` | owner | 200 `{ ok: true, purgeAfter }`: the board moves to the Bin for 30 days | 403, 404 |

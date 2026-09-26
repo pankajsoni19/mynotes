@@ -31,13 +31,15 @@ import {
   setBoardStructure,
   TaskError
 } from "./service";
-import { validateStructure } from "../../shared/boardStructure";
+import { BOARD_TEMPLATES, validateStructure } from "../../shared/boardStructure";
 
 // C0/C1 controls and bidi overrides never belong in a board, column, or card name.
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F‪-‮⁦-⁩]/;
 const label = (max: number) => z.string().trim().min(1).max(max).refine((value) => !controlCharacters.test(value), "Names cannot contain control characters");
 
 export const boardNameSchema = z.object({ name: label(120) }).strict();
+/** `POST /boards`: a name and an optional template (D136). */
+export const boardCreateSchema = z.object({ name: label(120), template: z.enum(BOARD_TEMPLATES).optional() }).strict();
 /** `PATCH /boards/:b`: a new name and/or a new structure (checked by `validateStructure`, D122). */
 export const boardPatchSchema = z.object({ name: label(120).optional(), structure: z.unknown().optional() }).strict()
   .refine((value) => value.name !== undefined || value.structure !== undefined, "Provide a name or a structure");
@@ -192,8 +194,8 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.get("/api/tasks/boards", (c) => c.json({ boards: listBoards(c.get("user").id) }));
 
   app.post("/api/tasks/boards", async (c) => {
-    const body = await parseJson(c.req.raw, boardNameSchema);
-    return respond(c, () => createBoard(c.get("user").id, body.name), 201);
+    const body = await parseJson(c.req.raw, boardCreateSchema);
+    return respond(c, () => createBoard(c.get("user").id, body.name, body.template), 201);
   });
 
   app.get("/api/tasks/boards/:boardId", (c) => {

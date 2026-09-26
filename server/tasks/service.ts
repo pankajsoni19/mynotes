@@ -10,7 +10,7 @@ import { insertRelation } from "./cardRelations";
 import { descriptionExcerpt } from "./excerpt";
 import type { RelationType } from "./relations";
 import { boardStructure, liveChildCount, parentRow, rollupFor, rollupsForBoard, type Rollup } from "./hierarchy";
-import { HIERARCHY_LIMITS, parseStructure, type BoardStructure } from "../../shared/boardStructure";
+import { HIERARCHY_LIMITS, parseStructure, TEMPLATES, type BoardStructure, type BoardTemplateId } from "../../shared/boardStructure";
 import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
 
 /**
@@ -32,9 +32,6 @@ export class TaskError extends Error {
 }
 
 export const LIMITS = { boardsPerOwner: 50, columnsPerBoard: 20, liveCardsPerBoard: 1000, commentsPerCard: 500, attachmentsPerCard: 50, attachmentsPerComment: 10 } as const;
-export const DEFAULT_COLUMNS = ["To do", "Doing", "Done"] as const;
-/** The normalized state of each default column (migration 020, D141). */
-const DEFAULT_COLUMN_STATES: readonly ColumnState[] = ["todo", "doing", "done"];
 
 const boardNotFound = () => new TaskError(404, "Board not found");
 const columnNotFound = () => new TaskError(404, "Column not found");
@@ -205,20 +202,24 @@ export function requireOwnedBoard(boardId: string, userId: string) {
   return board;
 }
 
-export function createBoard(userId: string, name: string) {
+/** Creates a board from a template (D136; default Simple kanban): its columns and states, its structure, and any tags. Never cards. */
+export function createBoard(userId: string, name: string, templateId: BoardTemplateId = "kanban") {
+  const template = TEMPLATES[templateId];
   return db.transaction(() => {
     const owned = (db.query("SELECT COUNT(*) AS count FROM boards WHERE owner_id = ? AND deleted_at IS NULL").get(userId) as { count: number }).count;
     if (owned >= LIMITS.boardsPerOwner) throw limitReached(`You can have up to ${LIMITS.boardsPerOwner} boards`);
     const id = crypto.randomUUID();
     const timestamp = now();
-    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(id, userId, name, timestamp, timestamp);
+    db.query("INSERT INTO boards (id, owner_id, name, structure_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, userId, name, JSON.stringify(template.structure), timestamp, timestamp);
     const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    // The default "Done" column is a done column (D53), as the 011 backfill does for existing boards; states follow D141.
-    DEFAULT_COLUMNS.forEach((columnName, index) => {
-      const state = DEFAULT_COLUMN_STATES[index]!;
-      insertColumn.run(crypto.randomUUID(), id, columnName, (index + 1) * 1024, state === "done" ? 1 : 0, state, timestamp, timestamp);
+    // A done column is a done column (D53), as the 011 backfill does for existing boards; states follow D141.
+    template.columns.forEach((column, index) => {
+      insertColumn.run(crypto.randomUUID(), id, column.name, (index + 1) * 1024, column.state === "done" ? 1 : 0, column.state, timestamp, timestamp);
     });
-    audit(userId, null, "task.board_create", { boardId: id });
+    const insertTag = db.query("INSERT INTO board_tags (id, board_id, name, color, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    for (const tag of template.tags ?? []) insertTag.run(crypto.randomUUID(), id, tag.name, tag.color, userId, timestamp, timestamp);
+    audit(userId, null, "task.board_create", { boardId: id, ...(templateId !== "kanban" ? { template: templateId } : {}) });
     return { board: boardSummary(id, userId)!, columns: listColumns(id) };
   })();
 }
