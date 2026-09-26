@@ -318,7 +318,7 @@ Positions are computed by the server (D40) and never accepted from clients: a ne
 | --- | --- | --- | --- |
 | `GET /boards` | any | 200 `{ boards: BoardSummary[] }`: owned boards first, then shared ones, each by name (limit 500) | |
 | `POST /boards { name }` | any | 201 `{ board, columns }` with To do, Doing, Done at 1024, 2048, 3072 | 400, 409 `LIMIT_REACHED` |
-| `GET /boards/:b` | reader | 200 `{ board, columns, cards: CardSummary[] }` (columns and cards by position) | 404 |
+| `GET /boards/:b` | reader | 200 `{ board, columns, cards: CardSummary[], tags: BoardTag[] }` (columns and cards by position, tags by name; Wave 13 adds `tags`) | 404 |
 | `PATCH /boards/:b { name }` | owner | 200 `{ board }` | 400, 403, 404 |
 | `DELETE /boards/:b` | owner | 200 `{ ok: true, purgeAfter }`: the board moves to the Bin for 30 days | 403, 404 |
 
@@ -361,11 +361,15 @@ type CardSummary = {
   assignees: CardAssignee[];         // Wave 13 (D102): at most 20, in assignment order
   assignee_id: string | null;        // DEPRECATED (D103): assignees[0].id, kept through v0.8.x
   assignee_name: string | null;      // DEPRECATED (D103): assignees[0].display_name
+  tag_ids: string[];                 // Wave 13 (D109): at most 10 tags of this board, in tagging order; resolve against the board's `tags`
+  flags: Flag[];                     // Wave 13 (D110): in the fixed order below
   comment_count: number; attachment_count: number;
   created_at: string; updated_at: string;
 };
 type CardAssignee = { id: string; display_name: string; can_read: 0 | 1 };  // 0: lost board access or disabled ("Former member", T93)
 type CardDetail = CardSummary & { description: string };  // Markdown, at most 65,536 UTF-8 bytes
+type Flag = "urgent" | "blocked" | "needs_review" | "on_hold";              // Wave 13 (D110), in this order
+type BoardTag = { id: string; board_id: string; name: string; color: OptionColor; card_count: number };  // color: the Collections option palette; card_count: live cards carrying it
 ```
 
 **Due time (Wave 13, D100–D101).** A card may carry a wall time next to its date. The client sends `dueTime` (`HH:MM`, 00:00–23:59) with `dueTz` (`Intl.DateTimeFormat().resolvedOptions().timeZone`); the server checks the zone with `isValidTimeZone` (browser aliases included), stores it as sent, and never converts it. `due_at` comes from `zonedToUtc`: a time inside a DST gap moves forward, and the earlier instant wins in an overlap. Rules (400 otherwise): a time needs a date and a zone; `dueTz` only comes with `dueTime`; `dueTime: null` clears the time and zone; changing only `dueOn` keeps the wall time and zone; `dueOn: null` also clears the time.
@@ -375,15 +379,27 @@ type CardDetail = CardSummary & { description: string };  // Markdown, at most 6
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `GET /boards/:b/readers?q=&limit=` | reader | 200 `{ users: { id, displayName }[], truncated }`: everyone who can open the board (owner plus members, or every enabled user on an `all_users` board), display names only, for the assignee picker. Without `q`: at most 200 by name. With `q` (1–64 characters): a case-insensitive `instr` match on the display name (no wildcards), at most `limit` (1–50, default 20; `limit` needs `q`) | 400, 404, 429 `RATE_LIMITED` with `Retry-After` (60 a minute per user, T92) |
-| `POST /boards/:b/cards { columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. Assignees are written in the same transaction. | 400 (including `ASSIGNEE_NOT_MEMBER`), 404 (board, or a column not on this board), 409 `COLUMN_FULL`, `STALE_POSITION`, or `LIMIT_REACHED` |
+| `POST /boards/:b/cards { columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), tagIds? (≤ 10), flags?, afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. Assignees, tags, and flags are written in the same transaction. | 400 (including `ASSIGNEE_NOT_MEMBER`, more than 10 tags, an unknown or repeated flag), 404 (board, a column not on this board, or a tag not on this board), 409 `COLUMN_FULL`, `STALE_POSITION`, or `LIMIT_REACHED` |
 | `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: CardAttachment[] }`: the newest 50 comments in chronological order, and every live attachment | 404 |
-| `PATCH /cards/:k { title?, description?, dueOn?, dueTime?, dueTz?, assigneeIds?, assigneeId?, revision }` | reader | 200 `{ card }` with `revision + 1`, exactly once however many fields change (one transaction). `dueOn` is a real date `YYYY-MM-DD` (1900–2999) or `null`; `dueTime`/`dueTz` follow the due-time rules above; `assigneeIds` (≤ 20 after deduplication) replaces the whole set and `[]` clears it; the legacy `assigneeId` (a user or `null`) means `[id]` or `[]` (D103); omitted fields are unchanged | 400 (including `ASSIGNEE_NOT_MEMBER` when a new assignee is disabled or cannot read the board, and `assigneeId` sent together with `assigneeIds`), 404, 409 `{ code: "CARD_CHANGED", card }` (the current card, every field) when `revision` is not the stored one |
+| `PATCH /cards/:k { title?, description?, dueOn?, dueTime?, dueTz?, assigneeIds?, assigneeId?, tagIds?, flags?, revision }` | reader | 200 `{ card }` with `revision + 1`, exactly once however many fields change (one transaction). `dueOn` is a real date `YYYY-MM-DD` (1900–2999) or `null`; `dueTime`/`dueTz` follow the due-time rules above; `assigneeIds` (≤ 20 after deduplication) replaces the whole set and `[]` clears it; the legacy `assigneeId` (a user or `null`) means `[id]` or `[]` (D103); `tagIds` (≤ 10 after deduplication) and `flags` each replace the whole set, and `[]` clears it; omitted fields are unchanged | 400 (including `ASSIGNEE_NOT_MEMBER` when a new assignee is disabled or cannot read the board, `assigneeId` sent together with `assigneeIds`, more than 10 tags, and an unknown or repeated flag), 404 (the card, or a tag not on the card's board), 409 `{ code: "CARD_CHANGED", card }` (the current card, every field) when `revision` is not the stored one |
 | `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION`, or `COLUMN_FULL` when moving in from another column |
 | `DELETE /cards/:k` | reader | 200 `{ ok: true, purgeAfter }`: the card moves to the Bin and keeps its column | 404 |
 
 - **Stale positions.** `afterCardId` must be another live card in the target column. Otherwise (binned, in another column or board, the moved card itself, or unknown) the response is 409 `{ error, code: "STALE_POSITION", columnId, order: string[] }`, where `order` is the target column's live card ids in their current order.
 - **Moves** stay on the card's board and do not change `revision`, so an open editor can still save.
 - Binned cards and cards on binned boards return 404 on every card route. They are restored through `POST /api/bin/card/:id/restore` (§ Bin).
+
+### Tags and flags (Wave 13, D109, D110, T101)
+
+Tags belong to one board: at most 100 per board (409 `LIMIT_REACHED`), names of 1–40 characters (trimmed, no control or bidi characters) unique ignoring case, and a colour from the Collections option palette (`gray`, the default, `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`). **Any reader creates a tag**; **only the owner** renames, recolours, or deletes one. A card carries at most 10 tags, each of its **own** board: a tag id from any other board is 404 `Tag not found`, even for a user who reads both boards, exactly like an unknown id. Flags are the fixed set `urgent`, `blocked`, `needs_review`, `on_hold`, each at most once; `blocked` is a manual flag, separate from the relation-derived blocker count (13D). Tags and flags are card **fields** (D107): they change through `PATCH /cards/:k` with the revision compare-and-swap, and `CARD_CHANGED` carries them.
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /boards/:b/tags { name, color? }` | reader | 201 `{ tag: BoardTag }` | 400, 404, 409 `{ code: "TAG_EXISTS", tag }` (a name that matches ignoring case, with the existing tag so a picker can use it; checked before the cap) or `LIMIT_REACHED` |
+| `PATCH /tags/:t { name?, color? }` | owner | 200 `{ tag: BoardTag }`. Renaming to another case of its own name is allowed | 400 (no field), 403 `OWNER_ONLY`, 404 (unknown, or a board the caller cannot read), 409 `TAG_EXISTS` |
+| `DELETE /tags/:t` | owner | 200 `{ ok: true, removedFrom }`: the tag is deleted with no Bin and unlinked from every card, binned ones included (`removedFrom` counts them all). No card's `revision` changes | 403 `OWNER_ONLY`, 404 |
+
+A binned card keeps its tags and flags; a restore brings back the tags that still exist. Audit (ids only): `task.tag_create { boardId, tagId }`, `task.tag_update { boardId, tagId, renamed?, color? }`, `task.tag_delete { boardId, tagId, removedFrom }`; `task.card_update` and `task.card_create` add `tagsAdded`, `tagsRemoved`, and the resulting `flags` when those fields are sent.
 
 ### Comments
 
