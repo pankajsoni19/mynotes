@@ -102,7 +102,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
     {route.boardId
-      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} />
+      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} onOpenCardRoute={(boardId, cardId) => go(tasksRoute(boardId, cardId))} />
       : <BoardList onOpen={(board) => go(tasksRoute(board.id))} onOpenBoard={(boardId) => go(tasksRoute(boardId))} notify={notify} />}
     {toast && <div className="toast file-toast" role="status">
       <span>{toast.message}</span>

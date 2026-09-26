@@ -234,3 +234,31 @@
 .task-column-header b.task-wip.over, .task-column-tabs b.task-wip.over { background: #3a1d1a; color: #ffb4a8; }
 .task-column.drop-refused { border-color: #6a3039; border-style: dashed; }
 .task-column-full-hint { flex: none; margin: 0 8px 6px; border-radius: 8px; padding: 6px 8px; background: #1f1416; color: #f3c2c9; font-size: .76rem; }
+
+/* Relations (Wave 13D, D104–D105): grouped by type; a card the viewer cannot read is "Restricted card". */
+.task-relation-groups { display: grid; gap: 10px; }
+.task-relation-group { display: grid; gap: 6px; }
+.task-relation-group h4 { margin: 0; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.task-relations { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.task-relation { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid #242428; border-radius: 10px; padding: 6px 6px 6px 8px; background: #121214; }
+.task-relation.restricted { border-style: dashed; }
+.task-relation-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: #1d1d21; color: #c9a85c; }
+.task-relation.restricted .task-relation-icon { color: #8d8d94; }
+.task-relation-icon svg { width: 16px; }
+.task-relation-copy { min-width: 0; display: grid; gap: 2px; }
+.task-relation-copy > a, .task-relation-copy > span { overflow: hidden; color: #e4e4e6; font-size: .86rem; text-overflow: ellipsis; white-space: nowrap; }
+.task-relation-copy > a { text-decoration: none; }
+.task-relation-copy > a:hover, .task-relation-copy > a:focus-visible { color: #f5cf79; text-decoration: underline; }
+.task-relation.restricted .task-relation-copy > span { color: #a8a8ae; font-style: italic; }
+.task-relation-copy small { color: #7c7c83; font-size: .72rem; }
+.task-relation .icon-button svg { width: 16px; }
+.task-relation-adder { display: grid; gap: 6px; }
+.task-relation-adder-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.task-blocked-chip { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin: 0; border-radius: 999px; padding: 4px 10px; background: #3a1d1a; color: #ffb4a8; font-size: .76rem; font-weight: 600; }
+.task-blocked-chip svg { width: 14px; }
+@media (max-width: 760px) {
+  .task-relation { min-height: 56px; }
+  .task-relation .icon-button { width: 44px; height: 44px; }
+  .task-relation-adder-row { grid-template-columns: minmax(0, 1fr); }
+  .task-relation-adder-row .task-small-button { justify-self: end; }
+}

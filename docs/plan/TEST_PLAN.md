@@ -447,6 +447,12 @@ Manual QA (headless Chrome over CDP at 1280×800 and 390×844 with touch, a scra
 - [ ] Not checked in the browser: a "(no access)" chip after unsharing (covered by the render test), and a real pointer drag (synthetic drag events only).
 
 
+## Wave 13D: relations, composer, and full page (UI)
+
+Plan of record: [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §4.3, §4.7, §7. Rendered with `react-dom/server`, as 13A and 13B.
+
+- [x] `tests/tasksRelationsUi.test.tsx` (relations): rows group by type in the fixed order (Depends on, Needed by, Relates to, Duplicates, Duplicated by) and keep their order; "Blocked by N open cards" counts readable, open `depends_on` cards only (restricted and done ones do not); a restricted row carries only its id and type, shows "Restricted card", has no link, and can be removed; readable rows link to `/tasks/:b/card/:k` and name the other board only when it is not this one; titles render as text; `RELATION_EXISTS` names the existing link and `LIMIT_REACHED` the cap; staged composer rows are text, not links; the adder is a shared `Select` plus a `Combobox`, with no native select.
+
 ## Wave 13F: Modules
 
 With 13B merged, `tests/migrations.test.ts`, `tests/api.test.ts`, and `tests/searchIndex.test.ts` pin 1–16 and allow 017 onwards.

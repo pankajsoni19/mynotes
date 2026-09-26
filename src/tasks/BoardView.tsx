@@ -46,6 +46,8 @@ type BoardViewProps = {
   /** After the board moved to the Bin: leave it for the list. */
   onBoardDeleted: () => void;
   onOpenBoard: (boardId: string) => void;
+  /** Opens a card on any board (a relation link): pushes its route. */
+  onOpenCardRoute?: (boardId: string, cardId: string) => void;
 };
 
 type BoardDialog =
@@ -55,7 +57,7 @@ type BoardDialog =
 
 export const MAX_COLUMNS = 20;
 
-export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard }: BoardViewProps) {
+export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard, onOpenCardRoute }: BoardViewProps) {
   const focusCardId = openCardId;
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -253,7 +255,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
   async function addCard(columnId: string, title: string) {
     let card: CardSummary;
     try {
-      ({ card } = await createCard(boardId, columnId, title));
+      ({ card } = await createCard(boardId, { columnId, title }));
     } catch (reason) {
       if (taskErrorCode(reason) !== "COLUMN_FULL") throw reason;
       // Someone may have filled it meanwhile: show the latest counts.
@@ -447,6 +449,8 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       notify={notify}
       onMove={(card) => openDialog({ kind: "moveCard", cardId: card.id })}
       onDelete={removeCard}
+      onOpenRelated={(target) => onOpenCardRoute?.(target.board_id, target.id)}
+      onRelationsChanged={(id, counts) => setCards((items) => items.map((item) => item.id === id ? { ...item, ...counts } : item))}
       onChanged={(card) => setCards((items) => items.map((item) => item.id === card.id ? {
         ...item,
         title: card.title,

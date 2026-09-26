@@ -8,6 +8,8 @@ import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import { CardFields } from "./CardFields";
+import { RelationsSection, type RelatedCardTarget } from "./RelationsSection";
+import { openBlockerCount, relationRow } from "./relationsModel";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -25,7 +27,8 @@ import {
   type BoardColumn,
   type CardChange,
   type CardComment,
-  type CardDetail
+  type CardDetail,
+  type CardRelation
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
@@ -44,6 +47,10 @@ type CardDialogProps = {
   /** Moves the card to the Bin (the dialog confirms first) and closes it. */
   onDelete: (cardId: string) => Promise<void>;
   notify: (message: string) => void;
+  /** Opens a related card (pushes its route). */
+  onOpenRelated?: (card: RelatedCardTarget) => void;
+  /** The relations changed: the board's counts for this card follow (13D). */
+  onRelationsChanged?: (cardId: string, counts: { relation_count: number; open_blockers: number }) => void;
 };
 
 const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -56,7 +63,7 @@ const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.pa
  * The description is Markdown shown through the notes renderer read-only (D44) and edited with
  * an explicit Save; a revision conflict offers Reload or Copy my text.
  */
-export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify }: CardDialogProps) {
+export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify, onOpenRelated, onRelationsChanged }: CardDialogProps) {
   const [card, setCard] = useState<CardDetail | null>(null);
   const [comments, setComments] = useState<CardComment[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -74,6 +81,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [attachments, setAttachments] = useState<CardAttachment[]>([]);
+  const [relations, setRelations] = useState<CardRelation[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<UploadedAttachment[]>([]);
   const [unlinking, setUnlinking] = useState<CardAttachment | null>(null);
@@ -96,6 +104,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
       setComments(view.comments);
       setHasMore(view.hasMoreComments);
       setAttachments(view.attachments);
+      setRelations(view.relations ?? []);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 404) onMissing();
       else setLoadError(taskErrorMessage(reason, "Could not load this card"));
@@ -463,6 +472,13 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
 
           <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} />
           {detailsConflict && <p className="file-dialog-error" role="alert">{detailsConflict}</p>}
+
+          <RelationsSection cardId={card.id} boardId={card.board_id} idPrefix={titleId} relations={relations} notify={notify}
+            onOpen={(target) => onOpenRelated?.(target)}
+            onChange={(next) => {
+              setRelations(next);
+              onRelationsChanged?.(card.id, { relation_count: next.length, open_blockers: openBlockerCount(next.map(relationRow)) });
+            }} />
 
           <section className="task-card-section" aria-labelledby={`${titleId}-description`}>
             <header><h3 id={`${titleId}-description`}>Description</h3>{!editing && <button className="secondary-button task-small-button" onClick={startEditing}><Pencil />Edit</button>}</header>
