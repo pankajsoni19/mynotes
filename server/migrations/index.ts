@@ -13,8 +13,9 @@ import { taskDatesMigration } from "./011_task_dates";
 import { collectionsMigration } from "./012_collections";
 import { calendarMigration } from "./013_calendar";
 import { eventNextOccurrenceMigration } from "./014_event_next_occurrence";
+import { taskCardUxMigration } from "./015_task_card_ux";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration];
 
 /** Ids of every registered migration, in order. Tests assert against this list. */
 export const registeredMigrationIds: readonly number[] = migrations.map((migration) => migration.id);

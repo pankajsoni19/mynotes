@@ -390,6 +390,12 @@ Manual QA (desktop and 390×844):
 - [ ] Calendars → Subscribe links: create a Busy link, copy it once (the dialog never shows it again), subscribe from a phone calendar on the tailnet HTTPS origin, and see times titled "Busy"; revoke it and the phone's next refresh fails. The dialog is usable at 390 px and Back closes it.
 - [ ] An MCP client with `calendar:write` creates and moves an event; the event view says "Changed by the MCP key <name>", and Undo last change restores it.
 
+## Wave 13: task cards (13B server)
+
+Plan of record: [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §7. Migration ids pin 1–15 and tolerate the parallel 016 (user preferences) and 017 (Team).
+
+- [x] `tests/migrations.test.ts`: 015 on a 014-shaped database: exactly one `card_assignees` row per non-NULL `assignee_id` (assigned, unassigned, binned, and a later-disabled assignee) with `assignee_id` unchanged; `idx_cards_assignee` dropped; CHECK refusals (a time without a date, `24:00`, `9:05`, a time without a zone, clearing the date under a time, an oversized excerpt, WIP 0 and 1001, a self relation, a reversed `relates`, a `parent` kind, a duplicate pair in either order, an unknown flag or colour, a tag name differing only in case); cascades on tag delete, user delete, card purge, and board purge. The SQLite features the plan flagged (a sibling-column CHECK in `ADD COLUMN`, a two-argument `min()`/`max()` unique expression index) are verified here on Bun 1.4.2 / SQLite 3.53.2, so the §2.1 fallbacks are not used.
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.

@@ -10,18 +10,23 @@ import { binMigration } from "../server/migrations/007_bin";
 import { noteSearchMigration } from "../server/migrations/008_note_search";
 import { taskBoardsMigration } from "../server/migrations/009_task_boards";
 import { mcpKeyScopesMigration } from "../server/migrations/010_mcp_key_scopes";
+import { taskDatesMigration } from "../server/migrations/011_task_dates";
+import { collectionsMigration } from "../server/migrations/012_collections";
+import { calendarMigration } from "../server/migrations/013_calendar";
+import { eventNextOccurrenceMigration } from "../server/migrations/014_event_next_occurrence";
 import { registeredMigrationIds, runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not later migrations (for example 013) are present,
- * and pins the ids this branch depends on.
+ * holds whether or not the parallel migrations 016 (user preferences) and
+ * 017 (Team) are present yet, and pins the ids this branch depends on.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  expect(ids.slice(0, 15)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+  expect(ids.slice(15).every((id) => id === 16 || id === 17)).toBe(true);
 }
 
 function openDb() {
@@ -271,8 +276,9 @@ describe("database migrations", () => {
     db.query("DELETE FROM users WHERE id = 'u2'").run();
     expect((db.query("SELECT assignee_id FROM cards WHERE id = 'k1'").get() as { assignee_id: string | null }).assignee_id).toBeNull();
 
+    // Migration 015 drops idx_cards_assignee: assignees live in card_assignees from then on.
     const indexes = (db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_cards_due','idx_cards_assignee','idx_cards_creator') ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
-    expect(indexes).toEqual(["idx_cards_assignee", "idx_cards_creator", "idx_cards_due"]);
+    expect(indexes).toEqual(["idx_cards_creator", "idx_cards_due"]);
     db.close();
   });
 
@@ -306,6 +312,105 @@ describe("database migrations", () => {
     expect((db.query("SELECT COUNT(*) AS count FROM collection_rows").get() as { count: number }).count).toBe(0);
     expect((db.query("SELECT COUNT(*) AS count FROM collection_row_search").get() as { count: number }).count).toBe(0);
     expect((db.query("SELECT COUNT(*) AS count FROM collection_row_fts").get() as { count: number }).count).toBe(0);
+    db.close();
+  });
+
+  test("migration 015 backfills card_assignees losslessly and enforces the Wave 13 task schema", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    const upTo014 = [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
+      taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration];
+    for (const migration of upTo014) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    const insertUser = db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, disabled_at) VALUES (?, ?, ?, 'x', ?, ?)");
+    insertUser.run("u1", "owner@example.test", "Owner", old, null);
+    insertUser.run("u2", "member@example.test", "Member", old, null);
+    insertUser.run("u3", "gone@example.test", "Disabled later", old, old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b1', 'u1', 'Plan', ?, ?)").run(old, old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b2', 'u1', 'Other', ?, ?)").run(old, old);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES ('c1', 'b1', 'To do', 1024, ?, ?)").run(old, old);
+    const insertCard = db.query(`INSERT INTO cards (id, board_id, column_id, position, title, created_by, created_at, updated_at, deleted_at, purge_after, assignee_id, due_on)
+      VALUES (?, 'b1', 'c1', ?, ?, 'u1', ?, ?, ?, ?, ?, ?)`);
+    insertCard.run("k1", 1024, "Assigned", old, "2025-02-01T00:00:00.000Z", null, null, "u2", "2026-10-01");
+    insertCard.run("k2", 2048, "Unassigned", old, old, null, null, null, null);
+    insertCard.run("k3", 3072, "Binned and assigned", old, "2025-03-01T00:00:00.000Z", old, old, "u1", null);
+    insertCard.run("k4", 4096, "Assigned to a disabled user", old, old, null, null, "u3", null);
+
+    runMigrations(db);
+
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 15").get() as { name: string }).name).toBe("task_card_ux");
+    // Exactly one row per non-NULL assignee_id, binned cards included; the legacy mirror is unchanged.
+    expect(db.query("SELECT card_id, user_id, assigned_by, created_at FROM card_assignees ORDER BY card_id").all()).toEqual([
+      { card_id: "k1", user_id: "u2", assigned_by: null, created_at: "2025-02-01T00:00:00.000Z" },
+      { card_id: "k3", user_id: "u1", assigned_by: null, created_at: "2025-03-01T00:00:00.000Z" },
+      { card_id: "k4", user_id: "u3", assigned_by: null, created_at: old }
+    ]);
+    expect(db.query("SELECT id, assignee_id FROM cards ORDER BY id").all()).toEqual([
+      { id: "k1", assignee_id: "u2" }, { id: "k2", assignee_id: null }, { id: "k3", assignee_id: "u1" }, { id: "k4", assignee_id: "u3" }
+    ]);
+    expect(db.query("SELECT due_time, due_tz, description_excerpt FROM cards WHERE id = 'k1'").get()).toEqual({ due_time: null, due_tz: null, description_excerpt: "" });
+    expect(db.query("SELECT wip_limit FROM board_columns WHERE id = 'c1'").get()).toEqual({ wip_limit: null });
+    expect(db.query("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_cards_assignee'").get()).toBeNull();
+
+    // Due time: a time needs a date and a zone, and must be HH:MM up to 23:59 (sibling-column CHECK).
+    const setDue = db.query("UPDATE cards SET due_on = ?, due_time = ?, due_tz = ? WHERE id = 'k2'");
+    setDue.run("2026-10-01", "17:30", "Europe/Berlin");
+    expect(() => setDue.run(null, "17:30", "Europe/Berlin")).toThrow();
+    expect(() => setDue.run("2026-10-01", "24:00", "UTC")).toThrow();
+    expect(() => setDue.run("2026-10-01", "9:05", "UTC")).toThrow();
+    expect(() => setDue.run("2026-10-01", "17:30", null)).toThrow();
+    expect(() => setDue.run("2026-10-01", null, "UTC")).toThrow();
+    expect(() => setDue.run("2026-10-01", "17:30", "")).toThrow();
+    expect(() => db.query("UPDATE cards SET due_on = NULL WHERE id = 'k2'").run()).toThrow();
+    setDue.run(null, null, null);
+    expect(() => db.query("UPDATE cards SET description_excerpt = ? WHERE id = 'k2'").run("x".repeat(161))).toThrow();
+    for (const wip of [0, 1001]) expect(() => db.query("UPDATE board_columns SET wip_limit = ? WHERE id = 'c1'").run(wip)).toThrow();
+    db.query("UPDATE board_columns SET wip_limit = 1000 WHERE id = 'c1'").run();
+    expect(() => db.query("INSERT INTO card_assignees (card_id, user_id, created_at) VALUES ('k1', 'u2', ?)").run(old)).toThrow();
+
+    // Relations: no self relation, `relates` in canonical order, one relation per unordered pair (expression index).
+    const insertRelation = db.query("INSERT INTO card_relations (id, source_card_id, target_card_id, kind, created_by, created_at) VALUES (?, ?, ?, ?, 'u1', ?)");
+    expect(() => insertRelation.run("r0", "k1", "k1", "blocks", old)).toThrow();
+    expect(() => insertRelation.run("r0", "k2", "k1", "relates", old)).toThrow();
+    expect(() => insertRelation.run("r0", "k1", "k2", "parent", old)).toThrow();
+    insertRelation.run("r1", "k1", "k2", "relates", old);
+    expect(() => insertRelation.run("r2", "k2", "k1", "blocks", old)).toThrow();
+    expect(() => insertRelation.run("r2", "k1", "k2", "duplicates", old)).toThrow();
+    insertRelation.run("r3", "k2", "k4", "blocks", old);
+    insertRelation.run("r4", "k4", "k1", "duplicates", old);
+
+    // Tags and flags.
+    const insertTag = db.query("INSERT INTO board_tags (id, board_id, name, color, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'u1', ?, ?)");
+    insertTag.run("t1", "b1", "Bug", "red", old, old);
+    expect(() => insertTag.run("t2", "b1", "bug", "gray", old, old)).toThrow();
+    insertTag.run("t3", "b2", "bug", "gray", old, old);
+    expect(() => insertTag.run("t4", "b1", "Other", "magenta", old, old)).toThrow();
+    expect(() => insertTag.run("t5", "b1", "", "gray", old, old)).toThrow();
+    expect(() => insertTag.run("t6", "b1", "x".repeat(41), "gray", old, old)).toThrow();
+    db.query("INSERT INTO card_tags (card_id, tag_id, created_at) VALUES ('k1', 't1', ?), ('k2', 't1', ?)").run(old, old);
+    const insertFlag = db.query("INSERT INTO card_flags (card_id, flag, created_at) VALUES (?, ?, ?)");
+    for (const flag of ["urgent", "blocked", "needs_review", "on_hold"]) insertFlag.run("k1", flag, old);
+    expect(() => insertFlag.run("k1", "later", old)).toThrow();
+    expect(() => insertFlag.run("k1", "urgent", old)).toThrow();
+
+    const count = (table: string) => (db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+    // Deleting a tag unlinks it; deleting a user drops their assignments; purging cards and boards cascades.
+    db.query("DELETE FROM board_tags WHERE id = 't1'").run();
+    expect(count("card_tags")).toBe(0);
+    db.query("DELETE FROM users WHERE id = 'u3'").run();
+    expect(db.query("SELECT card_id FROM card_assignees WHERE user_id = 'u3'").all()).toEqual([]);
+    db.query("DELETE FROM cards WHERE id = 'k1'").run();
+    expect(db.query("SELECT id FROM card_relations ORDER BY id").all()).toEqual([{ id: "r3" }]);
+    expect(count("card_flags")).toBe(0);
+    expect(db.query("SELECT card_id FROM card_assignees ORDER BY card_id").all()).toEqual([{ card_id: "k3" }]);
+    db.query("DELETE FROM boards WHERE id = 'b1'").run();
+    expect([count("card_assignees"), count("card_relations"), count("card_flags"), count("cards")]).toEqual([0, 0, 0, 0]);
+    expect(db.query("SELECT id FROM board_tags").all()).toEqual([{ id: "t3" }]);
     db.close();
   });
 });
