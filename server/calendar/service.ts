@@ -14,6 +14,7 @@ import {
 } from "./access";
 import { canLinkTarget, MAX_LINKS_PER_EVENT, resolveLink, type LinkTargetType, type ResolvedLink } from "./links";
 import { rescheduleEventReminders } from "./reminders";
+import { canWriteContent } from "../team/userRole";
 import {
   addDays,
   expandSeries,
@@ -104,7 +105,8 @@ function calendarSummary(calendarId: string, userId: string) {
  * user who has never had a calendar gets "Personal" on first use.
  */
 export function listCalendars(userId: string) {
-  ensurePersonalCalendar(userId);
+  // Read-only team roles cannot add events, so they are not given an empty Personal calendar.
+  if (canWriteContent(userId)) ensurePersonalCalendar(userId);
   const rows = db.query(`${summarySelect} WHERE ${readableCalendarPredicate} ORDER BY is_owner DESC, k.name COLLATE NOCASE, k.id`)
     .all({ userId }) as Array<Omit<CalendarSummary, "role">>;
   return { calendars: rows.map((row) => withRole(row, userId)) };
@@ -312,14 +314,15 @@ function timingColumns(input: EventInput, exdates: string[]) {
 function writableCalendar(calendarId: string, userId: string) {
   const calendar = readableCalendar(calendarId, userId);
   if (!calendar) throw calendarNotFound();
-  if (calendarRole(calendar, userId) === "viewer") throw readOnly();
+  // Defence in depth for MCP (§5.4): a read-only team role never writes, even as the owner.
+  if (calendarRole(calendar, userId) === "viewer" || !canWriteContent(userId)) throw readOnly();
   return calendar;
 }
 
 function writableEvent(eventId: string, userId: string) {
   const found = readableEvent(eventId, userId);
   if (!found) throw eventNotFound();
-  if (calendarRole(found.calendar, userId) === "viewer") throw readOnly();
+  if (calendarRole(found.calendar, userId) === "viewer" || !canWriteContent(userId)) throw readOnly();
   return found;
 }
 

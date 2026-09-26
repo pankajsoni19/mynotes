@@ -4,7 +4,7 @@ import type { AppEnv } from "../auth";
 import { audit } from "../db";
 import { verifyReauth } from "../reauth";
 import { parseJson, recoveryCode, totpCode, uuid } from "../validation";
-import { can, isSelectableRole, ROLES, roleChangeNeedsReauth } from "./roles";
+import { can, ROLES, roleChangeNeedsReauth } from "./roles";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser, userRole } from "./service";
 
 /**
@@ -105,7 +105,6 @@ export function registerTeamRoutes(app: Hono<AppEnv>) {
     if (!id) return notFound(c);
     const body = await parseJson(c.req.raw, roleChangeSchema);
     const actor = c.get("user");
-    if (!isSelectableRole(body.role)) return c.json({ error: "This role is not available yet. Choose Admin or Member.", code: "ROLE_NOT_ENABLED" }, 400);
     let reauthenticated = false;
     if (roleChangeNeedsReauth(body.expectedRole, body.role)) {
       // Refuse unavailable roles and stale expectations before a second factor is consumed.

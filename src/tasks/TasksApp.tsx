@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNotify } from "./taskActions";
 import { House, Sparkles } from "lucide-react";
 import { AccountActions, useBinCount } from "../AppShell";
+import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, locationUrl, routeFromLocation, type Route } from "../router";
@@ -39,6 +40,7 @@ const currentTasksRoute = (): TasksRoute => {
  */
 export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSettings, onSignOut }: TasksAppProps) {
   const [route, setRoute] = useState<TasksRoute>(currentTasksRoute);
+  const { readOnly } = useRole();
   const binCount = useBinCount(Boolean(onBin));
   // Tasks keeps its own toast so a message can carry an action (Undo after moving to the Bin).
   const [toast, setToast] = useState<{ id: number; message: string; action?: { label: string; run: () => void } } | null>(null);
@@ -119,12 +121,13 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
     go(tasksRoute(), true);
   }, [notify, go]);
 
-  return <main className={`app-page tasks-app${route.boardId ? " tasks-board-open" : ""}`}>
+  return <main data-read-only={readOnly ? "true" : undefined} className={`app-page tasks-app${route.boardId ? " tasks-board-open" : ""}`}>
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
       <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Tasks</strong></span></span>
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
+    <ReadOnlyBanner />
     {route.boardId
       ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} openCardFull={route.full === true} onExpandCard={expandCard} onCollapseCard={collapseCard} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))}
         onOpenCardRoute={(boardId, cardId) => go(tasksRoute(boardId, cardId, false, boardId === routeRef.current.boardId ? routeRef.current.query : null))}

@@ -1062,7 +1062,7 @@ type CalendarFeed = { id: string; calendarId: string; prefix: string; detail: "b
 
 Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-module.md) (§11 overrides the earlier text). Migration `017_team_roles`.
 
-**Roles.** `users.role` is `admin | member | viewer | guest` (D71). This wave assigns only `admin` and `member`; `viewer` and `guest` exist in the schema and are refused by the API with 400 `ROLE_NOT_ENABLED` until Wave 15 enforces them. The first account registered on an empty database is `admin` (D76, inside the register transaction), and so is one registered while no active admin exists (`role = 'admin' AND disabled_at IS NULL`), with a `team_events` row `via = 'bootstrap'`; the server also logs a warning at boot in that state. On upgrade every account becomes `member` and the oldest enabled one `admin` (O8). `role` is returned on `user` by `POST /api/auth/register`, `POST /api/auth/login`, and `GET /api/auth/me`; no request body accepts it except the Team role route.
+**Roles.** `users.role` is `admin | member | viewer | guest` (D71). All four are assignable since Wave 15 (see *Viewer and guest enforcement* below). The first account registered on an empty database is `admin` (D76, inside the register transaction), and so is one registered while no active admin exists (`role = 'admin' AND disabled_at IS NULL`), with a `team_events` row `via = 'bootstrap'`; every later registration gets `SIGNUP_ROLE` (`guest` by default, or `viewer` or `member`; never `admin`, D80); the server also logs a warning at boot in that state. On upgrade every account becomes `member` and the oldest enabled one `admin` (O8). `role` is returned on `user` by `POST /api/auth/register`, `POST /api/auth/login`, and `GET /api/auth/me`; no request body accepts it except the Team role route.
 
 **Always one active admin.** "Active admin" means `role = 'admin' AND disabled_at IS NULL`. Every write that would leave none returns 409 `LAST_ADMIN`; the `users_keep_one_admin` triggers refuse it in SQL too (T78).
 
@@ -1097,7 +1097,7 @@ Guests get **404** on every Team route. Members and viewers read; every write ne
 | --- | --- | --- | --- |
 | `GET /api/team` | | 200 `{ me: { id, role }, users: TeamMember[] }`, active before blocked, then admin, member, viewer, guest, then name; at most 500 | 404 (guest) |
 | `GET /api/team/:userId` | | 200 `{ member: TeamMember & { events?: TeamEvent[] } }`; `events` (latest 50) for admins only | 404 |
-| `PUT /api/team/:userId/role` | `{ role, expectedRole } & Reauth` | 200 `{ changed, role, member }`; `changed: false` when `role` equals the current role (no event) | 400 `ROLE_NOT_ENABLED`; 401 `REAUTH_REQUIRED`; 409 `ROLE_CHANGED` `{ currentRole }` (compare-and-swap on `expectedRole`, T79), `LAST_ADMIN` |
+| `PUT /api/team/:userId/role` | `{ role, expectedRole } & Reauth` | 200 `{ changed, role, member }`; `changed: false` when `role` equals the current role (no event) | 401 `REAUTH_REQUIRED`; 409 `ROLE_CHANGED` `{ currentRole }` (compare-and-swap on `expectedRole`, T79), `LAST_ADMIN` |
 | `POST /api/team/:userId/block` | `{ reason?: string ≤ 200 } & Reauth` | 200 `{ blockedAt, sessionsRevoked, mcpKeysPaused, member }` | 401 `REAUTH_REQUIRED`; 409 `SELF_ACTION`, `ALREADY_BLOCKED`, `LAST_ADMIN`, `ROLE_CHANGED` |
 | `POST /api/team/:userId/unblock` | `{}` | 200 `{ ok: true, member }` | 409 `NOT_BLOCKED` |
 | `POST /api/team/:userId/sessions/revoke` | `{}` | 200 `{ sessionsRevoked, member }` | 409 `SELF_ACTION` (use Sign out) |
@@ -1110,7 +1110,7 @@ Guests get **404** on every Team route. Members and viewers read; every write ne
 
 ### Host CLI
 
-`bun server/team-admin.ts list | set-role <email> admin|member | unblock <email>` (in Docker: `docker compose exec mynotes bun server/team-admin.ts …`). It runs the same service functions with no actor and `via = 'cli'`, so the last-admin rule applies; exit codes are 0 (done), 1 (refused or unknown account, with the error code), and 2 (usage).
+`bun server/team-admin.ts list | set-role <email> admin|member|viewer|guest | unblock <email>` (in Docker: `docker compose exec mynotes bun server/team-admin.ts …`). It runs the same service functions with no actor and `via = 'cli'`, so the last-admin rule applies; exit codes are 0 (done), 1 (refused or unknown account, with the error code), and 2 (usage).
 
 ### MCP (`team:read`)
 
@@ -1120,6 +1120,37 @@ Guests get **404** on every Team route. Members and viewers read; every write ne
 | --- | --- | --- | --- |
 | `list_team_members` | team:read | `{ role?, status?: "active" \| "blocked" }` | `{ members: [{ id, displayName, role, status, createdAt, lastSeenAt }] }` |
 | `get_team_member` | team:read | `{ userId }` | the same fields plus `blockedAt` and `events` (latest 20: `{ action, fromRole, toRole, createdAt, actor }` with the actor's display name) |
+
+## Viewer and guest enforcement (Wave 15)
+
+Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-module.md) §2.2, §5.2–§5.4, §8, and the 17C note in [research/2026-09-26-task-hierarchy-workflows.md](research/2026-09-26-task-hierarchy-workflows.md) (Q12). No migration.
+
+**Audience.** `all_users` ("Everyone here") means every account except guests. Every SQL comparison `x.visibility = 'all_users'` is ANDed with `AUDIENCE_ALL_USERS` (`server/team/roles.ts`): notes, folders, files, search, boards and their cards, card relations, the task query, task views, board readers and assignees, collections, calendars and events, Today, feeds, and MCP. A guest therefore reads only their own items and items shared with them by name (`selected`); a viewer reads `all_users` too. A role change applies on the next request (T84).
+
+**Write gate.** For viewers and guests every `/api` request other than GET, HEAD, or OPTIONS is refused with 403 `{ error: "Your team role is read-only", code: "ROLE_READ_ONLY" }` unless it is on this exact allowlist (`ROLE_READ_ONLY_ALLOWED_WRITES` in `server/team/writeGate.ts`; `:param` is one path segment):
+
+| Method and path | Who | Why |
+| --- | --- | --- |
+| `POST /api/auth/logout` | both | sign out |
+| `POST /api/auth/totp/setup`, `POST /api/auth/totp/enable`, `POST /api/auth/totp/recovery-codes`, `POST /api/auth/totp/recovery-codes/regenerate`, `DELETE /api/auth/totp` | both | own two-factor |
+| `POST /api/notifications/read` | both | own notifications |
+| `POST /api/push/subscriptions`, `DELETE /api/push/subscriptions`, `POST /api/push/test` | both | own push devices |
+| `POST /api/reminders`, `DELETE /api/reminders/:reminderId` | both | own reminders on readable events (O4) |
+| `PUT /api/preferences` | both | own Modules preference |
+| `POST /api/mcp/keys`, `DELETE /api/mcp/keys/:id` | both | own keys; creation is then limited by role (below) |
+| `POST /api/collections/:collectionId/query` | both | a read sent as POST |
+| `POST /api/tasks/query` | both | a read sent as POST; a **guest's** `q` must contain a plain `assignee:me` term (not negated, the only value), otherwise 403 `ROLE_READ_ONLY` |
+| `POST /api/tasks/views`, `PATCH /api/tasks/views/:viewId`, `DELETE /api/tasks/views/:viewId`, `POST /api/tasks/views/:viewId/duplicate` | viewer | own private views; `PUT /api/tasks/views/:viewId/sharing` stays refused |
+
+`/api/team/*` answers for itself (guests 404, others 403 `ADMIN_ONLY` on writes). Login and register have no session and are unaffected. Everything else, including every route added later, is refused: note drafts, publish, version restore, sharing, folders, uploads and file changes, Bin restore, purge, and empty (O3), cards, comments, boards, columns, tags, collections, rows, imports, schema, calendars, events, links, and feed tokens (O5). `GET /api/tasks/views/:viewId/cards` is a read. `tests/writeGate.test.ts` enumerates every mutating route in `server/` and checks each one for both roles (T87).
+
+**Share roles** (§2.4): a viewer or guest on a collection or calendar shared with `share_role = "editor"` gets `role: "viewer"` in every response and is refused writes with `READ_ONLY` by the services, which also refuse a read-only role on items it owns. Read-only roles are not given a Personal calendar on first list.
+
+**Share picker.** `GET /api/users` is 403 `ROLE_READ_ONLY` for viewers and guests (they cannot share). For others each entry gains `role`, so pickers can show "Guest" or "Viewer" next to recipients who will only read.
+
+**MCP.** `mcpScopesForRole`: admin every scope; member every scope but `team:read`; viewer the read scopes only (`notes:read`, `files:read`, `tasks:read`, `today:read`, `calendar:read`, `collections:read`); guest none. Effective scopes are recomputed on every request and tool call (T81), so a demoted member's write key loses its write tools at once and a guest's key has no tools at all. `POST /api/mcp/keys` refuses guests with 403 `ROLE_READ_ONLY` and a viewer asking for a write scope with 403 `SCOPE_NOT_ALLOWED`. Write tools also re-check the holder's role before running (`READ_ONLY`).
+
+**Sign-up role.** `SIGNUP_ROLE` (env, validated at startup: `guest | viewer | member`, default `guest`) is the role of accounts registered after the first (D80, O14).
 
 ## Changes to existing note endpoints (Wave 4)
 

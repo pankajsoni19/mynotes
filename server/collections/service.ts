@@ -31,6 +31,7 @@ import {
 } from "./schema";
 import { indexRow, reindexCollection } from "./search";
 import { COLLECTION_TEMPLATES, DEFAULT_FIELDS, templateById } from "./templates";
+import { canWriteContent } from "../team/userRole";
 
 /**
  * Collections services (WAVES_10-12.md §3). Routes are thin adapters over
@@ -78,7 +79,8 @@ export function requireOwnedCollection(collectionId: string, userId: string) {
 
 export function requireEditableCollection(collectionId: string, userId: string) {
   const collection = requireReadableCollection(collectionId, userId);
-  if (collectionRole(collection, userId) === "viewer") throw readOnly();
+  // Defence in depth for MCP (§5.4): a read-only team role never writes, even as the owner.
+  if (collectionRole(collection, userId) === "viewer" || !canWriteContent(userId)) throw readOnly();
   return collection;
 }
 
@@ -90,7 +92,7 @@ function requireReadableRow(rowId: string, userId: string) {
 
 function requireEditableRow(rowId: string, userId: string) {
   const found = requireReadableRow(rowId, userId);
-  if (collectionRole(found.collection, userId) === "viewer") throw readOnly();
+  if (collectionRole(found.collection, userId) === "viewer" || !canWriteContent(userId)) throw readOnly();
   return found;
 }
 

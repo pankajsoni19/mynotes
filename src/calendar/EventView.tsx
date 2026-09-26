@@ -3,6 +3,7 @@ import { ArrowLeft, CalendarX2, Clock, MapPin, Pencil, Repeat, RotateCcw, Trash2
 import { ApiError } from "../api";
 import { getEvent, viewerTimeZone, type EventResponse } from "./calendarApi";
 import { eventWhen, repeatSummary, shortDate } from "./calendarFormat";
+import { useRole } from "../team/roleAccess";
 
 type EventViewProps = {
   eventId: string;
@@ -21,6 +22,7 @@ type EventViewProps = {
 
 /** /calendar/event/:e: the event, what it links to, and the viewer's own reminders. */
 export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, onEdit, onUndo, onSkip, onDelete, onLoaded, renderLinks, renderReminders }: EventViewProps) {
+  const { canWrite } = useRole();
   const [data, setData] = useState<EventResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -54,7 +56,7 @@ export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, o
   if (!data || data.event.id !== eventId) return <section className="calendar-event">{back}<p className="calendar-loading" role="status">Loading the event…</p></section>;
 
   const { event, calendar, role } = data;
-  const canEdit = role !== "viewer";
+  const canEdit = canWrite && role !== "viewer";
   const startDate = event.start_date ?? event.start_local?.slice(0, 10) ?? "";
   const skippable = canEdit && event.repeat !== null && occurrence !== null && !event.exdates.includes(occurrence);
 

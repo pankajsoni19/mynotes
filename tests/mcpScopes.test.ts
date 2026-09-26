@@ -29,3 +29,13 @@ test("stored scopes read leniently and never grant more than stored", () => {
   expect(parseStoredScopes('["tasks:write"]')).toEqual(["tasks:read", "tasks:write"]);
   expect(parseStoredScopes("[]")).toEqual([]);
 });
+
+test("mcpScopesForRole: admins all, members all but team:read, viewers read scopes only, guests none (§7)", async () => {
+  const { effectiveMcpScopes, mcpScopesForRole } = await import("../server/team/roles");
+  expect(mcpScopesForRole("admin")).toEqual([...MCP_SCOPES]);
+  expect(mcpScopesForRole("member")).toEqual(MCP_SCOPES.filter((scope) => scope !== "team:read"));
+  expect(mcpScopesForRole("viewer")).toEqual(["notes:read", "files:read", "tasks:read", "today:read", "calendar:read", "collections:read"]);
+  expect(mcpScopesForRole("guest")).toEqual([]);
+  expect(effectiveMcpScopes(["tasks:read", "tasks:write", "team:read"], "viewer")).toEqual(["tasks:read"]);
+  expect(effectiveMcpScopes(["notes:read"], "guest")).toEqual([]);
+});

@@ -6,6 +6,7 @@ import { readableBoardPredicate } from "./access";
 import { assigneesForCards, type CardAssignee } from "./assignees";
 import { dueAt } from "./dueTime";
 import { TaskError } from "./service";
+import { AUDIENCE_ALL_USERS } from "../team/roles";
 
 /**
  * The cross-board card query (research 2026-09-26 §10.3–§10.4, D140, D144,
@@ -39,7 +40,7 @@ export const COLUMN_STATE = "col.state";
 export const readableOtherBoardPredicate = readableBoardPredicate.replace(/\bb\./g, "ob.");
 
 /** Whether the caller is in the audience of another card's board `ob`, binned or not (D105: binning is never disclosed). */
-export const otherBoardAudience = `(ob.owner_id = $userId OR ob.visibility = 'all_users'
+export const otherBoardAudience = `(ob.owner_id = $userId OR (ob.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
   OR (ob.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members om WHERE om.board_id = ob.id AND om.user_id = $userId)))`;
 
 /** A relation from card `k` to another card `o` is visible unless the caller is in `o`'s audience and `o` or its board is binned. */

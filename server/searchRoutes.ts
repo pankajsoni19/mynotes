@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import { readableNotePredicate } from "./access";
+import { readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import type { AppEnv } from "./auth";
 import { db } from "./db";
 import { buildFtsQuery, HIT_END, HIT_START, MAX_QUERY_LENGTH, toSegments, type Segment } from "./search";
@@ -55,9 +55,7 @@ export function resetSearchRateLimit() {
  * owner while they have a draft (GET /api/notes/:id returns the draft then).
  * folder_id is masked exactly as in GET /api/notes.
  */
-const folderIdExpression = `CASE WHEN n.owner_id = $userId OR (n.sharing_override = 0 AND (
-  f.visibility = 'all_users' OR EXISTS (SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId)
-)) THEN n.folder_id ELSE NULL END`;
+const folderIdExpression = visibleNoteFolderIdExpression;
 
 const searchSql = (folderFilter: string) => `
   SELECT n.id, r.kind AS source,

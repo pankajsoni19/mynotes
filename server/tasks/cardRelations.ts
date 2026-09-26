@@ -1,6 +1,7 @@
 import { audit, db, now } from "../db";
 import { relationTypeFor, storedRelation, type RelationKind, type RelationType, type StoredRelation } from "./relations";
 import { getBoard, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
+import { AUDIENCE_ALL_USERS } from "../team/roles";
 
 /**
  * Typed card relations (WAVE_13_TASK_CARD_UX.md D104–D107, §3.2, T90, T91).
@@ -30,7 +31,7 @@ export type CardRelation =
   | { id: string; type: RelationType; restricted: true; created_at: string };
 
 /** The other board's audience for `$userId`, ignoring whether it is binned (alias `ob`). */
-const otherAudience = `(ob.owner_id = $userId OR ob.visibility = 'all_users'
+const otherAudience = `(ob.owner_id = $userId OR (ob.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
   OR (ob.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = ob.id AND m.user_id = $userId)))`;
 
 type RelationRow = {

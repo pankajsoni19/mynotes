@@ -34,7 +34,8 @@ async function rpc(token: string, method: string, params: unknown = {}) {
   const json = text.trimStart().startsWith("{") ? text : text.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("");
   return JSON.parse(json) as { result?: { tools?: Array<{ name: string }>; isError?: boolean; content?: Array<{ text: string }> } };
 }
-const toolNames = async (token: string) => (await rpc(token, "tools/list")).result!.tools!.map((tool) => tool.name);
+// A key with no effective scopes registers no tools, so the server offers no tools/list at all.
+const toolNames = async (token: string) => (await rpc(token, "tools/list")).result?.tools?.map((tool) => tool.name) ?? [];
 async function callTool(token: string, name: string, args: Record<string, unknown> = {}) {
   const body = await rpc(token, "tools/call", { name, arguments: args });
   return { isError: body.result!.isError === true, value: JSON.parse(body.result!.content![0]!.text) as Record<string, any> };
@@ -90,5 +91,57 @@ describe("Team MCP", () => {
     expect(await listed()).toMatchObject({ scopes: ["notes:read", "team:read"], effectiveScopes: ["notes:read", "team:read"] });
     setRoleSql(admin, "member");
     expect(await listed()).toMatchObject({ scopes: ["notes:read", "team:read"], effectiveScopes: ["notes:read"] });
+  });
+
+  test("viewers create read-only keys, guests none, and a demoted member's write key keeps only reads (T81)", async () => {
+    const viewer = await user("Scope viewer", "viewer");
+    const guest = await user("Scope guest", "guest");
+    const create = (session: Session, scopes: string[]) => request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "Key", scopes, password: session.password }) }, session);
+    const writeRefused = await create(viewer, ["tasks:write"]);
+    expect(writeRefused.status).toBe(403);
+    expect((await writeRefused.json() as { code: string }).code).toBe("SCOPE_NOT_ALLOWED");
+    expect((await create(viewer, ["notes:read", "tasks:read", "calendar:read", "collections:read", "files:read", "today:read"])).status).toBe(201);
+    const guestRefused = await create(guest, ["notes:read"]);
+    expect(guestRefused.status).toBe(403);
+    expect((await guestRefused.json() as { code: string }).code).toBe("ROLE_READ_ONLY");
+    // Revoking stays allowed for everyone.
+    const guestKey = createMcpApiKey(guest.userId, "Old key", ["notes:read"]);
+    expect((await request(`/mcp/keys/${guestKey.id}`, { method: "DELETE", body: "{}" }, guest)).status).toBe(200);
+
+    const member = await user("Scope member");
+    const key = createMcpApiKey(member.userId, "Writer", ["tasks:write", "notes:write-draft", "collections:write", "calendar:write"]);
+    const writeTools = ["create_card", "create_note", "update_note_draft", "create_row", "create_event", "create_reminder"];
+    expect(await toolNames(key.token)).toEqual(expect.arrayContaining(writeTools));
+    setRoleSql(member, "viewer");
+    const asViewer = await toolNames(key.token);
+    for (const tool of writeTools) expect(asViewer).not.toContain(tool);
+    expect(asViewer).toEqual(expect.arrayContaining(["list_boards", "list_notes", "list_collections", "list_calendars"]));
+    expect(JSON.parse((await invokeMcpToolForTests("create_note", {}, key.id)).content[0]!.text).code).toBe("SCOPE_REQUIRED");
+    setRoleSql(member, "guest");
+    expect(await toolNames(key.token)).toEqual([]);
+    expect(JSON.parse((await invokeMcpToolForTests("list_notes", {}, key.id)).content[0]!.text).code).toBe("SCOPE_REQUIRED");
+    const listed = (await (await request("/mcp/keys", {}, member)).json() as { keys: Array<{ id: string; effectiveScopes: string[] }> }).keys.find((row) => row.id === key.id)!;
+    expect(listed.effectiveScopes).toEqual([]);
+    setRoleSql(member, "member");
+  });
+
+  test("a viewer's MCP reads follow the guest-free audience; a guest's key reaches nothing (T84)", async () => {
+    const owner = await user("MCP audience owner");
+    const viewer = await user("MCP audience viewer", "viewer");
+    const created = await request("/notes", { method: "POST", body: JSON.stringify({ folderId: null }) }, owner);
+    const noteId = (await created.json() as { note: { id: string } }).note.id;
+    expect((await request(`/notes/${noteId}/draft`, { method: "PUT", body: JSON.stringify({ markdown: "# MCP everyone note", revision: 1 }) }, owner)).status).toBe(200);
+    expect((await request(`/notes/${noteId}/publish`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
+    expect((await request(`/notes/${noteId}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "all_users", userIds: [] }) }, owner)).status).toBe(200);
+    const viewerKey = createMcpApiKey(viewer.userId, "Viewer reads", ["notes:read"]);
+    expect((await callTool(viewerKey.token, "list_notes")).value.notes.some((note: { id: string }) => note.id === noteId)).toBe(true);
+    // The same key, once its holder is a guest, has no tools; the query itself also drops all_users.
+    setRoleSql(viewer, "guest");
+    expect(await toolNames(viewerKey.token)).toEqual([]);
+    const { readableNote } = await import("../server/access");
+    expect(readableNote(noteId, viewer.userId)).toBeNull();
+    setRoleSql(viewer, "viewer");
+    expect(readableNote(noteId, viewer.userId)?.id).toBe(noteId);
+    expect((await request(`/notes/${noteId}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "private", userIds: [] }) }, owner)).status).toBe(200);
   });
 });

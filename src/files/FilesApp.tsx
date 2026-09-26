@@ -14,7 +14,7 @@ import type { DocumentSummary, Folder } from "../types";
 import { ConfirmDialog } from "./Dialog";
 import {
   canDropOnFolder,
-  canManage,
+  canManage as ownsDocument,
   deleteConfirmMessage,
   DOCUMENT_DRAG_TYPE,
   emptyToastState,
@@ -49,6 +49,7 @@ import { NameDialog, RenameDialog } from "./RenameDialog";
 import { kindIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
+import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 
 export type FilesNavigate = (route: Route, options?: { replace?: boolean; filesPanel?: FilesPanel }) => void;
 
@@ -92,6 +93,9 @@ function browserStorage(): Storage | null {
 const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", uploading: "Uploading", done: "Uploaded", failed: "Failed", canceled: "Canceled" };
 
 export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, onSettings, onSignOut }: FilesAppProps) {
+  // Viewers and guests read and download; upload, new folder, rename, move, share, and delete are hidden.
+  const { canWrite } = useRole();
+  const canManage = (document: Pick<DocumentSummary, "is_owner">) => canWrite && ownsDocument(document);
   const [data, setData] = useState<LoadedData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -245,7 +249,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
   const defaultFolder = owned.find((item) => item.is_default === 1 || item.name === "Default") ?? owned[0] ?? null;
   const currentFolder = folders.find((item) => item.id === folder) ?? null;
   const uploadFolderId = folder === "all" ? defaultFolder?.id ?? null : currentFolder?.is_owner === 1 ? currentFolder.id : undefined;
-  const canUpload = uploadFolderId !== undefined && data !== null;
+  const canUpload = canWrite && uploadFolderId !== undefined && data !== null;
   const inFolder = useMemo(() => documents.filter((item) => documentInFolder(item, folder)), [documents, folder]);
   const visible = useMemo(() => sortDocuments(filterDocuments(inFolder, query), sort), [inFolder, query, sort]);
   const selected = documents.find((item) => item.id === documentId) ?? (extraDocument?.id === documentId ? extraDocument : null);
@@ -619,7 +623,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
         <button className="nav-home" onClick={() => leaveFiles(onHome)} title="Back to Home"><House /><span>Home</span></button>
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
         <button className={folder === "shared" ? "active" : ""} aria-current={folder === "shared" ? "page" : undefined} onClick={() => selectFolder("shared")}><Users /><span>Shared with me</span><b>{documents.filter((item) => item.is_owner === 0).length}</b></button>
-        <div className="nav-label"><span>Folders</span><button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button></div>
+        <div className="nav-label"><span>Folders</span>{canWrite && <button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
         {owned.map((item) => <button
           key={item.id}
           className={`folder-link${folder === item.id ? " active" : ""}${draggingId && canDropOnFolder(item, findDocument(draggingId)) ? " drop-candidate" : ""}${dropFolderId === item.id ? " drop-target" : ""}`}
@@ -669,6 +673,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
           {canUpload && <button className="primary-button files-upload-button" onClick={() => fileInputRef.current?.click()} title={`Upload to ${uploadDestination}`}><Upload />Upload</button>}
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { chooseFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
+        <ReadOnlyBanner />
         <label className="search-box file-search"><Search aria-hidden="true" /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && query) { event.preventDefault(); setQuery(""); } }} placeholder="Filter files" aria-label="Filter files by name" /></label>
       </header>
       <p id="file-list-keys" className="sr-only">{view === "grid" ? "Use the arrow keys to move between files." : "Use the up and down arrow keys to move between files."} On your own files, F2 renames and Delete moves the file to the Bin.</p>

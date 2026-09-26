@@ -1,0 +1,36 @@
+/* Read-only Team roles (Wave 15): a compact banner and a few hidden write controls. */
+.read-only-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 7px 14px;
+  min-height: 34px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-raised);
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.35;
+}
+.read-only-banner svg { width: 15px; height: 15px; flex: none; color: var(--yellow); }
+.read-only-banner strong { color: inherit; font-weight: 650; }
+.note-pane > .read-only-banner, .file-pane > .read-only-banner { border-radius: 0; }
+
+.mcp-role-note { margin: 0; color: var(--muted); font-size: .85rem; }
+
+.share-role-hint {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: .7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/*
+ * Tasks' board chrome is being reworked in parallel, so read-only roles hide its write controls by
+ * class here instead of in each component. The server refuses these writes anyway (T87).
+ */
+.tasks-app[data-read-only="true"] :is(.tasks-new-button, .task-new-card, .task-add-card, .task-add-column, .task-tab-add, .task-board-actions, .tasks-content .bin-state .primary-button) { display: none !important; }

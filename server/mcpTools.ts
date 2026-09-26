@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { listReadableFolders, ownedNote, readableNote } from "./access";
+import { listReadableFolders, ownedNote, readableNote, readableNotePredicate } from "./access";
 import { config } from "./config";
 import { audit, db, type DocumentRow, type NoteRow } from "./db";
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
@@ -19,6 +19,7 @@ import { calendarTools } from "./calendar/mcpTools";
 import { collectionTools } from "./collections/mcpTools";
 import { teamTools } from "./team/mcpTools";
 import { effectiveMcpScopes, type Role } from "./team/roles";
+import { canWriteContent } from "./team/userRole";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -58,6 +59,9 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
   if (!hasAnyScope(key.scopes, spec.scopes)) {
     return errorResult("SCOPE_REQUIRED", `This API key does not have the ${spec.scopes.join(" or ")} scope`);
   }
+  // Defence in depth (§5.4): effective scopes already drop write scopes for read-only team roles,
+  // and a write tool still re-checks the holder's role before any service runs.
+  if (spec.write && !canWriteContent(key.userId)) return errorResult("READ_ONLY", "Your team role is read-only");
   const buckets: McpLimitBucket[] = ["call"];
   if (spec.write) buckets.push("write");
   if (spec.dailyBucket) buckets.push(spec.dailyBucket);
@@ -79,19 +83,9 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
 const listNotesQuery = db.query(`
   SELECT n.id, v.title, n.current_version, n.updated_at, u.display_name AS owner_name,
          CASE WHEN n.owner_id = $userId THEN 1 ELSE 0 END AS is_owner
-  FROM notes n JOIN users u ON u.id = n.owner_id LEFT JOIN folders f ON f.id = n.folder_id
+  FROM notes n JOIN users u ON u.id = n.owner_id
   JOIN note_versions v ON v.note_id = n.id AND v.version_number = n.current_version
-  WHERE n.deleted_at IS NULL AND n.current_version > 0 AND (
-    n.owner_id = $userId OR (n.sharing_override = 1 AND (
-      n.visibility = 'all_users' OR (n.visibility = 'selected' AND EXISTS (
-        SELECT 1 FROM note_shares s WHERE s.note_id = n.id AND s.user_id = $userId
-      ))
-    )) OR (n.sharing_override = 0 AND (
-      f.visibility = 'all_users' OR (f.visibility = 'selected' AND EXISTS (
-        SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-      ))
-    ))
-  )
+  WHERE n.deleted_at IS NULL AND n.current_version > 0 AND ${readableNotePredicate}
   ORDER BY n.updated_at DESC LIMIT 200
 `);
 

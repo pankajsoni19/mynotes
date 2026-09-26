@@ -120,6 +120,8 @@ describe("GET /api/search drafts and access", () => {
     const folderReader = await createUser("Matrix folder reader");
     const noteReader = await createUser("Matrix note reader");
     const stranger = await createUser("Matrix stranger");
+    const guest = await createUser("Matrix guest");
+    db.query("UPDATE users SET role = 'guest' WHERE id = ?").run(guest.userId);
     const selectedFolder = await createFolder(owner, "Matrix selected");
     const everyoneFolder = await createFolder(owner, "Matrix everyone");
     const privateFolder = await createFolder(owner, "Matrix private");
@@ -144,9 +146,11 @@ describe("GET /api/search drafts and access", () => {
       owner: Object.values(notes).sort(),
       folderReader: [notes.inSelected, notes.inEveryone, notes.overrideAll].sort(),
       noteReader: [notes.inEveryone, notes.overrideAll, notes.overrideSelected].sort(),
-      stranger: [notes.inEveryone, notes.overrideAll].sort()
+      stranger: [notes.inEveryone, notes.overrideAll].sort(),
+      // T84: a guest is outside every all-users audience.
+      guest: [] as string[]
     };
-    for (const [label, session] of Object.entries({ owner, folderReader, noteReader, stranger })) {
+    for (const [label, session] of Object.entries({ owner, folderReader, noteReader, stranger, guest })) {
       const found = await ids(session, word);
       expect(found).toEqual(expected[label as keyof typeof expected]);
       const listed = new Set(await listedIds(session));

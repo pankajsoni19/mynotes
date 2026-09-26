@@ -1,4 +1,6 @@
 import { db } from "../db";
+import { AUDIENCE_ALL_USERS } from "../team/roles";
+import { canWriteContent } from "../team/userRole";
 
 export type CollectionVisibility = "private" | "selected" | "all_users";
 export type ShareRole = "viewer" | "editor";
@@ -28,7 +30,7 @@ export type CollectionRecord = {
  * collections never match. Also OR-ed into readableDocument* for attachments.
  */
 export const readableCollectionPredicate = `(
-  c.deleted_at IS NULL AND (c.owner_id = $userId OR c.visibility = 'all_users'
+  c.deleted_at IS NULL AND (c.owner_id = $userId OR (c.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
     OR (c.visibility = 'selected' AND EXISTS (SELECT 1 FROM collection_members m WHERE m.collection_id = c.id AND m.user_id = $userId)))
 )`;
 
@@ -39,8 +41,14 @@ export function readableCollection(collectionId: string, userId: string) {
   return db.query(`SELECT c.* FROM collections c WHERE c.id = $collectionId AND ${readableCollectionPredicate}`).get({ collectionId, userId }) as CollectionRecord | null;
 }
 
+/**
+ * The caller's role on the collection: min(platform ceiling, item grant) (§2.4). A viewer or guest
+ * shared with as `editor` acts as a `viewer` of the item; owners stay `owner` (their writes are
+ * refused by the write gate and by requireEditable*, not by hiding ownership).
+ */
 export function collectionRole(collection: Pick<CollectionRecord, "owner_id" | "share_role">, userId: string): CollectionRole {
-  return collection.owner_id === userId ? "owner" : collection.share_role;
+  if (collection.owner_id === userId) return "owner";
+  return collection.share_role === "editor" && !canWriteContent(userId) ? "viewer" : collection.share_role;
 }
 
 export type RowRecord = {

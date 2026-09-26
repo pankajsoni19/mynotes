@@ -43,7 +43,8 @@ import { TodayHome } from "./today/TodayHome";
 import { BinApp } from "./bin/BinApp";
 import { TeamApp } from "./team/TeamApp";
 import { TeamNavContext } from "./AppShell";
-import { canManageTeam, type Role } from "./team/teamRoles";
+import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
+import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
 import { FilesApp } from "./files/FilesApp";
 import { TasksApp } from "./tasks/TasksApp";
 import { CollectionsApp } from "./collections/CollectionsApp";
@@ -62,7 +63,7 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
-import { DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
+import { canCreateMcpKeys, DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
 import { McpKeyScopeChips } from "./McpKeyScopes";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, locationUrl, parseRoute, routeFromLocation, type Route } from "./router";
@@ -269,7 +270,9 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
     <div className="mcp-card">
       <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
-      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
+      {!canCreateMcpKeys(role) && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
+      {role === "viewer" && !newToken && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
+      {!newToken && canCreateMcpKeys(role) && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
         const isLocked = locked.includes(permission.scope);
         return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
       })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
@@ -473,7 +476,7 @@ function lineDiff(previous: string, current: string) {
   return output;
 }
 
-function HistoryPanel({ note, onClose, onRestored }: { note: NoteDetail; onClose: () => void; onRestored: () => void }) {
+function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: NoteDetail; canRestore?: boolean; onClose: () => void; onRestored: () => void }) {
   const [versions, setVersions] = useState<Version[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [currentContent, setCurrentContent] = useState("");
@@ -526,7 +529,7 @@ function HistoryPanel({ note, onClose, onRestored }: { note: NoteDetail; onClose
       {selected !== null && <>
         <div className="diff-heading"><span>Changes in v{selected}</span><span><i className="diff-add" /> Added <i className="diff-remove" /> Removed</span></div>
         <pre className="diff-view">{diff.map((line, index) => <span key={`${index}-${line.kind}`} className={line.kind}>{line.kind === "add" ? "+ " : line.kind === "remove" ? "− " : "  "}{line.text || " "}</span>)}</pre>
-        {note.isOwner && <button className="secondary-button restore-button" disabled={busy} onClick={restore}>Restore as draft</button>}
+        {note.isOwner && canRestore && <button className="secondary-button restore-button" disabled={busy} onClick={restore}>Restore as draft</button>}
       </>}
     </aside>
   );
@@ -564,10 +567,10 @@ function SharePanel({ note, onClose, onChanged }: { note: NoteDetail; onClose: (
         <label><input type="radio" checked={visibility === "inherit"} onChange={() => setVisibility("inherit")} /><span><FolderIcon />Use folder access<small>Inherit this note’s folder sharing</small></span></label>
         <label><input type="radio" checked={visibility === "private"} onChange={() => setVisibility("private")} /><span><Lock />Private<small>Only you can open this note</small></span></label>
         <label><input type="radio" checked={visibility === "selected"} onChange={() => setVisibility("selected")} /><span><Users />Selected people<small>Choose registered users below</small></span></label>
-        <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>All signed-in users, never public</small></span></label>
+        <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>Everyone signed in except guests; never public</small></span></label>
       </div>
       {visibility === "selected" && <div className="user-picker">
-        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}{user.email && <small>{user.email}</small>}</span></label>)}
+        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} />{user.email && <small>{user.email}</small>}</span></label>)}
         {!users.length && <p className="empty-copy">Create another account before sharing with selected people.</p>}
       </div>}
       <button className="primary-button share-save" onClick={save} disabled={busy || (visibility === "selected" && !selected.length)}>Save access</button>
@@ -609,7 +612,7 @@ function FolderSharePanel({ folder, onClose, onChanged }: { folder: Folder; onCl
         <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>All signed-in allowlisted users</small></span></label>
       </div>
       {visibility === "selected" && <div className="user-picker">
-        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}</span></label>)}
+        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} /></span></label>)}
         {!users.length && <p className="empty-copy">Another signed-in user is needed before sharing this folder.</p>}
       </div>}
       <button className="primary-button share-save" onClick={save} disabled={busy || (visibility === "selected" && !selected.length)}>Save folder access</button>
@@ -1621,7 +1624,7 @@ export function App() {
   const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
   const teamNav = { role: session.user.role, openTeam: () => { void openApp("team"); }, onTeam: shownApp === "team" };
 
-  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}>
+  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}>
     {shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
@@ -1633,10 +1636,13 @@ export function App() {
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}
-  </TeamNavContext.Provider></NotificationsContext.Provider></ModulesContext.Provider>;
+  </TeamNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
 
+  // Viewers and guests read notes; create, edit, share, and delete controls are hidden (Wave 15).
+  const canWrite = canWriteContent(session.user.role);
   return (
     <ModulesContext.Provider value={disabledModules}>
+    <RoleContext.Provider value={session.user.role}>
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
         <header className="sidebar-header">
@@ -1647,13 +1653,13 @@ export function App() {
           <button className="nav-home" onClick={() => { void openHome(); }} title="Back to Home"><House /><span>Home</span></button>
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
-          <div className="nav-label"><span>Folders</span><button onClick={createFolder} aria-label="New folder"><FolderPlus /></button></div>
+          <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={createFolder} aria-label="New folder"><FolderPlus /></button>}</div>
           {folders.map((folder) => <div className="folder-entry" key={folder.id}>
             <button
               className={`folder-link${selectedFolder === folder.id ? " active" : ""}${dropFolderId === folder.id ? " drop-target" : ""}`}
               onClick={() => { void selectFolder(folder.id); }}
-              onDragEnter={(event) => { if (draggingNoteId && folder.is_owner === 1) { event.preventDefault(); setDropFolderId(folder.id); } }}
-              onDragOver={(event) => { if (draggingNoteId && folder.is_owner === 1) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }}
+              onDragEnter={(event) => { if (draggingNoteId && folder.is_owner === 1 && canWrite) { event.preventDefault(); setDropFolderId(folder.id); } }}
+              onDragOver={(event) => { if (draggingNoteId && folder.is_owner === 1 && canWrite) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }}
               onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === folder.id ? null : current); }}
               onDrop={(event) => {
                 event.preventDefault();
@@ -1666,7 +1672,7 @@ export function App() {
               <span className="folder-copy">{folder.name}{folder.is_owner !== 1 && <small>{folder.owner_name}</small>}</span>
               <b>{notes.filter((item) => item.folder_id === folder.id).length}</b>
             </button>
-            {folder.is_owner === 1 && <button className="folder-share-button" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`}><Share2 /></button>}
+            {folder.is_owner === 1 && canWrite && <button className="folder-share-button" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`}><Share2 /></button>}
           </div>)}
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
@@ -1692,7 +1698,7 @@ export function App() {
                 {noteSortOptions.map((option) => <button key={option.value} className={noteSort === option.value ? "active" : ""} onClick={() => { setNoteSort(option.value); setSortOpen(false); }} role="menuitem"><span>{option.label}</span>{noteSort === option.value && <Check />}</button>)}
               </div>}
             </div>
-            <button className="icon-button new-note-button" onClick={createNote} aria-label="New note"><FilePlus2 /></button>
+            {canWrite && <button className="icon-button new-note-button" onClick={createNote} aria-label="New note"><FilePlus2 /></button>}
           </div>
           {searchEnabled && <div className="search-box">
             <Search aria-hidden="true" />
@@ -1722,6 +1728,7 @@ export function App() {
           </div>}
           <p className="sr-only" aria-live="polite" aria-atomic="true">{showingSearchResults ? (search.results.length ? `${search.results.length}${search.truncated ? " or more" : ""} ${search.results.length === 1 && !search.truncated ? "result" : "results"}` : "No results") : ""}</p>
         </header>
+        <ReadOnlyBanner />
         <div className="note-list">
           {search.status === "error" && <p className="search-error" role="alert">{search.error}</p>}
           {showingSearchResults && <SearchResults
@@ -1738,9 +1745,9 @@ export function App() {
           {!showingSearchResults && visibleNotes.map((item) => <article
             key={item.id}
             className={`note-card${selectedNoteId === item.id ? " selected" : ""}${draggingNoteId === item.id ? " dragging" : ""}`}
-            draggable={item.is_owner === 1}
+            draggable={item.is_owner === 1 && canWrite}
             onDragStart={(event) => {
-              if (item.is_owner !== 1) return;
+              if (item.is_owner !== 1 || !canWrite) return;
               setDraggingNoteId(item.id);
               event.dataTransfer.effectAllowed = "move";
               event.dataTransfer.setData("application/x-mynotes-note", item.id);
@@ -1753,9 +1760,9 @@ export function App() {
               <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? (item.draft_mcp_key_name ? <em className="mcp-draft-badge"><Bot aria-hidden="true" />{mcpDraftBadge(item.draft_mcp_key_name)}</em> : <em>Draft</em>) : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
               {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
             </button>
-            {item.is_owner === 1 && <button className="note-delete-button" disabled={editorLocked} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
+            {item.is_owner === 1 && canWrite && <button className="note-delete-button" disabled={editorLocked} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
           </article>)}
-          {!showingSearchResults && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : "Create a note and start writing."}</p>{!query && selectedFolder !== "shared" && <button onClick={createNote}>New note</button>}</div>}
+          {!showingSearchResults && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : (canWrite ? "Create a note and start writing." : "Notes shared with you appear here.")}</p>{!query && selectedFolder !== "shared" && canWrite && <button onClick={createNote}>New note</button>}</div>}
         </div>
       </section>
 
@@ -1768,27 +1775,27 @@ export function App() {
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               <button className="icon-button" onClick={downloadPdf} aria-label="Download as PDF" title="Download as PDF"><FileDown /></button>
-              {note.isOwner && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
-              {note.isOwner && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={() => { void discard(); }}>Discard</button>}
-              {hasPublishableDelta && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
+              {note.isOwner && canWrite && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
+              {note.isOwner && canWrite && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={() => { void discard(); }}>Discard</button>}
+              {hasPublishableDelta && canWrite && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
               <button className="icon-button mobile-more" disabled={editorLocked} onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
             </div>
             {mobileActions && <div className="mobile-actions-menu">
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
               <button onClick={() => { setMobileActions(false); downloadPdf(); }}><FileDown />Download as PDF</button>
-              {note.isOwner && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
-              {note.isOwner && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(); }}><X />Discard draft</button>}
-              {hasPublishableDelta && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
+              {note.isOwner && canWrite && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
+              {note.isOwner && canWrite && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(); }}><X />Discard draft</button>}
+              {hasPublishableDelta && canWrite && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
             </div>}
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} onNotice={flash} />
+            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} onNotice={flash} />
           </article>
         </>}
       </section>
 
-      {panel === "history" && note && <HistoryPanel note={note} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
+      {panel === "history" && note && <HistoryPanel note={note} canRestore={canWrite} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
       {panel === "share" && note && <SharePanel note={note} onClose={() => setPanel(null)} onChanged={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Sharing updated"); }} />}
       {sharingFolder && <FolderSharePanel folder={sharingFolder} onClose={() => setSharingFolder(null)} onChanged={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder sharing updated"); }} />}
       {settingsDialog}
@@ -1802,6 +1809,7 @@ export function App() {
         <button className={mobilePanel === "editor" ? "active" : ""} disabled={!note} onClick={() => showMobilePanel("editor")}><Sparkles />Editor</button>
       </nav>
     </main>
+    </RoleContext.Provider>
     </ModulesContext.Provider>
   );
 }

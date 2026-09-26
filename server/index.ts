@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
-import { listReadableFolders, ownedNote, readableNote } from "./access";
+import { listReadableFolders, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
@@ -29,7 +29,8 @@ import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes }
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { registerTeamRoutes } from "./team/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
-import { mcpScopesForRole } from "./team/roles";
+import { can, mcpScopesForRole } from "./team/roles";
+import { ROLE_READ_ONLY_BODY, roleWriteGate } from "./team/writeGate";
 import {
   draftSchema,
   folderSharingSchema,
@@ -204,7 +205,7 @@ app.post("/api/auth/register", async (c) => {
       // while no active admin exists (an upgrade where every account was disabled, so migration 017
       // had nobody to promote). The check and the insert share this transaction, so two concurrent
       // registrations cannot both become admin.
-      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : "member";
+      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : config.signupRole;
       const timestamp = now();
       db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)")
         .run(id, body.email, body.displayName, passwordHash, timestamp, role);
@@ -300,12 +301,19 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
+// Viewers and guests read; every other write is refused unless allowlisted (D75, T87).
+app.use("/api/*", roleWriteGate);
+
 app.get("/api/mcp/keys", (c) => c.json({ keys: listMcpApiKeys(c.get("user").id) }));
 
 app.post("/api/mcp/keys", async (c) => {
   const body = await parseJson(c.req.raw, mcpApiKeySchema);
   const userId = c.get("user").id;
-  // Checked before the password so no code is consumed; team:read is admin-only (T81).
+  // Checked before the password so no code is consumed: guests hold no keys (O6), viewers read
+  // scopes only, and team:read is admin-only (T81).
+  if (!can(c.get("user").role, "mcp.key.create")) {
+    return c.json({ error: "Your team role cannot create API keys", code: "ROLE_READ_ONLY" }, 403);
+  }
   const allowedScopes = mcpScopesForRole(c.get("user").role);
   if (body.scopes?.some((scope) => !allowedScopes.includes(scope))) {
     return c.json({ error: "Your team role cannot create a key with these permissions", code: "SCOPE_NOT_ALLOWED" }, 403);
@@ -445,9 +453,12 @@ app.delete("/api/auth/totp", async (c) => {
 
 app.get("/api/users", (c) => {
   const currentUser = c.get("user");
-  const users = db.query("SELECT id, display_name FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
-    .all(currentUser.id) as Array<{ id: string; display_name: string }>;
-  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name })) });
+  // The share picker: read-only roles cannot share, so they get no directory either (§2.2).
+  if (!can(currentUser.role, "sharing.write")) return c.json(ROLE_READ_ONLY_BODY, 403);
+  const users = db.query("SELECT id, display_name, role FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
+    .all(currentUser.id) as Array<{ id: string; display_name: string; role: UserRow["role"] }>;
+  // `role` lets the picker hint that a viewer or guest will only read (§2.2 notes).
+  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role })) });
 });
 
 app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user").id) }));
@@ -530,11 +541,7 @@ app.get("/api/notes", (c) => {
   if (folderId) uuid.parse(folderId);
   const rows = db.query(`
     SELECT n.id, n.owner_id,
-           CASE WHEN n.owner_id = $userId OR (n.sharing_override = 0 AND (
-             f.visibility = 'all_users' OR EXISTS (
-               SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-             )
-           )) THEN n.folder_id ELSE NULL END AS folder_id,
+           ${visibleNoteFolderIdExpression} AS folder_id,
            n.title,
            CASE WHEN n.sharing_override = 0 THEN COALESCE(f.visibility, 'private') ELSE n.visibility END AS visibility,
            n.current_version,
@@ -543,17 +550,7 @@ app.get("/api/notes", (c) => {
            CASE WHEN n.owner_id = $userId AND n.draft_revision IS NOT NULL THEN k.name ELSE NULL END AS draft_mcp_key_name
     FROM notes n JOIN users u ON u.id = n.owner_id LEFT JOIN folders f ON f.id = n.folder_id
     LEFT JOIN mcp_api_keys k ON k.id = n.draft_mcp_key_id
-    WHERE n.deleted_at IS NULL AND (
-      n.owner_id = $userId OR (n.sharing_override = 1 AND (
-        n.visibility = 'all_users' OR (n.visibility = 'selected' AND EXISTS (
-          SELECT 1 FROM note_shares s WHERE s.note_id = n.id AND s.user_id = $userId
-        ))
-      )) OR (n.sharing_override = 0 AND (
-        f.visibility = 'all_users' OR (f.visibility = 'selected' AND EXISTS (
-          SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-        ))
-      ))
-    ) AND ($folderId IS NULL OR n.folder_id = $folderId)
+    WHERE n.deleted_at IS NULL AND ${readableNotePredicate} AND ($folderId IS NULL OR n.folder_id = $folderId)
     ORDER BY n.updated_at DESC LIMIT 500
   `).all({ userId, folderId: folderId ?? null });
   return c.json({ notes: rows });

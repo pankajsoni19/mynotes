@@ -37,6 +37,9 @@ process.env.PORT = String(port);
 process.env.NODE_ENV = "test";
 process.env.ALLOW_REGISTRATION = "true";
 process.env.TOTP_POLICY = "optional";
+// Most tests register accounts that then write; the guest default (D80) is covered in config.test.ts
+// and tests/teamBootstrap.test.ts.
+process.env.SIGNUP_ROLE = "member";
 process.env.TOTP_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.ALLOWED_EMAILS = allowedTestEmails.join(",");
 // Small limits keep the upload tests fast. Bun's maxRequestBodySize becomes

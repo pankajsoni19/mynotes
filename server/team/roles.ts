@@ -5,7 +5,7 @@
  * A role is a ceiling on what per-item sharing already grants; it never grants content access by
  * itself. Only admins manage the team, and admins never bypass item ACLs (D73).
  */
-import { MCP_SCOPES, type McpScope } from "../mcpScopes";
+import { IMPLIED_READ_SCOPE, MCP_SCOPES, type McpScope } from "../mcpScopes";
 
 export const ROLES = ["admin", "member", "viewer", "guest"] as const;
 export type Role = typeof ROLES[number];
@@ -13,11 +13,10 @@ export type Role = typeof ROLES[number];
 export const isRole = (value: unknown): value is Role => typeof value === "string" && (ROLES as readonly string[]).includes(value);
 
 /**
- * Roles an admin can assign in this release. Viewer and guest exist in the schema but are only
- * enforced from Wave 15 (Team B), so the API refuses them with 400 ROLE_NOT_ENABLED until then.
+ * Roles an admin can assign: all four since Wave 15 enforces viewer and guest (the write gate, the
+ * guest audience exclusion, and the MCP scope filter).
  */
-export const SELECTABLE_ROLES: readonly Role[] = ["admin", "member"];
-export const isSelectableRole = (role: Role) => SELECTABLE_ROLES.includes(role);
+export const SELECTABLE_ROLES: readonly Role[] = ROLES;
 
 export type Capability =
   /** Anything that creates or changes owned or shared content. */
@@ -34,7 +33,7 @@ export type Capability =
 const CAPABILITIES: Record<Role, readonly Capability[]> = {
   admin: ["content.write", "sharing.write", "files.upload", "feeds.create", "mcp.key.create", "team.read", "team.manage"],
   member: ["content.write", "sharing.write", "files.upload", "feeds.create", "mcp.key.create", "team.read"],
-  // Wave 15 enforces the read-only roles; the matrix is recorded here so there is one source.
+  // Read-only roles (Wave 15): the write gate, the MCP scope filter, and the services enforce this.
   viewer: ["mcp.key.create", "team.read"],
   guest: []
 };
@@ -45,15 +44,22 @@ export const can = (role: Role, capability: Capability) => CAPABILITIES[role].in
 /** MCP scopes only admins may hold (D79: read only, no emails). */
 export const ADMIN_ONLY_SCOPES: readonly McpScope[] = ["team:read"];
 
+/** Read scopes: every scope that is not a write scope (none of them is implied by another). */
+export const MCP_READ_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((scope) => IMPLIED_READ_SCOPE[scope] === undefined);
+
 /**
- * The MCP scopes a key of a user with `role` may use (§5.2.4). Effective scopes are the stored
- * scopes intersected with these, computed on every request and tool call, so a demoted admin's key
- * loses `team:read` on its next call. This wave applies only the admin-only restriction; the viewer
- * (read only) and guest (none) filters arrive with Wave 15.
+ * The MCP scopes a key of a user with `role` may use (§5.2.4, §7). Effective scopes are the stored
+ * scopes intersected with these, computed on every request and tool call, so a demoted holder's key
+ * loses what the new role cannot use on its next call (T81): admins everything, members everything
+ * but the admin-only scopes, viewers read scopes only, guests nothing (O6).
  */
 export function mcpScopesForRole(role: Role): McpScope[] {
-  if (role === "admin") return [...MCP_SCOPES];
-  return MCP_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
+  switch (role) {
+    case "admin": return [...MCP_SCOPES];
+    case "member": return MCP_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
+    case "viewer": return MCP_READ_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
+    case "guest": return [];
+  }
 }
 
 /** Stored scopes narrowed to what the holder's current role allows. */
@@ -61,6 +67,20 @@ export function effectiveMcpScopes(stored: readonly McpScope[], role: Role): Mcp
   const allowed = mcpScopesForRole(role);
   return stored.filter((scope) => allowed.includes(scope));
 }
+
+/**
+ * True when the user `userExpression` names may be part of an `all_users` audience (D72, T84: every
+ * role except guest). A primary-key lookup; SQLite evaluates the uncorrelated form once per
+ * statement. An unknown user yields NULL, which never matches (fail closed).
+ */
+export const audienceAllUsersFor = (userExpression: string) =>
+  `((SELECT u_aud.role FROM users u_aud WHERE u_aud.id = ${userExpression}) <> 'guest')`;
+
+/**
+ * The fragment every `x.visibility = 'all_users'` in server SQL must be ANDed with, for the caller
+ * bound as `$userId` (§5.3). tests/audienceGuard.test.ts fails on any bare `all_users` comparison.
+ */
+export const AUDIENCE_ALL_USERS = audienceAllUsersFor("$userId");
 
 /** Whether a change from `from` to `to` grants or removes admin, which needs re-authentication (§5.5). */
 export const roleChangeNeedsReauth = (from: Role, to: Role) => from !== to && (from === "admin" || to === "admin");

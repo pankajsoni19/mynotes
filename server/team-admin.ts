@@ -5,11 +5,11 @@
  * `team_events` with `via = 'cli'` and no actor, and audited. The last-admin rule still applies.
  *
  *   bun server/team-admin.ts list
- *   bun server/team-admin.ts set-role user@example.com admin|member
+ *   bun server/team-admin.ts set-role user@example.com admin|member|viewer|guest
  *   bun server/team-admin.ts unblock user@example.com
  */
 import { db } from "./db";
-import { isRole, isSelectableRole, SELECTABLE_ROLES } from "./team/roles";
+import { isRole, SELECTABLE_ROLES } from "./team/roles";
 import { setRole, TeamError, unblockUser } from "./team/service";
 
 const usage = `Usage:
@@ -54,7 +54,7 @@ if (command === "list") {
   if (args.length !== 2) fail(usage, 2);
   const user = findUser(args[0]);
   const role = args[1]!.trim().toLowerCase();
-  if (!isRole(role) || !isSelectableRole(role)) fail(`Choose one of: ${SELECTABLE_ROLES.join(", ")}.`, 2);
+  if (!isRole(role)) fail(`Choose one of: ${SELECTABLE_ROLES.join(", ")}.`, 2);
   if (!isRole(user.role)) fail("That account has an unknown role.");
   if (user.role === role) {
     console.log(`That account is already ${role}.`);

@@ -74,3 +74,28 @@ describe("push configuration", () => {
     }
   });
 });
+
+describe("sign-up role configuration (D80)", () => {
+  function loadSignupRole(env: Record<string, string>) {
+    const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify(config.signupRole));`], {
+      cwd: tmpdir(),
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), ...env },
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    return { ok: result.exitCode === 0, stdout: result.stdout.toString().trim(), stderr: result.stderr.toString() };
+  }
+
+  test("defaults to guest and accepts guest, viewer, or member", () => {
+    expect(JSON.parse(loadSignupRole({}).stdout)).toBe("guest");
+    for (const role of ["guest", "viewer", "member"]) expect(JSON.parse(loadSignupRole({ SIGNUP_ROLE: role }).stdout)).toBe(role);
+  });
+
+  test("never admin, and nothing unknown", () => {
+    for (const value of ["admin", "Admin", "owner"]) {
+      const result = loadSignupRole({ SIGNUP_ROLE: value });
+      expect(result.ok).toBe(false);
+      expect(result.stderr).toContain("SIGNUP_ROLE must be guest, viewer, or member");
+    }
+  });
+});

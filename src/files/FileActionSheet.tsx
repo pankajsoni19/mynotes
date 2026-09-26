@@ -4,6 +4,7 @@ import type { DocumentSummary } from "../types";
 import { canManage } from "./fileActions";
 import { contentUrl } from "./filesApi";
 import { trapTabKey } from "./Dialog";
+import { useRole } from "../team/roleAccess";
 
 export type FileSheetAction = "rename" | "move" | "share" | "delete";
 
@@ -17,7 +18,7 @@ type FileActionSheetProps = {
 // entry: Escape, the scrim, or browser Back close it.
 export function FileActionSheet({ document, onAction, onClose }: FileActionSheetProps) {
   const titleId = useId();
-  const owner = canManage(document);
+  const owner = useRole().canWrite && canManage(document);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
