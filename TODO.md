@@ -168,6 +168,7 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 
 ### Team module — plan of record: `docs/plan/research/2026-09-26-team-module.md` (§11 director review)
 - [ ] Wave 14 (Team A): roles + admin + block/unblock, `/team` UI, `team:read` MCP scope, CLI `server/team-admin.ts`, migration `017`. Runs in parallel with Wave 13.
+  - Implemented on branch `worktree-agent-a29e87677383eea66` (migration 017, `server/team/`, `src/team/`, `src/ui/Select.tsx`, CLI, docs; headless Chrome QA at 390 px and desktop). Pending independent review, merge after Wave 13's 015/016, and the release note for O8 (oldest account becomes admin; CLI fix). Settings → Modules (D92) Team row waits for Wave 13's Modules pane.
 - [ ] Wave 15 (Team B): viewer and guest enforcement (write gate, `AUDIENCE_ALL_USERS`, MCP role filter, `SIGNUP_ROLE`, role-aware chrome).
 - [ ] Wave 16 (Team C, unscheduled): invites, migration `018`.
 
