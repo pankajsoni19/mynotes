@@ -10,6 +10,7 @@ import { CollectionIcon } from "./icons";
 import { CollectionSharePanel } from "./CollectionSharePanel";
 import { NewCollectionDialog } from "./NewCollectionDialog";
 import { collectionBinMessage, roleLabel, rowCountLabel, validateCollectionName } from "./values";
+import { useRole } from "../team/roleAccess";
 
 type CollectionListProps = {
   userId?: string;
@@ -31,6 +32,7 @@ type CollectionListRowProps = {
 
 /** One collection in the list. Owners get Rename, Share, and Move to Bin, as on the Tasks board list. */
 export function CollectionListRow({ collection, onOpen, onAction }: CollectionListRowProps) {
+  const { canWrite } = useRole();
   return <li className="collection-row">
     <button className="collection-open" onClick={() => onOpen(collection)}>
       <span className="collection-icon"><CollectionIcon name={collection.icon} /></span>
@@ -45,7 +47,7 @@ export function CollectionListRow({ collection, onOpen, onAction }: CollectionLi
         </span>
       </span>
     </button>
-    {collection.is_owner === 1 && <span className="collection-list-actions">
+    {collection.is_owner === 1 && canWrite && <span className="collection-list-actions">
       <button className="icon-button" onClick={() => onAction("rename", collection)} aria-haspopup="dialog" aria-label={`Rename ${collection.name}`} title="Rename"><Pencil /></button>
       <button className="icon-button" onClick={() => onAction("share", collection)} aria-haspopup="dialog" aria-label={`Share ${collection.name}`} title="Share"><Share2 /></button>
       <button className="icon-button" onClick={() => onAction("delete", collection)} aria-haspopup="dialog" aria-label={`Delete ${collection.name}`} title="Move to the Bin"><Trash2 /></button>
@@ -61,6 +63,7 @@ function Segments({ segments, fallback = "" }: { segments: Segment[]; fallback?:
 
 export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreatedForImport }: CollectionListProps) {
   const [collections, setCollections] = useState<CollectionSummary[] | null>(null);
+  const { canWrite } = useRole();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<ListDialog | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -141,7 +144,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
         <h1 id="collections-title">Collections</h1>
         <p>Track anything in typed tables: inventories, subscriptions, recipes, contacts. Share them view-only or let people edit rows.</p>
       </div>
-      <button className="primary-button collections-new-button" onClick={() => setDialog({ kind: "new" })} aria-haspopup="dialog"><Plus />New collection</button>
+      {canWrite && <button className="primary-button collections-new-button" onClick={() => setDialog({ kind: "new" })} aria-haspopup="dialog"><Plus />New collection</button>}
     </div>
 
     {all.length > 0 && <div className="collections-search">
@@ -175,7 +178,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
       <span className="bin-state-icon"><Table2 /></span>
       <h2>No collections yet</h2>
       <p>Start from a template such as Home inventory or Recipes, or from a blank table.</p>
-      <button className="primary-button" onClick={() => setDialog({ kind: "new" })}><Plus />New collection</button>
+      {canWrite && <button className="primary-button" onClick={() => setDialog({ kind: "new" })}><Plus />New collection</button>}
     </div>}
     {owned.length > 0 && <><h2 className="collections-section-label">Your collections</h2><ul className="collection-list" aria-label="Your collections">{owned.map(row)}</ul></>}
     {shared.length > 0 && <><h2 className="collections-section-label">Shared with you</h2><ul className="collection-list" aria-label="Collections shared with you">{shared.map(row)}</ul></>}

@@ -11,6 +11,7 @@ import { useCollectionsDialogGuard } from "./dialogLayers";
 import "../bin/bin.css";
 import "../files/files.css";
 import "./collections.css";
+import { ReadOnlyBanner } from "../team/roleAccess";
 
 export type CollectionsNavigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -104,6 +105,7 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
       <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Collections</strong></span></span>
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
+    <ReadOnlyBanner />
     {route.collectionId
       ? <CollectionView
         key={route.collectionId}

@@ -6,6 +6,8 @@ import type { User, Visibility } from "../types";
 import { getCalendarSharing, saveCalendarSharing, type CalendarColor, type CalendarSummary, type ShareRole } from "./calendarApi";
 import { CALENDAR_COLORS } from "./calendarFormat";
 import { Select } from "../ui/Select";
+import { ShareRoleHint } from "../team/roleAccess";
+import { useRole } from "../team/roleAccess";
 
 const colourOptions = CALENDAR_COLORS.map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1), swatch: value }));
 
@@ -31,6 +33,8 @@ const roleLabel = (calendar: CalendarSummary) => calendar.role === "owner"
 
 /** Show or hide calendars, and (for owners) rename, recolour, share, or bin them. Pushes no history entry. */
 export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, onUpdate, onShare, onFeeds, onDelete, onClose, showTasks, onToggleTasks }: CalendarsDialogProps) {
+  // Read-only Team roles manage no calendars and create no feed links (O5).
+  const { canWrite } = useRole();
   const [name, setName] = useState("");
   const [color, setColor] = useState<CalendarColor>("green");
   const [editing, setEditing] = useState<string | null>(null);
@@ -78,7 +82,7 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
               : <strong>{calendar.name}</strong>}
             <small>{roleLabel(calendar)}</small>
           </span>
-          {calendar.is_owner === 1 && <span className="calendar-list-actions">
+          {calendar.is_owner === 1 && canWrite && <span className="calendar-list-actions">
             <Select variant="compact" swatchOnly value={calendar.color} label={`Colour of ${calendar.name}`} options={colourOptions}
               onChange={(next) => { void onUpdate(calendar, { color: next }).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not update the calendar")); }} />
             <button className="icon-button" onClick={() => { setDraft(calendar.name); setEditing(calendar.id); }} aria-label={`Rename ${calendar.name}`}><Pencil /></button>
@@ -86,7 +90,7 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
             <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>
             <button className="icon-button danger" onClick={() => onDelete(calendar)} aria-label={`Move ${calendar.name} to the Bin`}><Trash2 /></button>
           </span>}
-          {calendar.is_owner !== 1 && <span className="calendar-list-actions">
+          {calendar.is_owner !== 1 && canWrite && <span className="calendar-list-actions">
             <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>
           </span>}
         </li>;
@@ -99,7 +103,7 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
         <span className="calendar-list-copy"><strong>Tasks due</strong><small>Cards with a due date on boards you can open</small></span>
       </li>
     </ul>
-    {owned.length < 20 && <form className="calendar-new" onSubmit={(event) => { event.preventDefault(); void create(); }}>
+    {owned.length < 20 && canWrite && <form className="calendar-new" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <input value={name} maxLength={80} placeholder="New calendar" aria-label="New calendar name" onChange={(event) => setName(event.target.value)} />
       <Select variant="compact" value={color} label="Colour" options={colourOptions} onChange={setColor} />
       <button className="primary-button" type="submit" disabled={busy}><Plus />Add</button>
@@ -167,7 +171,7 @@ export function CalendarSharePanel({ calendar, onClose, onSaved }: CalendarShare
         <label><input type="radio" name="calendar-role" checked={shareRole === "editor"} onChange={() => setShareRole("editor")} /><span><Pencil />Can edit events<small>Add, change, and remove events; only you manage the calendar</small></span></label>
       </div>}
       {visibility === "selected" && <div className="user-picker" role="group" aria-label="People">
-        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}</span></label>)}
+        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} /></span></label>)}
         {!users.length && <p className="empty-copy">Create another account before sharing with selected people.</p>}
       </div>}
       {error && <p className="file-dialog-error file-share-error" role="alert">{error}</p>}

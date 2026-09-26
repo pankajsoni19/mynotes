@@ -5,6 +5,7 @@ import type { User } from "../types";
 import { trapTabKey } from "../files/Dialog";
 import { pickerDetail } from "./taskActions";
 import { getBoardSharing, saveBoardSharing, type BoardSummary, type BoardVisibility } from "./tasksApi";
+import { ShareRoleHint } from "../team/roleAccess";
 
 type BoardSharePanelProps = {
   board: BoardSummary;
@@ -67,7 +68,7 @@ export function BoardSharePanel({ board, onClose, onChanged }: BoardSharePanelPr
         {option("all_users", Share2, "Everyone here", "All signed-in users, never public")}
       </div>
       {visibility === "selected" && <div className="user-picker" role="group" aria-label="People">
-        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}{pickerDetail(user, users) && <small>{pickerDetail(user, users)}</small>}</span></label>)}
+        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} />{pickerDetail(user, users) && <small>{pickerDetail(user, users)}</small>}</span></label>)}
         {!users.length && <p className="empty-copy">Create another account before sharing with selected people.</p>}
       </div>}
       {error && <p className="file-dialog-error file-share-error" role="alert">{error}</p>}

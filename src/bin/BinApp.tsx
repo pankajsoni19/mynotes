@@ -21,6 +21,7 @@ import {
   type BinFilter
 } from "./binFormat";
 import "./bin.css";
+import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 
 type BinAppProps = {
   displayName: string;
@@ -51,6 +52,8 @@ const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payl
   : undefined;
 
 export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRestored }: BinAppProps) {
+  // O3: viewers and guests see their Bin but cannot restore or delete forever; items age out.
+  const { canWrite } = useRole();
   const [items, setItems] = useState<BinItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<BinFilter>("all");
@@ -201,6 +204,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
       <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Bin</strong></span></span>
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
+    <ReadOnlyBanner />
 
     <section className="bin-content" aria-labelledby="bin-title">
       <div className="bin-intro">
@@ -209,7 +213,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
           <h1 id="bin-title">Bin</h1>
           <p>Deleted notes, files, cards, boards, collections, rows, calendars, and events stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
         </div>
-        <button className="bin-empty-button" onClick={() => { void emptyAll(); }} disabled={!all.length || busy}><Trash2 />{emptying ? "Emptying…" : "Empty Bin"}</button>
+        {canWrite && <button className="bin-empty-button" onClick={() => { void emptyAll(); }} disabled={!all.length || busy}><Trash2 />{emptying ? "Emptying…" : "Empty Bin"}</button>}
       </div>
 
       <div className="bin-filters" role="group" aria-label="Show">
@@ -259,11 +263,11 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
                 {item.type === "document" && item.size_bytes !== null && <span>{formatBytes(item.size_bytes)}</span>}
               </span>
             </span>
-            <span className="bin-row-actions">
+            {canWrite && <span className="bin-row-actions">
               <button className="bin-action" onClick={() => { void restore(item); }} disabled={disabled} aria-label={`Restore ${label}`}><ArchiveRestore />Restore</button>
               {canPurge && <button className="bin-action danger" onClick={() => { void deleteForever(item); }} disabled={disabled} aria-label={`Delete ${label} forever`}><Trash2 />Delete forever</button>}
-            </span>
-            <button className="icon-button bin-more" onClick={(event) => openSheet(item, event.currentTarget)} disabled={disabled} aria-haspopup="dialog" aria-label={`Actions for ${label}`}><Ellipsis /></button>
+            </span>}
+            {canWrite && <button className="icon-button bin-more" onClick={(event) => openSheet(item, event.currentTarget)} disabled={disabled} aria-haspopup="dialog" aria-label={`Actions for ${label}`}><Ellipsis /></button>}
           </li>;
         })}
       </ul>}

@@ -40,6 +40,7 @@ import { MonthView } from "./MonthView";
 import "../bin/bin.css";
 import "../files/files.css";
 import "./calendar.css";
+import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 
 export type CalendarNavigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -107,6 +108,7 @@ function writeHidden(userId: string, hidden: Set<string>) {
  * are closed by Back through the dialog guard (D69).
  */
 export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut, onOpenNote }: CalendarAppProps) {
+  const { canWrite } = useRole();
   const [route, setRoute] = useState<CalendarRoute>(currentCalendarRoute);
   const routeRef = useRef(route);
   routeRef.current = route;
@@ -182,8 +184,9 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   }
 
   const visibleIds = calendars && hidden.size ? calendars.filter((calendar) => !hidden.has(calendar.id)).map((calendar) => calendar.id) : null;
-  const writable = (calendars ?? []).filter((calendar) => calendar.role !== "viewer" && !hidden.has(calendar.id));
-  const writableAll = (calendars ?? []).filter((calendar) => calendar.role !== "viewer");
+  // A read-only Team role writes no events, even on calendars it owns (§2.4).
+  const writable = canWrite ? (calendars ?? []).filter((calendar) => calendar.role !== "viewer" && !hidden.has(calendar.id)) : [];
+  const writableAll = canWrite ? (calendars ?? []).filter((calendar) => calendar.role !== "viewer") : [];
 
   // ---- dialogs ---------------------------------------------------------------------------------
 
@@ -424,7 +427,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       renderReminders={(data) => <EventReminders eventId={data.event.id} allDay={data.event.all_day} reloadKey={reloadKey}
         onAdd={(existing) => setReminderPicker({ eventId: data.event.id, allDay: data.event.all_day, existing })}
         onRemove={(reminder) => { void dropReminder(reminder, data.event.all_day); }} />}
-      renderLinks={(data) => <EventLinks data={data} canEdit={data.role !== "viewer"} onOpenNote={onOpenNote} onAddNote={() => setPicker(data)} onRemove={(link) => { void removeLink(data, link); }} />}
+      renderLinks={(data) => <EventLinks data={data} canEdit={canWrite && data.role !== "viewer"} onOpenNote={onOpenNote} onAddNote={() => setPicker(data)} onRemove={(link) => { void removeLink(data, link); }} />}
     />;
   } else if (route.view === "month") {
     content = <MonthView
@@ -452,6 +455,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Calendar</strong></span></span>
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
+    <ReadOnlyBanner />
 
     <div className="calendar-content">
       {!route.eventId && <div className="calendar-toolbar">

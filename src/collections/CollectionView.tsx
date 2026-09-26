@@ -40,6 +40,7 @@ import { RowPanel } from "./RowPanel";
 import { SortFilterSheet, type SortFilter } from "./SortFilterSheet";
 import { useRows } from "./useRows";
 import { collectionBinMessage, roleLabel, rowCountLabel, validateCollectionName, validateName } from "./values";
+import { useRole } from "../team/roleAccess";
 
 type CollectionViewProps = {
   userId: string;
@@ -76,8 +77,10 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const rows = useRows(collectionId, notify);
-  const editable = role !== "viewer";
-  const isOwner = role === "owner";
+  // min(Team role, item role) (§2.4): a read-only Team role never edits, even its own collection.
+  const { canWrite } = useRole();
+  const editable = canWrite && role !== "viewer";
+  const isOwner = canWrite && role === "owner";
 
   const loadCollection = useCallback(async () => {
     setLoadError(null);
