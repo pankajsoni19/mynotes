@@ -27,11 +27,17 @@ export type UserRow = {
   display_name: string;
   password_hash: string;
   created_at: string;
+  /** The block timestamp (D74): set only by blocking, shown as `blockedAt` and "Blocked". */
   disabled_at: string | null;
   totp_secret: string | null;
   totp_enabled_at: string | null;
   totp_last_counter: number | null;
   totp_recovery_codes: string | null;
+  /** Platform role (migration 017, D71). */
+  role: "admin" | "member" | "viewer" | "guest";
+  /** The admin who blocked this account; NULL when active, or blocked before Team (017). */
+  blocked_by: string | null;
+  block_reason: string | null;
 };
 
 export type NoteRow = {

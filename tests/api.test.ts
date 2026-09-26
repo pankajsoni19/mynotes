@@ -13,7 +13,7 @@ describe("authorization and version workflow", () => {
     expect(statSync(join(dataDir, "mynotes.sqlite")).mode & 0o777).toBe(0o600);
     const migrations = db.query("SELECT id, name FROM schema_migrations ORDER BY id").all() as Array<{ id: number; name: string }>;
     expect(migrations.map((migration) => migration.id)).toEqual([...registeredMigrationIds]);
-    expect(registeredMigrationIds).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    expect(registeredMigrationIds).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17]);
   });
 
   test("rejects registration and login outside the email allowlist", async () => {

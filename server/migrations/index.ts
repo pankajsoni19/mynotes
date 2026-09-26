@@ -13,10 +13,16 @@ import { taskDatesMigration } from "./011_task_dates";
 import { collectionsMigration } from "./012_collections";
 import { calendarMigration } from "./013_calendar";
 import { eventNextOccurrenceMigration } from "./014_event_next_occurrence";
+import { teamRolesMigration } from "./017_team_roles";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, teamRolesMigration];
 
-/** Ids of every registered migration, in order. Tests assert against this list. */
+/**
+ * Ids of every registered migration, in order. Tests assert against this list. Ids must ascend but
+ * need not be contiguous: ids are assigned up front for parallel waves (Team module plan §11), so
+ * during development 017 (Wave 14) can be registered before 015 and 016 (Wave 13) merge. By release
+ * the sequence is contiguous again.
+ */
 export const registeredMigrationIds: readonly number[] = migrations.map((migration) => migration.id);
 
 export function runMigrations(db: Database) {
