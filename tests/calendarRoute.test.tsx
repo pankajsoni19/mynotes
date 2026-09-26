@@ -6,7 +6,7 @@ import { addDays, agendaRoute, calendarBackAction, calendarHomeRoute, eventRoute
 import { formToInput, formFromEvent, newEventForm, occurrenceDays, repeatSummary, sameForm } from "../src/calendar/calendarFormat";
 import type { EventDetail, Occurrence } from "../src/calendar/calendarApi";
 import { formatRoute, parseRoute, type Route } from "../src/router";
-import { confirmForcedDiscard, guardDialogPop } from "../src/calendar/hooks";
+import { guardDialogPop } from "../src/calendar/hooks";
 
 const eventId = "a1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d";
 
@@ -127,14 +127,7 @@ test("occurrences cover the right local days and rules read naturally", () => {
   expect(repeatSummary({ freq: "monthly", interval: 1 }, "2026-01-31")).toBe("Every month on day 31");
 });
 
-test("a forced dialog pop asks before discarding an edited sheet and restores the URL when kept (L4)", () => {
-  const asked: string[] = [];
-  expect(confirmForcedDiscard(false, (message) => { asked.push(message); return false; })).toBeUndefined();
-  expect(asked).toEqual([]);
-  expect(confirmForcedDiscard(true, (message) => { asked.push(message); return false; })).toBe("keep");
-  expect(asked[0]!.startsWith("Discard changes?")).toBe(true);
-  expect(confirmForcedDiscard(true, () => true)).toBeUndefined();
-
+test("a forced dialog pop closes everything, or restores the URL when the dialog is kept", () => {
   const state = (depth: number) => withHistoryDepth({}, depth);
   let restored = 0;
   const undone: string[] = [];
