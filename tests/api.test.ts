@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataDir, db, origin, register, request, tailscaleOrigin, type Session } from "./support/harness";
 
+const { resetRegistrationRateLimit } = await import("../server/index");
+
 const { totpCodeAt, totpCounter } = await import("../server/totp");
 const { registeredMigrationIds } = await import("../server/migrations");
 
@@ -17,6 +19,18 @@ describe("authorization and version workflow", () => {
     expect(registeredMigrationIds.slice(0, 17)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
     expect(registeredMigrationIds.slice(17).every((id) => id >= 18)).toBe(true);
     expect(registeredMigrationIds).toContain(20);
+  });
+
+  test("registration is limited to 10 attempts a minute server-wide, refused ones included", async () => {
+    resetRegistrationRateLimit();
+    const attempt = () => request("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email: "blocked@example.test", displayName: "Blocked", password: "correct horse battery staple" })
+    });
+    for (let index = 0; index < 10; index += 1) expect((await attempt()).status).toBe(403);
+    expect((await attempt()).status).toBe(429);
+    // The harness clears the bucket before each register(), so this still succeeds.
+    await register("After the limit");
   });
 
   test("rejects registration and login outside the email allowlist", async () => {
