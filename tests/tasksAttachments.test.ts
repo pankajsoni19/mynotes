@@ -268,6 +268,31 @@ describe("Files routes and attachments", () => {
     expect(deletedAt(loose.id)).toBeTruthy();
   });
 
+  test("discarding a composer upload bins it for its uploader only, and it restores into Files (T100)", async () => {
+    const { owner, member, stranger } = await setup("Discard");
+    const discarded = await uploadAttachment(member, "draft.png");
+    // Nobody else can discard (or probe) someone's upload: 404 like a missing id.
+    const missing = await request(`/files/${crypto.randomUUID()}`, { method: "DELETE", body: "{}" }, owner);
+    expect(missing.status).toBe(404);
+    const missingBody = await missing.json();
+    for (const session of [owner, stranger]) {
+      const refused = await request(`/files/${discarded.id}`, { method: "DELETE", body: "{}" }, session);
+      expect(refused.status).toBe(404);
+      expect(await refused.json()).toEqual(missingBody);
+    }
+    expect(deletedAt(discarded.id)).toBeNull();
+    // The uploader discards it: it moves to their Bin as an attachment, and a second discard is idempotent.
+    const binned = await request(`/files/${discarded.id}`, { method: "DELETE", body: "{}" }, member);
+    expect(binned.status).toBe(200);
+    expect(deletedAt(discarded.id)).toBeTruthy();
+    expect(((await (await request(`/files/${discarded.id}`, { method: "DELETE", body: "{}" }, member)).json()) as { alreadyDeleted?: boolean }).alreadyDeleted).toBe(true);
+    const bin = (await (await request("/bin", {}, member)).json()) as { items: Array<{ id: string; attachment: boolean }> };
+    expect(bin.items.find((item) => item.id === discarded.id)).toMatchObject({ attachment: true });
+    // Restoring an unlinked upload makes it an ordinary Files item.
+    expect((await request(`/bin/document/${discarded.id}/restore`, { method: "POST", body: "{}" }, member)).status).toBe(200);
+    expect(db.query("SELECT purpose, deleted_at FROM documents WHERE id = ?").get(discarded.id)).toMatchObject({ purpose: "file", deleted_at: null });
+  });
+
   test("sharing rows on an attachment never widen its audience", async () => {
     const { owner, stranger } = await setup("Stale sharing");
     const document = await uploadAttachment(owner, "old.png");
