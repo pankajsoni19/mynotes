@@ -28,6 +28,8 @@ Signing in lands on **Home**, which is also **Today** (below): a row of app link
 
 Unknown paths open Home. A link to a note or file you cannot read (or that is missing or in the Bin) falls back to the list with a message. On phones, Back steps from the editor or preview to the list, then to the folders, then to Home, without leaving the site; in Tasks it steps from a card to its board, to the board list, then to Home. With a dialog or sheet open, Back only closes it.
 
+**Dropdowns.** Choices such as a calendar, a colour, a field type, or a sort field open a list under the control on desktop and a sheet from the bottom on phones. Type the first letters to jump to a choice, use the arrow keys, Home, and End to move, Enter or Space to choose, and Escape to close without choosing; long lists have a search box. On phones, Back closes the sheet and leaves the page and any dialog under it as they were.
+
 ## Today
 
 Home shows what needs you today, in sections of up to ten items each. Every item is a link; Back from it returns to Today. **View all** opens the owning app.

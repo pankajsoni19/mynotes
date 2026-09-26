@@ -5,6 +5,9 @@ import { ModalDialog, trapTabKey } from "../files/Dialog";
 import type { User, Visibility } from "../types";
 import { getCalendarSharing, saveCalendarSharing, type CalendarColor, type CalendarSummary, type ShareRole } from "./calendarApi";
 import { CALENDAR_COLORS } from "./calendarFormat";
+import { Select } from "../ui/Select";
+
+const colourOptions = CALENDAR_COLORS.map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1), swatch: value }));
 
 type CalendarsDialogProps = {
   calendars: CalendarSummary[];
@@ -76,9 +79,8 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
             <small>{roleLabel(calendar)}</small>
           </span>
           {calendar.is_owner === 1 && <span className="calendar-list-actions">
-            <select value={calendar.color} aria-label={`Colour of ${calendar.name}`} onChange={(event) => { void onUpdate(calendar, { color: event.target.value as CalendarColor }).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not update the calendar")); }}>
-              {CALENDAR_COLORS.map((value) => <option key={value} value={value}>{value[0]!.toUpperCase() + value.slice(1)}</option>)}
-            </select>
+            <Select variant="compact" swatchOnly value={calendar.color} label={`Colour of ${calendar.name}`} options={colourOptions}
+              onChange={(next) => { void onUpdate(calendar, { color: next }).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not update the calendar")); }} />
             <button className="icon-button" onClick={() => { setDraft(calendar.name); setEditing(calendar.id); }} aria-label={`Rename ${calendar.name}`}><Pencil /></button>
             <button className="icon-button" onClick={() => onShare(calendar)} aria-label={`Share ${calendar.name}`}><Share2 /></button>
             <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>
@@ -99,9 +101,7 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
     </ul>
     {owned.length < 20 && <form className="calendar-new" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <input value={name} maxLength={80} placeholder="New calendar" aria-label="New calendar name" onChange={(event) => setName(event.target.value)} />
-      <select value={color} aria-label="Colour" onChange={(event) => setColor(event.target.value as CalendarColor)}>
-        {CALENDAR_COLORS.map((value) => <option key={value} value={value}>{value[0]!.toUpperCase() + value.slice(1)}</option>)}
-      </select>
+      <Select variant="compact" value={color} label="Colour" options={colourOptions} onChange={setColor} />
       <button className="primary-button" type="submit" disabled={busy}><Plus />Add</button>
     </form>}
     {error && <p className="file-dialog-error" role="alert">{error}</p>}

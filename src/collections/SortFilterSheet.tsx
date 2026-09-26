@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
+import { Select } from "../ui/Select";
 import type { FieldDefinition, FilterSpec, SortSpec } from "./collectionsApi";
 import { defaultFilterValue, filterReady, OPERATOR_LABELS, OPERATORS, SORTABLE_TYPES, valuelessOperator } from "./values";
 
@@ -43,13 +44,10 @@ export function SortFilterSheet({ fields, value, onApply, onClose, onSaveAsView 
     <div className="sort-filter">
       <h3>Sort</h3>
       {sort.map((item, index) => <div key={index} className="sort-filter-row">
-        <select aria-label={`Sort ${index + 1} field`} value={item.fieldId} onChange={(event) => setSort((items) => items.map((entry, at) => at === index ? { ...entry, fieldId: event.target.value } : entry))}>
-          {sortable.map((field) => <option key={field.id} value={field.id} disabled={field.id !== item.fieldId && sort.some((entry) => entry.fieldId === field.id)}>{field.name}</option>)}
-        </select>
-        <select aria-label={`Sort ${index + 1} direction`} value={item.direction} onChange={(event) => setSort((items) => items.map((entry, at) => at === index ? { ...entry, direction: event.target.value as "asc" | "desc" } : entry))}>
-          <option value="asc">Ascending</option>
-          <option value="desc">Descending</option>
-        </select>
+        <Select label={`Sort ${index + 1} field`} value={item.fieldId} onChange={(fieldId) => setSort((items) => items.map((entry, at) => at === index ? { ...entry, fieldId } : entry))}
+          options={sortable.map((field) => ({ value: field.id, label: field.name, disabled: field.id !== item.fieldId && sort.some((entry) => entry.fieldId === field.id) }))} />
+        <Select<"asc" | "desc"> label={`Sort ${index + 1} direction`} value={item.direction} onChange={(direction) => setSort((items) => items.map((entry, at) => at === index ? { ...entry, direction } : entry))}
+          options={[{ value: "asc", label: "Ascending" }, { value: "desc", label: "Descending" }]} />
         <button type="button" className="icon-button" onClick={() => setSort((items) => items.filter((_, at) => at !== index))} aria-label={`Remove sort ${index + 1}`}><X /></button>
       </div>)}
       {sort.length < MAX_SORT && sortable.some((field) => !sort.some((entry) => entry.fieldId === field.id)) && <button type="button" className="field-editor-add-option" onClick={() => {
@@ -62,12 +60,10 @@ export function SortFilterSheet({ fields, value, onApply, onClose, onSaveAsView 
         const field = byId.get(filter.fieldId);
         if (!field) return null;
         return <div key={index} className="sort-filter-row sort-filter-filter">
-          <select aria-label={`Filter ${index + 1} field`} value={filter.fieldId} onChange={(event) => setFilter(index, { fieldId: event.target.value })}>
-            {fields.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-          </select>
-          <select aria-label={`Filter ${index + 1} condition`} value={filter.op} onChange={(event) => setFilter(index, { op: event.target.value })}>
-            {OPERATORS[field.type].map((op) => <option key={op} value={op}>{OPERATOR_LABELS[op]}</option>)}
-          </select>
+          <Select label={`Filter ${index + 1} field`} value={filter.fieldId} onChange={(fieldId) => setFilter(index, { fieldId })}
+            options={fields.map((option) => ({ value: option.id, label: option.name }))} />
+          <Select label={`Filter ${index + 1} condition`} value={filter.op} onChange={(op) => setFilter(index, { op })}
+            options={OPERATORS[field.type].map((op) => ({ value: op, label: OPERATOR_LABELS[op] }))} />
           {!valuelessOperator(filter.op) && <FilterValue field={field} filter={filter} onChange={(next) => setFilter(index, { value: next })} label={`Filter ${index + 1} value`} />}
           <button type="button" className="icon-button" onClick={() => setFilters((items) => items.filter((_, at) => at !== index))} aria-label={`Remove filter ${index + 1}`}><X /></button>
         </div>;
@@ -108,16 +104,12 @@ function NumberValue({ value, onChange, label }: { value: FilterSpec["value"]; o
 
 function FilterValue({ field, filter, onChange, label }: { field: FieldDefinition; filter: FilterSpec; onChange: (value: FilterSpec["value"]) => void; label: string }) {
   if (field.type === "checkbox") {
-    return <select aria-label={label} value={filter.value === false ? "false" : "true"} onChange={(event) => onChange(event.target.value === "true")}>
-      <option value="true">Checked</option>
-      <option value="false">Not checked</option>
-    </select>;
+    return <Select label={label} value={filter.value === false ? "false" : "true"} onChange={(next) => onChange(next === "true")}
+      options={[{ value: "true", label: "Checked" }, { value: "false", label: "Not checked" }]} />;
   }
   if (field.type === "select" && filter.op !== "in") {
-    return <select aria-label={label} value={typeof filter.value === "string" ? filter.value : ""} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Choose…</option>
-      {(field.options ?? []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-    </select>;
+    return <Select label={label} value={typeof filter.value === "string" && filter.value ? filter.value : null} placeholder="Choose…" onChange={onChange}
+      options={(field.options ?? []).map((option) => ({ value: option.id, label: option.label, swatch: option.color }))} />;
   }
   if (field.type === "select" || field.type === "multi_select") {
     const chosen = Array.isArray(filter.value) ? filter.value : [];

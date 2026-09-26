@@ -81,7 +81,9 @@
 .file-action.danger:hover { background: #2b181c; border-color: #6a3039; }
 .file-row:focus-visible { outline: 2px solid #8a7133; outline-offset: -2px; }
 
-.file-dialog { position: fixed; z-index: 41; top: 50%; left: 50%; width: min(460px, calc(100vw - 32px)); max-height: min(640px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: hidden; transform: translate(-50%, -50%); border: 1px solid #36363b; border-radius: 16px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
+/* Centred with inset + auto margins, not a transform: a transform would become the containing block
+   of the fixed dropdown popups inside the dialog (Wave 13 §4.1). */
+.file-dialog { position: fixed; z-index: 41; inset: 0; margin: auto; width: min(460px, calc(100vw - 32px)); height: fit-content; max-height: min(640px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #36363b; border-radius: 16px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
 .file-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 16px 10px 20px; }
 .file-dialog-header > div { min-width: 0; }
 .file-dialog-header h2 { margin: 4px 0 0; overflow: hidden; color: #f2f2f3; font-size: 1.1rem; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
@@ -156,8 +158,8 @@
   .file-preview-toolbar .file-download span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .file-sort-control .icon-button, .files-workspace .nav-label button { width: 44px; height: 44px; }
   .file-search { height: 44px; }
-  .file-dialog { top: auto; bottom: 0; left: 0; width: 100%; max-height: calc(100dvh - 24px); transform: none; border-width: 1px 0 0; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); }
-  .file-dialog.file-dialog-sheet { top: 0; max-height: none; border: 0; border-radius: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  .file-dialog { top: auto; bottom: 0; left: 0; right: 0; margin: 0; width: 100%; max-height: calc(100dvh - 24px); border-width: 1px 0 0; border-radius: 18px 18px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  .file-dialog.file-dialog-sheet { top: 0; height: auto; max-height: none; border: 0; border-radius: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
   .file-dialog-sheet .move-list { flex: 1; }
   .file-dialog-header .icon-button { width: 44px; height: 44px; }
   .file-dialog-actions button, .file-dialog-form input { min-height: 44px; }

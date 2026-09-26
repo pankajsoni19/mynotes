@@ -41,7 +41,8 @@ export function ModalDialog({ title, eyebrow, onClose, children, variant = "dial
   const titleId = useId();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || busy) return;
+      // A dropdown inside the dialog handles its own Escape first (preventDefault).
+      if (event.key !== "Escape" || busy || event.defaultPrevented) return;
       event.preventDefault();
       event.stopPropagation();
       onClose();

@@ -124,6 +124,8 @@
 .color-blue { background: #1a2640; color: #a9c1f5; }
 .color-purple { background: #2a1f3d; color: #cdb6f7; }
 .color-pink { background: #3b1c30; color: #f7b0d8; }
+/* Dropdown swatches show the option colour at full strength (the chip text tone). */
+.collections-app .ui-option-swatch[class*="color-"] { background: currentColor; }
 
 /* Field editor */
 .field-editor { min-height: 0; overflow-y: auto; padding: 0 16px 8px; }
@@ -132,8 +134,8 @@
 .field-editor-item { display: grid; gap: 6px; border: 1px solid #28282d; border-radius: 12px; padding: 8px; background: #111113; }
 .field-editor-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 128px auto; align-items: center; gap: 6px; }
 .field-editor-row .field-icon { width: 16px; height: 16px; color: #8d8d94; }
-.field-editor input, .field-editor select { min-height: 36px; min-width: 0; border: 1px solid #333338; border-radius: 8px; padding: 0 8px; background: #0b0b0d; color: #ededee; font-size: .84rem; outline: 0; }
-.field-editor input:focus, .field-editor select:focus { border-color: #6b582f; }
+.field-editor input, .field-editor .ui-select { min-height: 36px; min-width: 0; border: 1px solid #333338; border-radius: 8px; padding: 0 8px; background: #0b0b0d; color: #ededee; font-size: .84rem; outline: 0; }
+.field-editor input:focus, .field-editor .ui-select:focus-visible { border-color: #6b582f; }
 .field-editor-controls { display: flex; }
 .field-editor-controls .icon-button { width: 32px; height: 32px; }
 .field-editor-controls .icon-button:disabled { opacity: .3; cursor: not-allowed; }
@@ -202,9 +204,9 @@ label.row-field-label { cursor: pointer; }
 .import-choose { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; font-size: .86rem; cursor: pointer; }
 .import-choose svg { width: 16px; }
 .import-mapping { display: grid; gap: 6px; }
-.import-mapping label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 8px; color: #d6d6d9; font-size: .84rem; }
-.import-mapping span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.import-mapping select { min-height: 40px; border: 1px solid #333338; border-radius: 8px; padding: 0 8px; background: #0b0b0d; color: #ededee; font-size: .84rem; }
+.import-mapping-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 8px; color: #d6d6d9; font-size: .84rem; }
+.import-mapping-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-mapping .ui-select { min-height: 40px; }
 .import-recheck { justify-self: start; min-height: 40px; padding: 0 14px; font-size: .82rem; }
 .import-summary { margin: 0; color: #d6d6d9; font-size: .86rem; }
 .import-preview { overflow-x: auto; }
@@ -233,7 +235,7 @@ label.row-field-label { cursor: pointer; }
 .sort-filter h3 small { color: #5f5f66; font-size: .7rem; letter-spacing: 0; text-transform: none; }
 .sort-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px; gap: 6px; align-items: center; }
 .sort-filter-filter { grid-template-columns: minmax(0, 1fr) minmax(0, .8fr) minmax(0, 1fr) 36px; }
-.sort-filter select, .sort-filter input { min-height: 38px; min-width: 0; border: 1px solid #333338; border-radius: 8px; padding: 0 8px; background: #0b0b0d; color: #ededee; font-size: .84rem; outline: 0; }
+.sort-filter .ui-select, .sort-filter input { min-height: 38px; min-width: 0; border: 1px solid #333338; border-radius: 8px; padding: 0 8px; background: #0b0b0d; color: #ededee; font-size: .84rem; outline: 0; }
 .sort-filter-options { display: flex; flex-wrap: wrap; gap: 4px; }
 .sort-filter-options label { cursor: pointer; opacity: .6; }
 .sort-filter-options label.chosen { opacity: 1; outline: 1px solid currentColor; }
@@ -254,7 +256,7 @@ label.row-field-label { cursor: pointer; }
   .row-field .cell-input, .row-field .cell-select, .row-field .cell-picker { font-size: 1rem; }
   .sort-filter-row, .sort-filter-filter { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
   .sort-filter-filter > :nth-child(3) { grid-column: 1 / 3; }
-  .sort-filter select, .sort-filter input { min-height: 44px; font-size: 1rem; }
+  .sort-filter .ui-select, .sort-filter input { min-height: 44px; font-size: 1rem; }
   .sort-filter .icon-button { width: 44px; height: 44px; }
   .sort-filter-options label { min-height: 36px; display: inline-flex; align-items: center; }
   /* 44 px hit areas without changing how these controls look (the label toggles its checkbox). */
@@ -267,7 +269,7 @@ label.row-field-label { cursor: pointer; }
   .collection-heading { flex: 1 1 calc(100% - 120px); }
   .collection-header-actions { gap: 0; }
   .collection-data-actions { margin-left: auto; }
-  .import-mapping select, .import-recheck { min-height: 44px; font-size: 1rem; }
+  .import-mapping .ui-select, .import-recheck { min-height: 44px; font-size: 1rem; }
   .collections-content { padding: 28px 16px calc(40px + env(safe-area-inset-bottom)); }
   .collections-intro { flex-direction: column; align-items: stretch; }
   .collections-new-button { min-height: 44px; justify-content: center; }
@@ -290,7 +292,7 @@ label.row-field-label { cursor: pointer; }
   .field-editor-row { grid-template-columns: 18px minmax(0, 1fr) 110px; }
   .field-editor-controls { grid-column: 2 / -1; justify-content: flex-end; }
   .field-editor-controls .icon-button { width: 44px; height: 44px; }
-  .field-editor input, .field-editor select { min-height: 44px; font-size: 1rem; }
+  .field-editor input, .field-editor .ui-select { min-height: 44px; font-size: 1rem; }
   .field-editor-add, .field-editor-add-option { min-height: 44px; }
   .collection-row-sheet { left: 0; right: 0; top: auto; bottom: 0; width: auto; transform: none; border-bottom: 0; border-radius: 18px 18px 0 0; }
   .collection-row-sheet > button { min-height: 52px; }

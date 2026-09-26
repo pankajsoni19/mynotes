@@ -10,6 +10,8 @@ import type { CollectionRow, CollectionSummary, FieldDefinition } from "../src/c
 import { fromDrafts, moveDraft, newFieldDraft, toDrafts, typeChoices, validateDrafts } from "../src/collections/fieldDrafts";
 import { importButtonLabel } from "../src/collections/ImportDialog";
 import { RowPanel } from "../src/collections/RowPanel";
+import { SortFilterSheet } from "../src/collections/SortFilterSheet";
+import { FieldEditor } from "../src/collections/FieldEditor";
 import { allowedTypeChanges, cardFields, collectionBinMessage, defaultFilterValue, displayValue, filterReady, parseInput, submitOnEnter, validateCollectionName } from "../src/collections/values";
 
 const fields: FieldDefinition[] = [
@@ -92,7 +94,9 @@ test("viewers get read-only cells and editors get inputs", () => {
   const editable = renderToStaticMarkup(<CellEditor field={fields[0]!} row={sample} editable onSave={async () => true} onOpenPicker={() => undefined} />);
   expect(editable).toContain('<input class="cell-input cell-text"');
   const select = renderToStaticMarkup(<CellEditor field={fields[3]!} row={sample} editable onSave={async () => true} onOpenPicker={() => undefined} />);
-  expect(select).toContain("<select");
+  expect(select).not.toContain("<select");
+  expect(select).toMatch(/class="ui-select ui-select-cell cell-select" role="combobox"[^>]*aria-label="[^"]+"/);
+  expect(select).toContain('<span class="ui-option-swatch color-');
   // Multi-line text is edited in the row panel, never in a single-line input that drops line breaks.
   const multiline = renderToStaticMarkup(<CellEditor field={fields[0]!} row={row({ f_aaaaaaaa: "a\nb" })} editable onSave={async () => true} onOpenPicker={() => undefined} />);
   expect(multiline).not.toContain("<input");
@@ -215,4 +219,24 @@ test("the import button names the problems to fix instead of a row count it cann
   expect(importButtonLabel({ valid: 1, errorCount: 1 }, false)).toBe("Fix 1 problem to import");
   expect(importButtonLabel({ valid: 1, errorCount: 3 }, false)).toBe("Fix 3 problems to import");
   expect(importButtonLabel({ valid: 1, errorCount: 3 }, true)).toBe("Working…");
+});
+
+test("the sort and filter sheet and the field editor use custom dropdowns (D91)", () => {
+  const noop = () => undefined;
+  const sheet = renderToStaticMarkup(<SortFilterSheet fields={fields} onApply={noop} onClose={noop}
+    value={{ sort: [{ fieldId: "f_bbbbbbbb", direction: "desc" }], filters: [{ fieldId: "f_dddddddd", op: "is", value: "o_aaaaaa" }, { fieldId: "f_hhhhhhhh", op: "is", value: false }], hiddenFieldIds: [] }} />);
+  expect(sheet).not.toContain("<select");
+  for (const label of ["Sort 1 field", "Sort 1 direction", "Filter 1 field", "Filter 1 condition", "Filter 1 value", "Filter 2 value"]) {
+    expect(sheet).toMatch(new RegExp(`role="combobox"[^>]*aria-label="${label}"`));
+  }
+  expect(sheet).toContain('<span class="ui-select-value">Descending</span>');
+  expect(sheet).toContain('<span class="ui-select-value">Book</span>');
+  expect(sheet).toContain('<span class="ui-select-value">Not checked</span>');
+  const collection = { id: "c", name: "Things", fields, schema_version: 1 } as unknown as Parameters<typeof FieldEditor>[0]["collection"];
+  const editor = renderToStaticMarkup(<FieldEditor collection={collection} onSaved={noop} onReload={noop} onClose={noop} />);
+  expect(editor).not.toContain("<select");
+  // A number field has one type choice, so its type select keeps the disabled state.
+  expect(editor).toMatch(/role="combobox"[^>]*aria-label="Field 2 type"[^>]*disabled=""/);
+  expect(editor).not.toMatch(/aria-label="Field 1 type" disabled=""/);
+  expect(editor).toMatch(/class="ui-select ui-select-compact" role="combobox"[^>]*aria-label="Color of Book"/);
 });

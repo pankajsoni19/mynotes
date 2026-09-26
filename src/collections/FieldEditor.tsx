@@ -5,6 +5,9 @@ import { errorCode, errorMessage, saveSchema, type CollectionDetail, type FieldT
 import { draftKey, fromDrafts, moveDraft, newFieldDraft, toDrafts, typeChoices, validateDrafts, type FieldDraft } from "./fieldDrafts";
 import { FieldIcon } from "./icons";
 import { FIELD_TYPE_LABELS, OPTION_COLORS } from "./values";
+import { Select } from "../ui/Select";
+
+const colorOptions = OPTION_COLORS.map((color) => ({ value: color, label: color[0]!.toUpperCase() + color.slice(1), swatch: color }));
 
 type FieldEditorProps = {
   collection: CollectionDetail;
@@ -52,9 +55,8 @@ export function FieldEditor({ collection, onSaved, onReload, onClose }: FieldEdi
           <div className="field-editor-row">
             <FieldIcon type={draft.type} />
             <input aria-label={`Field ${index + 1} name`} value={draft.name} maxLength={60} placeholder="Field name" onChange={(event) => update(draft.key, { name: event.target.value })} disabled={busy} />
-            <select aria-label={`Field ${index + 1} type`} value={draft.type} onChange={(event) => update(draft.key, { type: event.target.value as FieldType })} disabled={busy || typeChoices(draft, ALL_TYPES).length === 1}>
-              {typeChoices(draft, ALL_TYPES).map((type) => <option key={type} value={type}>{FIELD_TYPE_LABELS[type]}</option>)}
-            </select>
+            <Select<FieldType> label={`Field ${index + 1} type`} value={draft.type} onChange={(type) => update(draft.key, { type })} disabled={busy || typeChoices(draft, ALL_TYPES).length === 1}
+              options={typeChoices(draft, ALL_TYPES).map((type) => ({ value: type, label: FIELD_TYPE_LABELS[type] }))} />
             <span className="field-editor-controls">
               <button type="button" className="icon-button" onClick={() => setDrafts((items) => moveDraft(items, index, -1))} disabled={busy || index === 0} aria-label={`Move ${draft.name || "field"} up`}><ArrowUp /></button>
               <button type="button" className="icon-button" onClick={() => setDrafts((items) => moveDraft(items, index, 1))} disabled={busy || index === drafts.length - 1} aria-label={`Move ${draft.name || "field"} down`}><ArrowDown /></button>
@@ -70,9 +72,8 @@ export function FieldEditor({ collection, onSaved, onReload, onClose }: FieldEdi
           </div>
           {(draft.type === "select" || draft.type === "multi_select") && <div className="field-editor-options" role="group" aria-label={`Options of ${draft.name || "this field"}`}>
             {draft.options.map((option) => <div key={option.key} className="field-editor-option">
-              <select aria-label={`Color of ${option.label || "option"}`} className={`option-color color-${option.color}`} value={option.color} onChange={(event) => update(draft.key, { options: draft.options.map((item) => item.key === option.key ? { ...item, color: event.target.value as typeof option.color } : item) })} disabled={busy}>
-                {OPTION_COLORS.map((color) => <option key={color} value={color}>{color}</option>)}
-              </select>
+              <Select variant="compact" label={`Color of ${option.label || "option"}`} value={option.color} options={colorOptions} disabled={busy}
+                onChange={(color) => update(draft.key, { options: draft.options.map((item) => item.key === option.key ? { ...item, color } : item) })} />
               <input aria-label="Option label" value={option.label} maxLength={60} placeholder="Option" onChange={(event) => update(draft.key, { options: draft.options.map((item) => item.key === option.key ? { ...item, label: event.target.value } : item) })} disabled={busy} />
               <button type="button" className="icon-button" onClick={() => update(draft.key, { options: draft.options.filter((item) => item.key !== option.key) })} disabled={busy} aria-label={`Remove option ${option.label}`}><X /></button>
             </div>)}

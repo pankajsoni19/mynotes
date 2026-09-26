@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { CollectionRow, FieldDefinition, FieldValue } from "./collectionsApi";
 import { displayValue, inputText, optionById, parseInput } from "./values";
+import { Select } from "../ui/Select";
 
 export type SaveValues = (values: Record<string, FieldValue | null>) => Promise<boolean>;
 
@@ -18,7 +19,7 @@ type CellProps = {
 
 /**
  * One value editor. Text-like inputs save on blur (Enter blurs, Escape reverts); checkboxes and
- * selects save on change. The caller sends the change with the row's revision (CAS).
+ * selects save on change (a select opens with Enter; Escape closes it and keeps focus on the cell). The caller sends the change with the row's revision (CAS).
  */
 export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant = "table", labelId }: CellProps) {
   const value = row.values[field.id];
@@ -32,11 +33,13 @@ export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant
       // The row panel wraps it in a 44 px label, so the whole line toggles it on a phone.
       return variant === "panel" ? <label className="cell-checkbox-target">{box}<span aria-hidden="true">{value === true ? "Yes" : "No"}</span></label> : box;
     }
-    case "select":
-      return <select className="cell-select" aria-labelledby={labelId} aria-label={labelId ? undefined : field.name} value={typeof value === "string" ? value : ""} onChange={(event) => { void onSave({ [field.id]: event.target.value || null }); }}>
-        <option value="">—</option>
-        {(field.options ?? []).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-      </select>;
+    case "select": {
+      // "Clear" replaces the native select's empty "—" option; it is offered only when a value is set.
+      const current = typeof value === "string" && value ? value : null;
+      return <Select variant={variant === "panel" ? "field" : "cell"} className="cell-select" labelledBy={labelId} label={field.name} value={current} placeholder="—"
+        options={[...(current ? [{ value: "", label: "Clear" }] : []), ...(field.options ?? []).map((option) => ({ value: option.id, label: option.label, swatch: option.color }))]}
+        onChange={(next) => { void onSave({ [field.id]: next || null }); }} />;
+    }
     case "multi_select":
     case "note":
     case "file":
