@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { acquireDialogSentinel, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop } from "../src/historyDialogs";
+import { acquireDialogSentinel, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
 
 test("a sentinel is pushed only for a phone dialog opened at depth 0", () => {
   expect(needsDialogSentinel(null, { phone: true, active: false })).toBe(true);
@@ -223,4 +223,64 @@ test("Back that closes the inner of two stacked dialogs above depth 0 lets the u
   expect(history.state).toEqual({ route: "card", "mynotes.depth": 1 });
   unregister();
   outer();
+});
+
+test("a guard handing Back over to a prompt at depth 1 keeps the board entry and its forward entry", async () => {
+  // A fresh /tasks (depth 0), then a board (depth 1) with New card open: no sentinel (D18).
+  const entries: unknown[] = [{ route: "tasks", "mynotes.depth": 0 }, { route: "board", "mynotes.depth": 1 }];
+  let index = 1;
+  const moves: number[] = [];
+  const history = {
+    get state() { return entries[index]; },
+    pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
+    back() { moves.push(-1); }
+  };
+  const env = { history: history as unknown as History, href: () => "https://nook.test/tasks", phone: () => true };
+  // Moves land (and fire popstate) only when delivered, like a browser.
+  const deliver = () => { index += moves.shift()!; return popStateClosedDialog({ state: entries[index] }); };
+  const composer = acquireDialogSentinel(env);
+  expect(entries).toHaveLength(2);
+  let promptDepth = -1;
+  let prompt: (() => void) | null = null;
+  let handedOver = false;
+  const unregister = registerHistoryDialogGuard(() => {
+    if (handedOver) return false;
+    handedOver = true;
+    // CardComposer (and CardDialog's unsaved description): Back undoes the move, then the same tick
+    // swaps the closing guard for the Discard prompt's guard.
+    undoDialogPop("back", (delta) => moves.push(delta));
+    composer();
+    prompt = acquireDialogSentinel(env);
+    whenHistorySettled(() => { promptDepth = (history.state as Record<string, number>)["mynotes.depth"]!; });
+    return true;
+  });
+  history.back();
+  expect(deliver()).toBe(true);
+  expect(index).toBe(0);
+  // The undo is in flight: nothing is pushed over /tasks, and the prompt's depth is not read yet.
+  expect(entries).toEqual([{ route: "tasks", "mynotes.depth": 0 }, { route: "board", "mynotes.depth": 1 }]);
+  expect(promptDepth).toBe(-1);
+  // The undo lands (ignored) on the board: still no sentinel at depth 1, and the prompt reads depth 1.
+  expect(deliver()).toBe(true);
+  expect(index).toBe(1);
+  expect(entries).toHaveLength(2);
+  expect(promptDepth).toBe(1);
+  unregister();
+  prompt!();
+  await Bun.sleep(5);
+  expect(entries).toHaveLength(2);
+  expect(history.state).toEqual({ route: "board", "mynotes.depth": 1 });
+  // A later, real popstate goes through.
+  expect(popStateClosedDialog({ state: entries[0] })).toBe(false);
+});
+
+test("whenHistorySettled runs at once with no ignored move in flight; a cancelled waiter never runs", () => {
+  let ran = 0;
+  whenHistorySettled(() => { ran += 1; });
+  expect(ran).toBe(1);
+  undoDialogPop("back", () => undefined);
+  const cancel = whenHistorySettled(() => { ran += 1; });
+  cancel();
+  expect(popStateClosedDialog({ state: null })).toBe(true);
+  expect(ran).toBe(1);
 });
