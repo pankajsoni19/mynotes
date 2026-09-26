@@ -536,7 +536,7 @@ type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: s
 
 | Endpoint | Body | Success | Errors |
 | --- | --- | --- | --- |
-| `GET /api/mcp/keys` | | 200 `{ keys: McpKey[] }` (active keys, newest first) | |
+| `GET /api/mcp/keys` | | 200 `{ keys: (McpKey & { effectiveScopes: McpScope[] })[] }` (active keys, newest first). `effectiveScopes` are the stored `scopes` narrowed to the owner's current role, so Settings shows a demoted admin's `team:read` as "(admins only, inactive)" | |
 | `POST /api/mcp/keys` | `{ name, password, totpCode? \| recoveryCode?, scopes? }` | 201 `{ key: McpKey & { token, userId, prefix, createdAt } }`; the token is shown once | 400 (bad name or scopes), 401 (password or second factor), 403 `SCOPE_NOT_ALLOWED` (a scope the caller's team role cannot hold, checked before the password; Wave 14), 409 (10 active keys) |
 | `DELETE /api/mcp/keys/:id` | `{}` | 200 `{ ok: true }` | 404 |
 
