@@ -5,6 +5,7 @@ import { parseJson, uuid } from "../validation";
 import { MAX_ASSIGNEES } from "./assignees";
 import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
+import { registerTaskQueryRoutes } from "./queryRoutes";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
   createBoard,
@@ -294,4 +295,6 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     const cardId = id(c, "cardId");
     return respond(c, () => deleteCard(c.get("user").id, cardId));
   });
+
+  registerTaskQueryRoutes(app);
 }

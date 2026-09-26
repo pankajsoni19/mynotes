@@ -456,6 +456,37 @@ board:<uuid> column:<uuid> -tag:"Needs design",none flag:blocked "invoice"
 - **Errors.** `{ code: "FILTER_INVALID" | "FILTER_UNSUPPORTED" | "FILTER_SCOPE", message, position }`, where `position` is the character offset.
 - **URL codec.** `?q=` carries the canonical grammar and is the only filter parameter written. Decoding is lenient (bad terms and values are dropped) and still reads the Wave 13 per-key parameters (`assignee`, `tag`, `flag`, `due`, `column`, `rel=any|blocked|none`, plus `board` and `state`), so older links keep working. Other parameters (`view`, `layout`, `group`, `sort`) are left alone.
 
+### Cross-board card query (sub-wave 17C, D144)
+
+`POST /api/tasks/query` is a read sent as POST (like the Collections query). Any signed-in user; the usual session, Origin, and CSRF rules apply.
+
+| Body | Result | Errors |
+| --- | --- | --- |
+| `{ q?: string (grammar, ≤ 2000, default ""), sort?: "due" \| "updated" \| "created" \| "title" \| "board" (default due), group?: "none" \| "board" \| "state" \| "due", cursor?, limit?: 1–100 (default 50), tz?: IANA (default UTC) }` (no other keys) | `{ query, cards: QueriedCard[], nextCursor: string \| null, total?, refs? }` | 400 `FILTER_INVALID` / `FILTER_UNSUPPORTED` / `FILTER_SCOPE` `{ position }`, 400 `CURSOR_INVALID`, 400 (body), 429 `RATE_LIMITED` with `Retry-After` (30 per 10 s per user) |
+
+```ts
+type QueriedCard = {
+  id; board_id; board_name; column_id; column_name; column_state: "todo" | "doing" | "done"; is_done: 0 | 1;
+  position; title; description_excerpt; revision; created_by; creator_name;
+  due_on; due_time; due_tz; due_at;                  // as on the board (Wave 13)
+  assignees: CardAssignee[];                         // with can_read, as on the board
+  tags: { id; name; color }[]; flags: Flag[];        // flags in the fixed order
+  created_at; updated_at;
+};
+type QueryRefs = {                                   // first page only: what the query's ids mean to this caller (T116)
+  boards:  ({ id; name } | { id; restricted: true })[];
+  columns: ({ id; name; board_id } | { id; restricted: true })[];
+  tags:    ({ id; name; color; board_id } | { id; restricted: true })[];
+  users:   ({ id; display_name } | { id; unknown: true })[];   // the exposure of GET /api/users
+};
+```
+
+- **Access.** Only live cards on live boards the caller can read (`readableBoardPredicate`), ANDed before any filter, sort, or limit. A board, column, or tag id the caller cannot read matches nothing and resolves as `restricted`, exactly like an id that does not exist.
+- **Order and paging.** Keyset pagination on the group key, then the sort key, then the card id. `due` sorts by date then time with undated cards last; `updated` and `created` are newest first; `title` is case-insensitive; `board` is board name, column position, card position. `group` orders by the group first (board name; state todo → doing → done; due bucket overdue → today → this week → later → none), so a group is one contiguous run across pages; assignee and tag grouping are done by the client within the loaded cards. `nextCursor` is opaque and only continues the same canonical query, sort, and group (and, for date-relative queries, the same zone and date); anything else is `CURSOR_INVALID`.
+- **`total`** is on the first page only, when at most 1000 cards match. `refs` is on the first page only.
+- **Relations** (`has:`) follow the per-viewer relation rules (WAVE_13 D105): a relation to a card the caller cannot read counts, one to a readable binned card does not. `has:blocked` counts only readable, live `depends_on` cards outside a done column.
+- **Text** uses ASCII case folding (SQLite `lower`), as the Collections query does; accented capitals do not fold.
+
 ## Today (Wave 10)
 
 `GET /api/today?tz=<IANA>&sections=<a,b>?` returns 200 `{ generatedAt, date, sections }`. `date` is today in `tz`. `sections` maps each installed section, in order, to `{ items, more, href }` (at most ten items; `more` when there are more; `href` is the owning app's list). A section whose provider failed is `{ items: [], more: false, href, error }`; the others still load. Sections of modules that are not installed are absent. There are no counts, bodies, or caching. `sections=` limits the response to those names (the per-section Retry).
