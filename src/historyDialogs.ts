@@ -167,7 +167,14 @@ export function acquireDialogSentinel(env: SentinelEnv = {
     if (openDialogs > 0) {
       // Back from the sentinel closed only the innermost of stacked dialogs (a dropdown sheet over
       // a sheet): the ones still open need a sentinel again, or the next Back would leave Nook.
-      if (!pendingSentinelPop) pushSentinelIfNeeded(env);
+      if (pendingSentinelPop) return;
+      // A guard's undo (history.go) is still on its way, so history.state reads the entry Back
+      // left for: pushing now would drop the entry the undo returns to. Decide once it lands.
+      if (ignoring > 0) {
+        pendingSentinelPop = { env };
+        return;
+      }
+      pushSentinelIfNeeded(env);
       return;
     }
     releaseTimer = setTimeout(() => {
