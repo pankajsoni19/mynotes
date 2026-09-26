@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { db } from "../db";
 import { dateInZone } from "../today/registry";
 import { addQueryDays, dueWindow, parse, format, type FilterTerm, type TaskQuery } from "../../shared/taskQuery";
@@ -263,21 +263,31 @@ export function parseFilter(q: string) {
   return parsed.query;
 }
 
-// Cursor: [1, key, ...sort values, id], base64url JSON. The key binds it to the canonical query, sort, group, and, for
-// date-relative queries, the caller's zone and date, so a cursor never continues a different question.
+// Cursor: `<payload>.<mac>`. The payload is [1, key, ...sort values, id] as base64url JSON. The key binds it to the
+// canonical query, sort, group, and, for date-relative queries, the caller's zone and date, so a cursor never
+// continues a different question. The MAC (HMAC-SHA256 over the user id and the payload, keyed by a per-process
+// secret) binds it to the caller and makes the sort values tamper-proof. A new process refuses older cursors, which
+// CURSOR_INVALID already covers: start again from the first page.
 const cursorKey = (parts: unknown[]) => createHash("sha256").update(JSON.stringify(parts)).digest("base64url").slice(0, 16);
+const cursorSecret = randomBytes(32);
+const cursorMac = (userId: string, payload: string) => createHmac("sha256", cursorSecret).update(`${userId}\n${payload}`).digest();
 
-function encodeCursor(key: string, values: Binding[]) {
-  return Buffer.from(JSON.stringify([1, key, ...values])).toString("base64url");
+function encodeCursor(userId: string, key: string, values: Binding[]) {
+  const payload = Buffer.from(JSON.stringify([1, key, ...values])).toString("base64url");
+  return `${payload}.${cursorMac(userId, payload).toString("base64url")}`;
 }
 
 const cursorInvalid = () => new TaskError(400, "The page cursor does not match this query. Start again from the first page.", "CURSOR_INVALID");
 
-function decodeCursor(value: string, key: string, width: number): Binding[] {
-  if (value.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(value)) throw cursorInvalid();
+function decodeCursor(value: string, userId: string, key: string, width: number): Binding[] {
+  if (value.length > 1024 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(value)) throw cursorInvalid();
+  const [payload, mac] = value.split(".") as [string, string];
+  const supplied = Buffer.from(mac, "base64url");
+  const expected = cursorMac(userId, payload);
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw cursorInvalid();
   let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
   } catch {
     throw cursorInvalid();
   }
@@ -323,7 +333,7 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
   const params: Record<string, Binding> = { ...compiled.params, today, weekEnd: addQueryDays(today, 6) };
   let after = "1";
   if (input.cursor) {
-    const values = decodeCursor(input.cursor, key, parts.length);
+    const values = decodeCursor(input.cursor, userId, key, parts.length);
     const names = values.map((value, index) => {
       params[`c${index}`] = value;
       return `c${index}`;
@@ -343,7 +353,7 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
 
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
-  const nextCursor = rows.length > limit && last ? encodeCursor(key, parts.map((_, index) => last[`sk${index}`] as Binding)) : null;
+  const nextCursor = rows.length > limit && last ? encodeCursor(userId, key, parts.map((_, index) => last[`sk${index}`] as Binding)) : null;
   const result: QueryResult = { query: canonical, cards: withCardDetails(page), nextCursor };
   if (!input.cursor) {
     const counted = (db.query(`SELECT COUNT(*) AS count FROM (SELECT 1 ${from} LIMIT $cap)`).get({ ...compiled.params, cap: QUERY_TOTAL_CAP + 1 }) as { count: number }).count;

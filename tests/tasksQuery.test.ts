@@ -277,6 +277,27 @@ describe("POST /api/tasks/query: paging, sorting, grouping, limits", () => {
     expect(await query(owner, { q: "", sort: "title", cursor: Buffer.from("[1,\"x\",1]").toString("base64url") })).toMatchObject({ status: 400, body: { code: "CURSOR_INVALID" } });
   });
 
+  test("a cursor is signed and bound to its user: another user's or a tampered one is CURSOR_INVALID", async () => {
+    const owner = await createUser("Signed cursor");
+    const other = await createUser("Signed cursor other");
+    const target = await board(owner, "Signed cursor board");
+    for (let index = 0; index < 3; index += 1) await card(owner, target, `S${index}`);
+    await card(other, await board(other, "Signed cursor other board"), "Other card");
+    const cursor = (await query(owner, { q: "", sort: "title", limit: 1 })).body.nextCursor as string;
+    expect(cursor).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
+    expect((await query(owner, { q: "", sort: "title", limit: 1, cursor })).status).toBe(200);
+    // The same question from another user: the key matches, the MAC does not.
+    expect(await query(other, { q: "", sort: "title", limit: 1, cursor })).toMatchObject({ status: 400, body: { code: "CURSOR_INVALID" } });
+    // Swap the card id (the last sort value) and keep the MAC.
+    const [payload, mac] = cursor.split(".") as [string, string];
+    const values = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as unknown[];
+    values[values.length - 1] = crypto.randomUUID();
+    const tampered = `${Buffer.from(JSON.stringify(values)).toString("base64url")}.${mac}`;
+    expect(await query(owner, { q: "", sort: "title", limit: 1, cursor: tampered })).toMatchObject({ status: 400, body: { code: "CURSOR_INVALID" } });
+    // An unsigned cursor in the old format is refused too.
+    expect(await query(owner, { q: "", sort: "title", limit: 1, cursor: payload })).toMatchObject({ status: 400, body: { code: "CURSOR_INVALID" } });
+  });
+
   test("30 queries per 10 seconds per user, then 429 with Retry-After", async () => {
     const user = await createUser("Limiter");
     const other = await createUser("Limiter other");
