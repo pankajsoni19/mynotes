@@ -41,6 +41,9 @@ import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
 import { TodayHome } from "./today/TodayHome";
 import { BinApp } from "./bin/BinApp";
+import { TeamApp } from "./team/TeamApp";
+import { TeamNavContext } from "./AppShell";
+import { canManageTeam, type Role } from "./team/teamRoles";
 import { FilesApp } from "./files/FilesApp";
 import { TasksApp } from "./tasks/TasksApp";
 import { CollectionsApp } from "./collections/CollectionsApp";
@@ -59,7 +62,7 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
-import { DEFAULT_KEY_SCOPES, lockedScopes, OFFERED_MCP_PERMISSIONS, scopeLabel, toggleScope, type McpScope } from "./mcpPermissions";
+import { DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, scopeLabel, toggleScope, type McpScope } from "./mcpPermissions";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -77,7 +80,7 @@ type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean }
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown };
 type SettingsSection = "security" | "modules" | "mcp" | "notifications" | "about";
-type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void };
+type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 
@@ -132,6 +135,12 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
       if (!registering && reason instanceof ApiError && (reason.payload as { requiresTotp?: boolean } | undefined)?.requiresTotp) {
         setNeedsTotp(true);
       }
+      // Only sent after the right password (T85); the reason for the block is never shown (O11).
+      if (!registering && reason instanceof ApiError && (reason.payload as { code?: string } | undefined)?.code === "ACCOUNT_BLOCKED") {
+        setNeedsTotp(false);
+        setError("This account has been blocked. Contact your Nook administrator.");
+        return;
+      }
       setError(reason instanceof Error ? reason.message : "Could not sign in");
     } finally {
       setBusy(false);
@@ -181,7 +190,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   );
 }
 
-function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pending: boolean) => void; totpEnabled: boolean }) {
+function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: (pending: boolean) => void; totpEnabled: boolean; role: User["role"] }) {
   const [keys, setKeys] = useState<McpApiKey[]>([]);
   const [newToken, setNewToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -259,7 +268,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
     <div className="mcp-card">
       <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
-      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{OFFERED_MCP_PERMISSIONS.map((permission) => {
+      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
         const isLocked = locked.includes(permission.scope);
         return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
       })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
@@ -270,7 +279,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   </section>;
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged, modules, initialSection = "security" }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; modules: ModulesSettingsProps; initialSection?: SettingsSection }) {
+function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security" }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [appInfo, setAppInfo] = useState({ version: "0.7.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
@@ -410,7 +419,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, modules, initialS
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
+        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -435,7 +444,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, modules, initialS
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} role={session.user.role} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );
@@ -686,6 +695,11 @@ export function App() {
   const disabledModules = modulePreferences.preferences.disabledModules;
   const searchEnabled = isModuleEnabled(disabledModules, "search");
   const binEnabled = isModuleEnabled(disabledModules, "bin");
+  // True from Settings → "Manage team" until the admin leaves Team: that visit passes the route gate
+  // even when the Team module is hidden (Team plan §6.2). Anything else follows the toggle.
+  const [teamViaSettings, setTeamViaSettings] = useState(false);
+  const previousAppRef = useRef<AppSection | null>(null);
+  const teamGateOpen = activeApp === "team" && teamViaSettings && canManageTeam(session?.user.role);
   // The module whose route was just replaced with Home, for the one-line hint (D92).
   const [moduleHint, setModuleHint] = useState<ModuleId | null>(null);
   const leavingHiddenModuleRef = useRef(false);
@@ -801,7 +815,7 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session]);
@@ -1224,6 +1238,7 @@ export function App() {
     if (section === "tasks") return { app: "tasks", boardId: null, cardId: null };
     if (section === "collections") return { app: "collections", collectionId: null, viewId: null, rowId: null };
     if (section === "calendar") return calendarHomeRoute(isMobileViewport(), localDate(new Date()));
+    if (section === "team") return { app: "team", userId: null };
     return { app: section };
   }
 
@@ -1454,7 +1469,7 @@ export function App() {
   // replaced, not pushed, so Back never bounces into it again. The server is not involved: the
   // module's API still works and keeps its own access rules (T97).
   useEffect(() => {
-    const hidden = hiddenModuleForApp(disabledModules, activeApp);
+    const hidden = teamGateOpen ? null : hiddenModuleForApp(disabledModules, activeApp);
     if (!session || session.totp.setupRequired || !hidden || leavingHiddenModuleRef.current) return;
     const app = activeApp;
     // A note that could not be saved keeps Notes open (the toast says why) until the choice changes.
@@ -1477,6 +1492,10 @@ export function App() {
       }
     })();
   });
+  useEffect(() => {
+    if (previousAppRef.current === "team" && activeApp !== "team") setTeamViaSettings(false);
+    previousAppRef.current = activeApp;
+  }, [activeApp]);
   useEffect(() => {
     if (moduleHint && (isModuleEnabled(disabledModules, moduleHint) || activeApp !== "home")) setModuleHint(null);
   }, [activeApp, disabledModules, moduleHint]);
@@ -1549,8 +1568,10 @@ export function App() {
     setChecking(false);
   }} />;
 
-  const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled };
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+  const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
+  // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate
+  // lets that one visit through; Back, Forward, and links still follow the toggle.
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onManageTeam={() => { setSettingsOpen(false); setTeamViaSettings(true); void openApp("team"); }} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) setSettingsOpen(false);
   }} />;
@@ -1561,23 +1582,26 @@ export function App() {
   </div>}</>;
   const openBin = binEnabled ? () => { void openApp("bin"); } : undefined;
   // A hidden module's view never renders, even for the moment before the gate above replaces its route.
-  const shownApp: AppSection = activeApp !== "notes" && !isAppEnabled(disabledModules, activeApp) ? "home" : activeApp;
+  const shownApp: AppSection = activeApp !== "notes" && !teamGateOpen && !isAppEnabled(disabledModules, activeApp) ? "home" : activeApp;
   const account = { displayName: session.user.displayName, onSettings: () => openSettings(), onSignOut: signOut };
 
   // Notifications off (D92): no provider, so every bell renders nothing and stops polling.
   const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
-  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><NotificationsContext.Provider value={notificationsContext}>
+  const teamNav = { role: session.user.role, openTeam: () => { void openApp("team"); }, onTeam: shownApp === "team" };
+
+  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}>
     {shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
+      : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} totpEnabled={session.totp.enabled} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}
-  </NotificationsContext.Provider></ModulesContext.Provider>;
+  </TeamNavContext.Provider></NotificationsContext.Provider></ModulesContext.Provider>;
 
   return (
     <ModulesContext.Provider value={disabledModules}>

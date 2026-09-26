@@ -4,7 +4,7 @@
  * Pure, so the checkbox rules are unit-tested.
  */
 export type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read"
-  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write";
+  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "team:read";
 
 export type McpPermission = { scope: McpScope; label: string; help: string; implies?: McpScope };
 
@@ -18,11 +18,20 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "calendar:read", label: "Read calendar", help: "Calendars, events, and their links you can open" },
   { scope: "calendar:write", label: "Write calendar", help: "Create and change events, and set your own reminders: never deletes", implies: "calendar:read" },
   { scope: "collections:read", label: "Read collections", help: "Collections you can open, their fields, and their rows; attachments as names only" },
-  { scope: "collections:write", label: "Write collections", help: "Add and change rows where you can edit: never deletes, and never changes fields or sharing", implies: "collections:read" }
+  { scope: "collections:write", label: "Write collections", help: "Add and change rows where you can edit: never deletes, and never changes fields or sharing", implies: "collections:read" },
+  { scope: "team:read", label: "Read team", help: "Names, roles, and status of accounts; never emails. Admins only, and it stops working if you stop being an admin" }
 ];
 
 /** The permissions offered when creating a key: every scope that has tools. */
 export const OFFERED_MCP_PERMISSIONS = MCP_PERMISSIONS;
+
+/** Scopes only admins may hold (mirrors server/team/roles.ts ADMIN_ONLY_SCOPES). */
+export const ADMIN_ONLY_MCP_SCOPES: readonly McpScope[] = ["team:read"];
+
+/** The permissions Settings offers to someone with `role`: team:read only to admins. */
+export function offeredMcpPermissions(role: string | undefined) {
+  return role === "admin" ? OFFERED_MCP_PERMISSIONS : OFFERED_MCP_PERMISSIONS.filter((permission) => !ADMIN_ONLY_MCP_SCOPES.includes(permission.scope));
+}
 
 export const DEFAULT_KEY_SCOPES: readonly McpScope[] = ["notes:read"];
 

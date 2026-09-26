@@ -26,9 +26,7 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  // 017 onwards (Team, Wave 14) land from a parallel wave and may or may not be present yet.
-  expect(ids.slice(0, 16)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-  expect(ids.slice(16).every((id) => id >= 17)).toBe(true);
+  expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
 }
 
 function openDb() {
@@ -441,8 +439,10 @@ describe("database migrations", () => {
     expect(() => insert.run(JSON.stringify(["x".repeat(520)]), old)).toThrow();
     expect(() => db.query("INSERT INTO user_preferences (user_id, updated_at) VALUES ('missing', ?)").run(old)).toThrow();
     insert.run('["calendar"]', old);
-    db.query("DELETE FROM users WHERE id = 'u1'").run();
-    expect((db.query("SELECT user_id FROM user_preferences").all() as Array<{ user_id: string }>).map((row) => row.user_id)).toEqual(["u2"]);
+    // 017 makes u1 (the oldest account) the only admin, and the last admin cannot be deleted, so the
+    // cascade is checked on the member.
+    db.query("DELETE FROM users WHERE id = 'u2'").run();
+    expect((db.query("SELECT user_id FROM user_preferences").all() as Array<{ user_id: string }>).map((row) => row.user_id)).toEqual(["u1"]);
     db.close();
   });
 

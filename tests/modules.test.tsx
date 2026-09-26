@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MODULE_IDS as SERVER_MODULE_IDS } from "../server/moduleIds";
-import { AccountActions } from "../src/AppShell";
+import { AccountActions, TeamNavContext } from "../src/AppShell";
 import { ModulesSettings } from "../src/ModulesSettings";
 import {
   DEFAULT_PREFERENCES,
@@ -16,6 +16,7 @@ import {
   normalizeDisabledModules,
   parsePreferences,
   SETTINGS_MODULES,
+  settingsModulesFor,
   withModuleEnabled,
   type ModuleId
 } from "../src/modules";
@@ -25,14 +26,17 @@ import { enabledTodayApps, TODAY_APPS } from "../src/today/todayApps";
 import { TODAY_SECTIONS } from "../src/today/todaySections";
 
 describe("module registry (D92)", () => {
-  test("client and server know the same module ids, in the same order, including the reserved team id", () => {
+  test("client and server know the same module ids, in the same order, including team", () => {
     expect([...MODULE_IDS]).toEqual([...SERVER_MODULE_IDS]);
     expect(MODULES.map((module) => module.id)).toEqual([...MODULE_IDS]);
     expect(MODULE_IDS).toContain("team");
   });
 
-  test("Settings lists every shipped module and leaves the planned Team module out", () => {
-    expect(SETTINGS_MODULES.map((module) => module.id)).toEqual(["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications"]);
+  test("Settings lists every module, Team included, but never shows Team to guests", () => {
+    expect(SETTINGS_MODULES.map((module) => module.id)).toEqual(["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications", "team"]);
+    expect(settingsModulesFor("admin").map((module) => module.id)).toContain("team");
+    expect(settingsModulesFor("viewer").map((module) => module.id)).toContain("team");
+    expect(settingsModulesFor("guest").map((module) => module.id)).not.toContain("team");
   });
 
   test("every Today section belongs to exactly one module", () => {
@@ -68,8 +72,9 @@ describe("module registry (D92)", () => {
 });
 
 describe("Settings → Modules", () => {
-  const render = (disabled: Parameters<typeof ModulesSettings>[0]["disabledModules"], status: Parameters<typeof ModulesSettings>[0]["status"] = null) =>
-    renderToStaticMarkup(<ModulesSettings disabledModules={disabled} status={status} onToggle={() => undefined} />);
+  type Props = Parameters<typeof ModulesSettings>[0];
+  const render = (disabled: Props["disabledModules"], status: Props["status"] = null, role: Props["role"] = "member") =>
+    renderToStaticMarkup(<ModulesSettings disabledModules={disabled} status={status} onToggle={() => undefined} role={role} />);
 
   test("every module is a labelled switch that is on by default", () => {
     const markup = render([]);
@@ -78,7 +83,15 @@ describe("Settings → Modules", () => {
     for (const tag of switches) expect(tag).toContain('aria-checked="true"');
     expect(markup).toContain('aria-labelledby="module-label-calendar"');
     expect(markup).toContain('id="module-label-calendar">Calendar</strong>');
-    expect(markup).not.toContain("module-label-team");
+    expect(markup).toContain('id="module-label-team">Team</strong>');
+    expect(markup).not.toContain("Team stays available from Settings");
+  });
+
+  test("guests get no Team row, and admins are told Team stays in Settings", () => {
+    const guest = render([], null, "guest");
+    expect(guest).not.toContain("module-label-team");
+    expect([...guest.matchAll(/role="switch"/g)]).toHaveLength(SETTINGS_MODULES.length - 1);
+    expect(render(["team"], null, "admin")).toContain("You are an admin: Team stays available from Settings.");
   });
 
   test("a disabled module shows as off, and the Bin and Notifications help says what keeps working", () => {
@@ -118,6 +131,13 @@ describe("gating (client only)", () => {
     expect(header).toContain('title="Settings"');
   });
 
+  test("Team off removes the Team button from the account row", () => {
+    const teamNav = { role: "member" as const, openTeam: () => undefined, onTeam: false };
+    const row = (disabled: ModuleId[]) => renderToStaticMarkup(<ModulesContext.Provider value={disabled}><TeamNavContext.Provider value={teamNav}><AccountActions {...account} /></TeamNavContext.Provider></ModulesContext.Provider>);
+    expect(row([])).toContain('title="Team"');
+    expect(row(["team"])).not.toContain('title="Team"');
+  });
+
   test("the Today sections of modules that are off are hidden", () => {
     expect(hiddenTodaySections([])).toEqual([]);
     expect(hiddenTodaySections(["calendar", "tasks", "bin"])).toEqual(["tasksDue", "tasksMine", "upcoming", "binSoon"]);
@@ -134,6 +154,7 @@ describe("gating (client only)", () => {
     expect(hiddenModuleForApp(["tasks"], parseRoute("/tasks").app)).toBe("tasks");
     expect(hiddenModuleForApp(["bin"], parseRoute("/bin").app)).toBe("bin");
     expect(hiddenModuleForApp(["notifications"], parseRoute("/notifications").app)).toBe("notifications");
+    expect(hiddenModuleForApp(["team"], parseRoute("/team").app)).toBe("team");
     expect(hiddenModuleForApp(["notes"], parseRoute("/notes").app)).toBe("notes");
     expect(hiddenModuleForApp(["calendar"], parseRoute("/tasks").app)).toBeNull();
     expect(hiddenModuleForApp([...MODULE_IDS], parseRoute("/").app)).toBeNull();

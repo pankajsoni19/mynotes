@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { IMPLIED_READ_SCOPE, MCP_SCOPES } from "../server/mcpScopes";
-import { lockedScopes, MCP_PERMISSIONS, OFFERED_MCP_PERMISSIONS, scopeLabel, toggleScope } from "../src/mcpPermissions";
+import { ADMIN_ONLY_MCP_SCOPES, lockedScopes, MCP_PERMISSIONS, OFFERED_MCP_PERMISSIONS, offeredMcpPermissions, scopeLabel, toggleScope } from "../src/mcpPermissions";
+import { ADMIN_ONLY_SCOPES, mcpScopesForRole } from "../server/team/roles";
 
 test("the Settings permissions mirror the server scopes and their implied reads", () => {
   expect(MCP_PERMISSIONS.map((permission) => permission.scope)).toEqual([...MCP_SCOPES]);
@@ -26,4 +27,13 @@ test("checking a write scope checks and locks its read scope", () => {
 test("scope chips use the permission labels", () => {
   expect(scopeLabel("notes:write-draft")).toBe("Write drafts");
   expect(scopeLabel("future:read")).toBe("future:read");
+});
+
+test("team:read is offered only to admins, matching the server's role scopes", () => {
+  expect([...ADMIN_ONLY_MCP_SCOPES]).toEqual([...ADMIN_ONLY_SCOPES]);
+  expect(offeredMcpPermissions("admin").map((permission) => permission.scope)).toEqual(mcpScopesForRole("admin"));
+  for (const role of ["member", "viewer", "guest"] as const) {
+    expect(offeredMcpPermissions(role).map((permission) => permission.scope)).toEqual(mcpScopesForRole(role));
+  }
+  expect(offeredMcpPermissions(undefined).some((permission) => permission.scope === "team:read")).toBe(false);
 });

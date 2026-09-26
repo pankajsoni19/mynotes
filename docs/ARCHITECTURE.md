@@ -33,12 +33,16 @@ Database changes live in ordered files under `server/migrations`. Startup runs e
 | 011 | `task_dates` | `cards.due_on`, `cards.assignee_id`, and `board_columns.is_done` (backfilled for Done columns), with their indexes |
 | 012 | `collections` | collections, members, rows (values JSON, revision, one-step undo), saved views, row attachment links, and the row search mapping and FTS tables (see [Collections](#collections)) |
 | 013 | `calendar` | calendars, members, events (local time plus IANA zone, or dates; JSON recurrence), event links, reminders, notifications, push subscriptions, and feed tokens (see [Calendar](#calendar)) |
+| 014 | `event_next_occurrence` | a cheap "anything in this range?" bound per event for the calendar range API |
+| 017 | `team_roles` | `users.role` (admin, member, viewer, guest), `blocked_by`, `block_reason`, the append-only `team_events` log, and the last-active-admin triggers; backfills the oldest enabled account as admin (see [Team](#team)). Ids 015 and 016 are reserved for Wave 13. |
 
 Notes and documents share one folder tree and one access rule. An item is readable when it is live (`deleted_at IS NULL`) and one of these holds:
 
 1. the caller owns it;
 2. it has its own sharing (`sharing_override = 1`) and its visibility is `all_users`, or a note/document share row names the caller; or
 3. it inherits (`sharing_override = 0`) and its **immediate** folder is `all_users` or shared with the caller. Folder sharing does not cascade to subfolders.
+
+Every account has a platform **team role** on `users.role` (migration 017, [Team](#team)). `requireAuth` reads it with the session on every request (no cache) and puts it on `c.get("user")`. In Wave 14 only admins differ: they manage the team. A role never grants access to content; the rules below are unchanged for every role.
 
 Only owners may edit, publish, restore, move, rename, delete, purge, or change sharing; recipients are read-only. Uploads and moves must target a folder the caller owns. Missing, forbidden, and binned items all answer 404. Recipients never see a shared folder's parent, and a document's `folder_id` is masked for them unless that folder is itself visible. The predicate lives in `server/access.ts` (notes), `server/documentAccess.ts` (documents), the `GET /api/notes` query, and `server/mcpTools.ts`.
 
@@ -210,6 +214,8 @@ Any other `/api` path returns a JSON 404. In production every other path serves 
 
 `server/mcp.ts` owns keys and the transport. It checks `Host` and `Origin`, authenticates the bearer token (SHA-256 lookup; revoked keys and disabled users are refused), caps concurrent requests at 24, bounds the body, and builds a fresh `McpServer` per request with the key's context (`keyId`, owner, name, scopes) in `authInfo`.
 
+Each request, and each tool call through `loadLiveKey`, uses the key's **effective scopes**: the stored scopes narrowed to what the holder's current team role allows (`effectiveMcpScopes` in `server/team/roles.ts`), so an admin who is demoted loses `team:read` on the next call without the key row changing.
+
 `server/mcpTools.ts` holds every tool as a spec: a name, the scopes that allow it (any one), whether it writes, an optional daily bucket, a Zod input schema, and a handler. `registerMcpTools` registers only the specs the key's scopes allow. `runTool` wraps every handler: it reloads the key from the database and re-checks the scope, charges the per-key limits in `server/mcpRateLimit.ts` (all buckets or none), validates the arguments, and maps `McpToolError` to `isError` results with `{error, code}`. The scope vocabulary and the write-implies-read rule are pure functions in `server/mcpScopes.ts`, mirrored for Settings in `src/mcpPermissions.ts`.
 
 Tools reuse the HTTP services as the key's owner:
@@ -259,6 +265,21 @@ Calendars, events, reminders, notifications, and Web Push (WAVES_10-12.md §4), 
 
 **Client.** `src/calendar/` (agenda, month, event sheet and view, calendars dialog, and the Feed dialog `FeedDialog.tsx`), `src/calendarRoute.ts` and `src/calendarNavigation.ts` (routes and history hints), and `src/notifications/` (the bell rendered by `AccountActions` inside `NotificationsContext`, `/notifications`, and the Settings → Notifications device switch). `public/sw.js` is the service worker, served with `Cache-Control: no-cache`; sign-out calls `forgetThisDevice()` to drop this browser's subscription.
 
+<a id="team"></a>
+## Team
+
+Accounts, roles, and blocking (Wave 14; plan of record `docs/plan/research/2026-09-26-team-module.md`), in `server/team/` with routes under `/api/team` (API_CONTRACTS.md § Team):
+
+- `roles.ts` is pure: the four roles, the roles assignable this release (admin, member), `can(role, capability)`, `mcpScopesForRole`, and `effectiveMcpScopes`. `src/team/teamRoles.ts` mirrors it for the client.
+- `service.ts` lists members (admins get account metadata; everyone else names, roles, and status), reads the activity log, and runs every write in one transaction: role changes with a compare-and-swap on the expected role, blocks, unblocks, and sign-out-everywhere. Each write records one `team_events` row and one `audit_log` row with ids and roles only. The service refuses to leave no active admin (`LAST_ADMIN`), and the migration's triggers refuse it in SQL too.
+- `routes.ts` answers guests with 404, refuses writes from non-admins (403), rate-limits admins to 30 writes a minute, and asks for the password (plus a fresh second factor when enabled, `server/reauth.ts`) before granting or removing admin or blocking an admin.
+- `mcpTools.ts` holds the read-only `team:read` tools.
+- `server/team-admin.ts` is the host CLI (`list`, `set-role`, `unblock`) for lockouts; it calls the same service with no actor and `via = 'cli'`.
+
+**Block** reuses `users.disabled_at`, which every session, MCP, feed, picker, and assignee check already honours. The block transaction also deletes the account's sessions and push subscriptions. Sign-in answers 403 `ACCOUNT_BLOCKED` only after the right password; the document upload commit re-checks the owner inside its transaction; the reminders dispatcher skips blocked accounts. The first account registered on an empty database is made admin inside the register transaction.
+
+The client (`src/team/`) is one app with a list at `/team` and a member page at `/team/:userId`. The role picker is the shared 13A `src/ui/Select.tsx` (a listbox popup on desktop, a bottom sheet at phone width, keyboard and type-ahead; D91), and every confirmation registers through `src/ui/useHistoryDialogGuard.ts`, which wraps the dialog guard in `src/historyDialogs.ts`. Team is a row in Settings → Modules: off hides the Team button and redirects `/team` Home, guests never see the row, and admins keep Settings → Manage team, which passes the route gate for that visit. The Team button in the account row comes from `TeamNavContext` in `src/AppShell.tsx`, so apps do not wire it themselves.
+
 ## UI
 
 ### Apps
@@ -269,7 +290,7 @@ Tiptap provides an Outline-like block editor with Markdown serialization, keyboa
 
 ### URL routing and history
 
-`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, `/tasks`, `/tasks/:boardId`, `/tasks/:boardId/card/:cardId`, `/collections`, `/collections/:c`, `/collections/:c/view/:v`, `/collections/:c/row/:r`, `/calendar`, `/calendar/month/:yyyy-mm`, `/calendar/event/:eventId`, `/notifications`, and `/bin`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
+`src/router.ts` maps paths to routes with pure `parseRoute`/`formatRoute`: `/`, `/notes`, `/notes/folder/:id`, `/notes/shared`, `/notes/:noteId`, the same shapes under `/files`, `/tasks`, `/tasks/:boardId`, `/tasks/:boardId/card/:cardId`, `/collections`, `/collections/:c`, `/collections/:c/view/:v`, `/collections/:c/row/:r`, `/calendar`, `/calendar/month/:yyyy-mm`, `/calendar/event/:eventId`, `/notifications`, `/bin`, `/team`, and `/team/:userId`. Unknown paths resolve to Home; ids must be UUIDs and are lowercased. `navigate()` pushes (or replaces) a real history entry on desktop and mobile, and `popstate` re-parses `location.pathname`.
 
 History state layers hints over the URL:
 

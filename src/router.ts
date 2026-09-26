@@ -8,7 +8,8 @@ export type Route =
   | { app: "collections"; collectionId: string | null; viewId: string | null; rowId: string | null }
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "notifications" }
-  | { app: "bin" };
+  | { app: "bin" }
+  | { app: "team"; userId: string | null };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -81,6 +82,8 @@ export function parseRoute(pathname: string): Route {
   if (app === "calendar") return parseCalendar(rest);
   if (app === "notifications" && rest.length === 0) return { app: "notifications" };
   if (app === "bin" && rest.length === 0) return { app: "bin" };
+  // /team and /team/:userId. A malformed id, or anything after it, opens the list.
+  if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
   return { app: "home" };
 }
 
@@ -114,6 +117,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : "/team";
   return "/";
 }
 

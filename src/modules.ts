@@ -45,7 +45,7 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "search", label: "Search", description: "The search box in Notes and Ctrl+K. The Notes list stays.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
   { id: "bin", label: "Bin", description: "Hides the Bin button and Leaving the Bin soon. Deleting still moves items to the Bin, and they are still deleted forever after 30 days.", icon: Trash2, routeApps: ["bin"], todaySections: ["binSoon"], headerItem: "bin" },
   { id: "notifications", label: "Notifications", description: "Hides the bell and the Notifications page. Reminders and push notifications still arrive.", icon: Bell, routeApps: ["notifications"], todaySections: [], headerItem: "bell" },
-  { id: "team", label: "Team", description: "People and groups in this workspace.", icon: Users, routeApps: [], todaySections: [], planned: true }
+  { id: "team", label: "Team", description: "The Team button and the people in this workspace. Roles and blocking still apply.", icon: Users, routeApps: ["team"], todaySections: [] }
 ];
 
 const byId = new Map(MODULES.map((module) => [module.id, module]));
@@ -54,6 +54,14 @@ export const moduleDef = (id: ModuleId) => byId.get(id)!;
 
 /** The modules Settings lists (planned ones are left out until their wave ships). */
 export const SETTINGS_MODULES = MODULES.filter((module) => !module.planned);
+
+/**
+ * The modules Settings lists for a role. Guests never see Team (Team plan §6.2, §11): they have no
+ * access to it, so it is left out rather than shown as a switch.
+ */
+export function settingsModulesFor(role: string | undefined): readonly ModuleDef[] {
+  return role === "guest" ? SETTINGS_MODULES.filter((module) => module.id !== "team") : SETTINGS_MODULES;
+}
 
 /** Unique known ids in registry order; anything else (unknown ids, non-arrays) is ignored. */
 export function normalizeDisabledModules(value: unknown): ModuleId[] {

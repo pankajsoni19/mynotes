@@ -139,9 +139,7 @@ describe("search index sync", () => {
     const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "searchBackfillProbe.ts")], { stdout: "pipe", stderr: "pipe" });
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     const result = JSON.parse(output) as Record<string, unknown>;
-    // 017 onwards (Team, Wave 14) land from a parallel wave and may or may not be present yet.
-    expect(registeredMigrationIds.slice(0, 16)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-    expect(registeredMigrationIds.slice(16).every((id) => id >= 17)).toBe(true);
+    expect(registeredMigrationIds).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
     expect(result).toMatchObject({
       migrations: [...registeredMigrationIds],
       rows: ["binned:published", "both:draft", "both:published", "draftOnly:draft", "published:published"],

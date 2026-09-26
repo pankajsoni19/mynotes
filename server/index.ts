@@ -26,6 +26,9 @@ import { readPreferences, registerPreferenceRoutes } from "./preferences";
 import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
+import { registerTeamRoutes } from "./team/routes";
+import { recordBootstrapAdmin } from "./team/service";
+import { mcpScopesForRole } from "./team/roles";
 import {
   draftSchema,
   folderSharingSchema,
@@ -49,13 +52,11 @@ import {
   createRecoveryCodes,
   createTotpSecret,
   decryptRecoveryCodes,
-  decryptTotpSecret,
   encryptRecoveryCodes,
   encryptTotpSecret,
-  recoveryCodeMatches,
-  totpUri,
-  verifyTotp
+  totpUri
 } from "./totp";
+import { consumeRecoveryCode, consumeTotp } from "./reauth";
 
 const app = new Hono<AppEnv>();
 
@@ -109,41 +110,6 @@ async function purgeBlankNote(note: NoteRow, userId: string) {
 function totpState(user: Pick<UserRow, "totp_enabled_at">) {
   const enabled = user.totp_enabled_at !== null;
   return { enabled, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" && !enabled };
-}
-
-function consumeTotp(user: Pick<UserRow, "id" | "totp_secret" | "totp_last_counter">, code: string) {
-  if (!user.totp_secret || !config.totpEncryptionKey) return null;
-  let secret: string;
-  try {
-    secret = decryptTotpSecret(user.totp_secret, config.totpEncryptionKey, user.id);
-  } catch {
-    audit(user.id, null, "auth.totp_secret_unreadable");
-    return null;
-  }
-  const counter = verifyTotp(secret, code, user.totp_last_counter);
-  if (counter === null) return null;
-  const result = db.query(`
-    UPDATE users SET totp_last_counter = ?
-    WHERE id = ? AND totp_secret = ? AND (totp_last_counter IS NULL OR totp_last_counter < ?)
-  `).run(counter, user.id, user.totp_secret, counter);
-  return result.changes === 1 ? counter : null;
-}
-
-function consumeRecoveryCode(user: Pick<UserRow, "id" | "totp_recovery_codes">, code: string) {
-  if (!user.totp_recovery_codes || !config.totpEncryptionKey) return false;
-  try {
-    const codes = decryptRecoveryCodes(user.totp_recovery_codes, config.totpEncryptionKey, user.id);
-    const index = codes.findIndex((candidate) => recoveryCodeMatches(candidate, code));
-    if (index < 0) return false;
-    const remaining = codes.filter((_, itemIndex) => itemIndex !== index);
-    const encrypted = encryptRecoveryCodes(remaining, config.totpEncryptionKey, user.id);
-    const result = db.query("UPDATE users SET totp_recovery_codes = ? WHERE id = ? AND totp_recovery_codes = ?")
-      .run(encrypted, user.id, user.totp_recovery_codes);
-    return result.changes === 1;
-  } catch {
-    audit(user.id, null, "auth.totp_recovery_unreadable");
-    return false;
-  }
 }
 
 const globalSecureHeaders = secureHeaders({
@@ -223,12 +189,18 @@ app.post("/api/auth/register", async (c) => {
   if (exists) return c.json({ error: "An account with that email already exists" }, 409);
   const id = crypto.randomUUID();
   const passwordHash = await Bun.password.hash(body.password, { algorithm: "argon2id", memoryCost: 65536, timeCost: 3 });
+  let role: UserRow["role"] = "member";
   try {
     db.transaction(() => {
       const currentCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
       if (!config.allowRegistration && currentCount > 0) throw new HTTPException(403, { message: "Registration is disabled" });
-      db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)")
-        .run(id, body.email, body.displayName, passwordHash, now());
+      // D76: the first account on an empty instance is the admin. The count and the insert share
+      // this transaction, so two concurrent "first" registrations cannot both become admin.
+      role = currentCount === 0 ? "admin" : "member";
+      const timestamp = now();
+      db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(id, body.email, body.displayName, passwordHash, timestamp, role);
+      if (role === "admin") recordBootstrapAdmin(id, timestamp);
       ensureDefaultFolder(id);
     })();
   } catch (error) {
@@ -239,7 +211,7 @@ app.post("/api/auth/register", async (c) => {
   const csrfToken = await createSession(c, id);
   audit(id, null, "auth.register");
   return c.json({
-    user: { id, email: body.email, displayName: body.displayName },
+    user: { id, email: body.email, displayName: body.displayName, role },
     csrfToken,
     totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
   }, 201);
@@ -248,13 +220,19 @@ app.post("/api/auth/register", async (c) => {
 app.post("/api/auth/login", async (c) => {
   const body = await parseJson(c.req.raw, loginSchema);
   if (rateLimited(`login:${body.email}`) || rateLimited("login:global", 50)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
+  // Blocked accounts are looked up too, so the block can be explained, but only after the right
+  // password and before any second factor is consumed (T85). The reason is never shown (O11).
   const user = isEmailAllowed(body.email)
-    ? db.query("SELECT * FROM users WHERE email = ? AND disabled_at IS NULL").get(body.email) as UserRow | null
+    ? db.query("SELECT * FROM users WHERE email = ?").get(body.email) as UserRow | null
     : null;
   const valid = user ? await Bun.password.verify(body.password, user.password_hash) : false;
   if (!user || !valid) {
     audit(user?.id ?? null, null, "auth.login_failed");
     return c.json({ error: "Invalid email or password" }, 401);
+  }
+  if (user.disabled_at !== null) {
+    audit(user.id, null, "auth.login_blocked");
+    return c.json({ error: "This account has been blocked. Contact your Nook administrator.", code: "ACCOUNT_BLOCKED" }, 403);
   }
   if (user.totp_enabled_at) {
     if (!body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", requiresTotp: true }, 428);
@@ -271,7 +249,7 @@ app.post("/api/auth/login", async (c) => {
   const csrfToken = await createSession(c, user.id);
   audit(user.id, null, "auth.login");
   return c.json({
-    user: { id: user.id, email: user.email, displayName: user.display_name },
+    user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
     csrfToken,
     totp: totpState(user)
   });
@@ -281,7 +259,7 @@ app.use("/api/auth/me", requireAuth);
 app.get("/api/auth/me", (c) => {
   const user = c.get("user");
   return c.json({
-    user: { id: user.id, email: user.email, displayName: user.display_name },
+    user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
     csrfToken: c.get("csrfToken"),
     totp: totpState(user),
     // UI-only (D92): which modules this user hid. Never used for authorization (T97).
@@ -319,6 +297,11 @@ app.get("/api/mcp/keys", (c) => c.json({ keys: listMcpApiKeys(c.get("user").id) 
 app.post("/api/mcp/keys", async (c) => {
   const body = await parseJson(c.req.raw, mcpApiKeySchema);
   const userId = c.get("user").id;
+  // Checked before the password so no code is consumed; team:read is admin-only (T81).
+  const allowedScopes = mcpScopesForRole(c.get("user").role);
+  if (body.scopes?.some((scope) => !allowedScopes.includes(scope))) {
+    return c.json({ error: "Your team role cannot create a key with these permissions", code: "SCOPE_NOT_ALLOWED" }, 403);
+  }
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as UserRow | null;
   const passwordValid = user ? await Bun.password.verify(body.password, user.password_hash) : false;
   if (!user || !passwordValid) {
@@ -821,6 +804,7 @@ registerTodayRoutes(app);
 registerCollectionRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
+registerTeamRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
