@@ -18,6 +18,7 @@ import {
   filterBinItems,
   purgeCountdownLabel,
   restoreResultMessage,
+  subitemLabel,
   type BinFilter
 } from "./binFormat";
 import "./bin.css";
@@ -254,6 +255,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
               <span className="bin-row-title" title={label}><span className="sr-only">{binKindLabel(item)}: </span>{label}</span>
               <span className="bin-row-meta">
                 <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" ? `In ${binFolderLabel(item)}` : item.attachment ? attachmentLabel(item) : binFolderLabel(item)}</span>
+                {item.type === "card" && Boolean(item.descendant_count) && <span>{subitemLabel(item.descendant_count!)}</span>}
                 <time dateTime={item.deleted_at}>Deleted {relativeTime(item.deleted_at)}</time>
                 {item.purging || action === "delete"
                   ? <span className="bin-row-status">Deleting forever…</span>

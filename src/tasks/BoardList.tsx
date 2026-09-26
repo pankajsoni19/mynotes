@@ -4,6 +4,8 @@ import { ConfirmDialog } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { NameDialog } from "../files/RenameDialog";
 import { BoardSharePanel } from "./BoardSharePanel";
+import { NewBoardDialog } from "./NewBoardDialog";
+import { structureLabel, type BoardTemplateId } from "../../shared/boardStructure";
 import { binConfirmMessage, cardCountLabel, sharingLabel, validateBoardName, type TaskNotify } from "./taskActions";
 import { createBoard, deleteBoard, listBoards, renameBoard, restoreTaskItem, taskErrorCode, taskErrorMessage, type BoardSummary } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
@@ -43,8 +45,8 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
   const shared = all.filter((board) => board.is_owner !== 1);
   const dialogBoard = dialog && dialog.kind !== "new" ? all.find((board) => board.id === dialog.boardId) ?? null : null;
 
-  async function create(name: string) {
-    const { board } = await createBoard(name);
+  async function create(name: string, template: BoardTemplateId) {
+    const { board } = await createBoard(name, template);
     setDialog(null);
     setBoards((current) => current ? [...current, board] : [board]);
     onOpen(board);
@@ -90,6 +92,7 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
         <span className="task-board-name" title={board.name}>{board.name}</span>
         <span className="task-board-meta">
           <span>{cardCountLabel(board.card_count)}</span>
+          {board.structure && (board.structure.levels.length > 1 || board.structure.sprints) && <span>{structureLabel(board.structure)}</span>}
           <time dateTime={board.updated_at}>Updated {relativeTime(board.updated_at)}</time>
           {board.is_owner === 0 ? <span className="owner-badge">{board.owner_name}</span> : board.visibility !== "private" && <span className="task-shared"><Users aria-hidden="true" />{sharingLabel(board.visibility)}</span>}
         </span>
@@ -123,13 +126,13 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
     {!loadError && boards && !all.length && <div className="bin-state">
       <span className="bin-state-icon"><KanbanSquare /></span>
       <h2>No boards yet</h2>
-      <p>Create a board to start with To do, Doing, and Done columns.</p>
+      <p>Create a board from a template: a simple kanban, a to-do list, epics and stories, and more.</p>
       <button className="primary-button" onClick={() => setDialog({ kind: "new" })}><Plus />New board</button>
     </div>}
     {owned.length > 0 && <><h2 className="tasks-section-label">Your boards</h2><ul className="task-board-list" aria-label="Your boards">{owned.map(row)}</ul></>}
     {shared.length > 0 && <><h2 className="tasks-section-label">Shared with you</h2><ul className="task-board-list" aria-label="Boards shared with you">{shared.map(row)}</ul></>}
 
-    {dialog?.kind === "new" && <NameDialog title="New board" eyebrow="Tasks" label="Board name" initialValue="" submitLabel="Create board" hint="Up to 120 characters. It starts with To do, Doing, and Done." validate={(value) => validateBoardName(value)} onSubmit={create} onCancel={closeDialog} />}
+    {dialog?.kind === "new" && <NewBoardDialog onSubmit={create} onCancel={closeDialog} />}
     {dialog?.kind === "rename" && dialogBoard && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={dialogBoard.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, dialogBoard.name)} onSubmit={(name) => rename(dialogBoard, name)} onCancel={closeDialog} />}
     {dialog?.kind === "delete" && dialogBoard && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", dialogBoard.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void remove(dialogBoard); }} onCancel={closeDialog} />}
     {dialog?.kind === "share" && dialogBoard && <BoardSharePanel board={dialogBoard} onClose={closeDialog} onChanged={() => {

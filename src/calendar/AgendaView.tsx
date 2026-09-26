@@ -82,7 +82,7 @@ export function TaskRow({ task }: { task: DueTask }) {
     <span className="calendar-occurrence-time">{time}</span>
     <span className="calendar-occurrence-copy">
       <strong>{task.title}</strong>
-      <small>{task.boardName}</small>
+      <small>{task.parentTitle ? `${task.boardName} › ${task.parentTitle}` : task.boardName}</small>
     </span>
   </div>;
 }

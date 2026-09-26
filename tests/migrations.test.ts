@@ -16,19 +16,21 @@ import { calendarMigration } from "../server/migrations/013_calendar";
 import { eventNextOccurrenceMigration } from "../server/migrations/014_event_next_occurrence";
 import { userPreferencesMigration } from "../server/migrations/016_user_preferences";
 import { taskCardUxMigration } from "../server/migrations/015_task_card_ux";
+import { taskViewsMigration } from "../server/migrations/020_task_views";
 import { registeredMigrationIds, runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not 018 and 019 are present yet, and pins 1–17 and 020.
+ * holds whether or not 018 is present yet, and pins 1–17, 019, and 020.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  // 1–17 are on main; 018 (Team invites) and 019 (task hierarchy) may land later than 020 (task views).
+  // 1–17 are on main; 018 (Team invites) may land later than 019 (task hierarchy) and 020 (task views).
   expect(ids.slice(0, 17)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
   expect(ids.slice(17).every((id) => id >= 18)).toBe(true);
+  expect(ids).toContain(19);
   expect(ids).toContain(20);
 }
 
@@ -466,6 +468,72 @@ describe("database migrations", () => {
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
     expectAllMigrations(ids);
     expect(db.query("SELECT card_id, user_id FROM card_assignees").all()).toEqual([{ card_id: "k1", user_id: "u1" }]);
+    db.close();
+  });
+
+  test("migration 019 adds the hierarchy and sprint schema on a database that already has 020, with its invariants", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    // 1–16 and 020 applied (17C landed before 17A); 017 and 019 are missing, 018 is absent by design.
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
+      taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, taskViewsMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b1', 'u1', 'Plan', ?, ?)").run(old, old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b2', 'u1', 'Other', ?, ?)").run(old, old);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES ('c1', 'b1', 'To do', 1024, ?, ?)").run(old, old);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES ('c2', 'b2', 'To do', 1024, ?, ?)").run(old, old);
+    db.query("INSERT INTO cards (id, board_id, column_id, position, title, created_at, updated_at) VALUES ('k1', 'b1', 'c1', 1024, 'Kept', ?, ?)").run(old, old);
+
+    runMigrations(db);
+
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect(ids).not.toContain(18);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 19").get() as { name: string }).name).toBe("task_hierarchy");
+    // No backfill: existing cards are level 0 with no parent, and boards are Flat.
+    expect(db.query("SELECT parent_card_id, level, sprint_id, bin_root_id FROM cards WHERE id = 'k1'").get()).toEqual({ parent_card_id: null, level: 0, sprint_id: null, bin_root_id: null });
+    expect(JSON.parse((db.query("SELECT structure_json FROM boards WHERE id = 'b1'").get() as { structure_json: string }).structure_json))
+      .toEqual({ levels: [{ name: "Card", plural: "Cards" }], workLevel: 0, sprints: false });
+    expect(() => db.query("UPDATE boards SET structure_json = 'not json' WHERE id = 'b1'").run()).toThrow();
+    expect(() => db.query("UPDATE boards SET structure_json = '[]' WHERE id = 'b1'").run()).toThrow();
+    expect(() => db.query("UPDATE boards SET structure_json = ? WHERE id = 'b1'").run(JSON.stringify({ a: "x".repeat(1100) }))).toThrow();
+
+    const card = db.query("INSERT INTO cards (id, board_id, column_id, position, title, parent_card_id, level, created_at, updated_at) VALUES (?, ?, ?, 2048, ?, ?, ?, ?, ?)");
+    expect(() => db.query("UPDATE cards SET level = 3 WHERE id = 'k1'").run()).toThrow();
+    // A child sits exactly one level below a parent on the same board.
+    card.run("k2", "b1", "c1", "Child", "k1", 1, old, old);
+    expect(() => card.run("k3", "b1", "c1", "Skips a level", "k1", 2, old, old)).toThrow("PARENT_INVALID");
+    expect(() => card.run("k3", "b1", "c1", "Same level", "k1", 0, old, old)).toThrow("PARENT_INVALID");
+    expect(() => card.run("k3", "b2", "c2", "Other board", "k1", 1, old, old)).toThrow("PARENT_INVALID");
+    expect(() => card.run("k3", "b1", "c1", "Unknown parent", "nope", 1, old, old)).toThrow("PARENT_INVALID");
+    card.run("k3", "b1", "c1", "Grandchild", "k2", 2, old, old);
+    expect(() => db.query("UPDATE cards SET parent_card_id = 'k3', level = 1 WHERE id = 'k1'").run()).toThrow();
+    expect(() => db.query("UPDATE cards SET parent_card_id = id, level = 1 WHERE id = 'k1'").run()).toThrow();
+    // Cards with children keep their level.
+    expect(() => db.query("UPDATE cards SET level = 1 WHERE id = 'k1'").run()).toThrow("HAS_CHILDREN");
+    // Purging a parent detaches its children (ON DELETE SET NULL); they keep their level.
+    db.query("DELETE FROM cards WHERE id = 'k2'").run();
+    expect(db.query("SELECT parent_card_id, level FROM cards WHERE id = 'k3'").get()).toEqual({ parent_card_id: null, level: 2 });
+
+    const sprint = db.query(`INSERT INTO board_sprints (id, board_id, name, start_on, end_on, state, position, closed_at, created_at, updated_at)
+      VALUES (?, 'b1', ?, ?, ?, ?, 1024, ?, ?, ?)`);
+    sprint.run("s1", "Sprint 1", "2026-10-01", "2026-10-14", "active", null, old, old);
+    expect(() => sprint.run("s2", "Sprint 2", null, null, "active", null, old, old)).toThrow();
+    sprint.run("s2", "Sprint 2", null, null, "planned", null, old, old);
+    expect(() => sprint.run("s3", "Backwards", "2026-10-14", "2026-10-01", "planned", null, old, old)).toThrow();
+    expect(() => sprint.run("s3", "Bad date", "Oct 1", null, "planned", null, old, old)).toThrow();
+    expect(() => sprint.run("s3", "Closed without a time", null, null, "closed", null, old, old)).toThrow();
+    expect(() => sprint.run("s3", "", null, null, "planned", null, old, old)).toThrow();
+    db.query("UPDATE cards SET sprint_id = 's1' WHERE id = 'k1'").run();
+    db.query("DELETE FROM board_sprints WHERE id = 's1'").run();
+    expect((db.query("SELECT sprint_id FROM cards WHERE id = 'k1'").get() as { sprint_id: string | null }).sprint_id).toBeNull();
+    // Deleting a board removes its sprints.
+    db.query("DELETE FROM boards WHERE id = 'b1'").run();
+    expect((db.query("SELECT COUNT(*) AS count FROM board_sprints").get() as { count: number }).count).toBe(0);
     db.close();
   });
 

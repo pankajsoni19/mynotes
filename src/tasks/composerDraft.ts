@@ -17,13 +17,21 @@ export type ComposerDraft = {
   flags: string[];
   relations: StagedRelation[];
   attachments: UploadedAttachment[];
+  /** Hierarchy (17A): the parent one level up, and the level; null level means the board's work level. */
+  parentId: string | null;
+  level: number | null;
+  /** The sprint a work-level card is planned in (17B), or null for the backlog. */
+  sprintId: string | null;
 };
 
 export const MAX_COMPOSER_ATTACHMENTS = 50;
 export const MAX_COMPOSER_RELATIONS = 50;
 
-export function emptyDraft(columnId: string): ComposerDraft {
-  return { columnId, title: "", description: "", dueOn: null, dueTime: null, dueTz: null, assignees: [], tagIds: [], flags: [], relations: [], attachments: [] };
+export function emptyDraft(columnId: string, placement: { parentId?: string | null; level?: number | null; sprintId?: string | null } = {}): ComposerDraft {
+  return {
+    columnId, title: "", description: "", dueOn: null, dueTime: null, dueTz: null, assignees: [], tagIds: [], flags: [], relations: [], attachments: [],
+    parentId: placement.parentId ?? null, level: placement.level ?? null, sprintId: placement.sprintId ?? null
+  };
 }
 
 /**
@@ -101,6 +109,9 @@ export function createBody(draft: ComposerDraft, title: string): CardCreate {
   if (draft.flags.length) body.flags = draft.flags;
   if (draft.relations.length) body.relations = draft.relations.map((relation) => ({ targetCardId: relation.card.id, type: relation.type }));
   if (draft.attachments.length) body.attachmentIds = draft.attachments.map((file) => file.id);
+  if (draft.parentId) body.parentId = draft.parentId;
+  if (draft.level !== null) body.level = draft.level;
+  if (draft.sprintId) body.sprintId = draft.sprintId;
   return body;
 }
 

@@ -142,6 +142,19 @@ test("filter chips name restricted ids only as restricted (T116)", () => {
   expect(names.user("d1b2c3d4-e5f6-4a7b-9c8d-0e1f2a3b4c5d")).toBe("Unknown person");
 });
 
+test("the home filter bar reads the 17A/17B keys in canonical order, and never names a sprint or parent id", () => {
+  const names = refNames(undefined, { userId: me });
+  const query = q(`has:subtasks level:work sprint:current,none parent:none board:${boardId}`);
+  expect(query.terms.map((term) => term.key)).toEqual(["board", "sprint", "parent", "level", "has"]);
+  expect(homeChipLabel(query.terms[1]!, names)).toBe("Sprint is Current sprint, Backlog");
+  expect(homeChipLabel(query.terms[2]!, names)).toBe("Parent is No parent");
+  expect(homeChipLabel(query.terms[3]!, names)).toBe("Level is Work level");
+  expect(homeChipLabel(query.terms[4]!, names)).toBe("Has subtasks");
+  expect(homeChipLabel(q(`sprint:${otherBoard}`).terms[0]!, names)).toBe("Sprint is a sprint");
+  expect(homeChipLabel(q(`-parent:${otherBoard}`).terms[0]!, names)).toBe("Parent is not a parent card");
+  expect(withHomeTerm(q("state:todo has:relation"), "sprint", ["next"]).terms.map((term) => term.key)).toEqual(["state", "sprint", "has"]);
+});
+
 test("the segments mark the current one, and My work shows its state chips and locked assignee", () => {
   const segments = renderToStaticMarkup(<HomeSegments active="my" onSelect={noop} />);
   expect(segments).toContain('aria-label="Tasks sections"');

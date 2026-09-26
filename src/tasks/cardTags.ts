@@ -78,6 +78,11 @@ export function mergeCardDetail(item: CardSummary, card: CardDetail): CardSummar
     tag_ids: card.tag_ids ?? item.tag_ids,
     flags: card.flags ?? item.flags,
     column_id: item.column_id,
+    // Hierarchy (17A): a reparent or level change saves through the same dialog.
+    parent_card_id: card.parent_card_id !== undefined ? card.parent_card_id : item.parent_card_id,
+    level: card.level ?? item.level,
+    // Sprints (17B): the dialog's Sprint field, and a level change that clears it.
+    sprint_id: card.sprint_id !== undefined ? card.sprint_id : item.sprint_id,
     updated_at: card.updated_at
   };
 }

@@ -69,7 +69,7 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
-const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "list_views", "query_cards", "search_cards"];
+const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "list_children", "list_sprints", "list_views", "query_cards", "search_cards"];
 const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "link_cards", "move_card", "update_card"];
 
 describe("MCP task tools", () => {
@@ -486,5 +486,93 @@ describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5
     }
     // Filters never widen access: the member cannot list the private board at all.
     expect((await callTool(key, "list_cards", { boardId: s.privateBoardId, assigneeIds: ["none"] })).value).toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("MCP task tools: hierarchy (17A, D139, T119)", () => {
+  test("create_card and update_card take parentId and level; list_cards, get_card, and list_children show the tree", async () => {
+    const owner = await createUser("MCP tree owner");
+    const stranger = await createUser("MCP tree stranger");
+    const created = await api(owner, "POST", "/boards", { name: "MCP tree", template: "epics" });
+    const boardId = created.body.board.id as string;
+    const [todo, , done] = created.body.columns as Array<{ id: string }>;
+    const key = makeKey(owner, ["tasks:read", "tasks:write"]);
+    const epic = (await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Checkout", level: 0 })).value.card;
+    expect(epic).toMatchObject({ level: 0, level_name: "Epic", parent_id: null, child_count: 0 });
+    const story = (await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Refunds", parentId: epic.id })).value.card;
+    expect(story).toMatchObject({ level: 1, level_name: "Story", parent_id: epic.id });
+    const sub = (await callTool(key, "create_card", { boardId, columnId: done!.id, title: "Form", parentId: story.id })).value.card;
+    expect(sub.level).toBe(2);
+    expect(JSON.parse((db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'task.card_create' ORDER BY rowid DESC LIMIT 1").get() as { metadata_json: string }).metadata_json))
+      .toMatchObject({ via: "mcp", parentId: story.id, level: 2 });
+    // Invalid parents are INVALID with the service reason; a level change with children is refused.
+    expect((await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Bad", parentId: sub.id })).value).toMatchObject({ code: "INVALID", reason: "PARENT_INVALID" });
+    expect((await callTool(key, "update_card", { cardId: story.id, baseRevision: story.revision, level: 2 })).value).toMatchObject({ code: "INVALID", reason: "HAS_CHILDREN", childCount: 1 });
+    const listed = (await callTool(key, "list_cards", { boardId })).value;
+    expect(listed.board).toMatchObject({ levels: ["Epic", "Story", "Subtask"], work_level: 1 });
+    expect(listed.cards.find((card: { id: string }) => card.id === story.id)).toMatchObject({ parent_id: epic.id, level: 1, level_name: "Story", child_count: 1, done_child_count: 1 });
+    const detail = (await callTool(key, "get_card", { cardId: story.id })).value;
+    expect(detail.card).toMatchObject({ parent_id: epic.id, parent_title: "Checkout", child_count: 1 });
+    expect(detail.children).toEqual([expect.objectContaining({ id: sub.id, title: "Form", level_name: "Subtask", is_done: true })]);
+    expect((await callTool(key, "list_children", { cardId: epic.id })).value.children.map((child: { id: string }) => child.id)).toEqual([story.id]);
+    // Detach under the revision CAS; a stale revision is CARD_CHANGED.
+    const detached = (await callTool(key, "update_card", { cardId: story.id, baseRevision: story.revision, parentId: null })).value.card;
+    expect(detached).toMatchObject({ parent_id: null, level: 1 });
+    expect((await callTool(key, "update_card", { cardId: story.id, baseRevision: story.revision, parentId: epic.id })).value).toMatchObject({ code: "CARD_CHANGED" });
+    // query_cards names the parent; a stranger's key cannot list the children.
+    const queried = (await callTool(key, "query_cards", { filter: `board:${boardId} level:2` })).value;
+    expect(queried.cards).toEqual([expect.objectContaining({ id: sub.id, parent_id: story.id, parent_title: "Refunds", level: 2 })]);
+    expect((await callTool(makeKey(stranger, ["tasks:read"]), "list_children", { cardId: epic.id })).value).toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("MCP task tools: sprints (17B, D139, T119)", () => {
+  test("list_sprints, sprintId on create_card and update_card, sprint fields on reads, and sprint filters", async () => {
+    const owner = await createUser("MCP sprint owner");
+    const stranger = await createUser("MCP sprint stranger");
+    const created = await api(owner, "POST", "/boards", { name: "MCP sprints", template: "scrum" });
+    const boardId = created.body.board.id as string;
+    const [backlogColumn, todo, , , done] = created.body.columns as Array<{ id: string }>;
+    const first = (await api(owner, "GET", `/boards/${boardId}`)).body.sprints[0].id as string;
+    expect((await api(owner, "PATCH", `/sprints/${first}`, { state: "active" })).status).toBe(200);
+    const next = (await api(owner, "POST", `/boards/${boardId}/sprints`, { name: "Sprint 2" })).body.sprint.id as string;
+    const key = makeKey(owner, ["tasks:read", "tasks:write"]);
+
+    const listed = (await callTool(key, "list_sprints", { boardId })).value;
+    expect(listed.sprints.map((sprint: { name: string; state: string }) => [sprint.name, sprint.state])).toEqual([["Sprint 1", "active"], ["Sprint 2", "planned"]]);
+    expect(listed.nextCursor).toBeNull();
+    expect((await callTool(key, "list_sprints", { boardId, state: "planned" })).value.sprints.map((sprint: { id: string }) => sprint.id)).toEqual([next]);
+    expect((await callTool(makeKey(stranger, ["tasks:read"]), "list_sprints", { boardId })).value).toMatchObject({ code: "NOT_FOUND" });
+
+    const task = (await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Checkout", sprintId: first })).value.card;
+    expect(task).toMatchObject({ sprint_id: first, sprint_name: "Sprint 1" });
+    expect(JSON.parse((db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'task.card_create' ORDER BY rowid DESC LIMIT 1").get() as { metadata_json: string }).metadata_json))
+      .toMatchObject({ via: "mcp", sprintId: first });
+    const subtask = (await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Form", parentId: task.id })).value.card;
+    expect(subtask).toMatchObject({ sprint_id: first, sprint_name: "Sprint 1" });
+    // A subtask stores no sprint: INVALID with the reason; an unknown sprint is NOT_FOUND.
+    expect((await callTool(key, "update_card", { cardId: subtask.id, baseRevision: subtask.revision, sprintId: next })).value).toMatchObject({ code: "INVALID", reason: "SPRINT_LEVEL" });
+    expect((await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Nope", sprintId: crypto.randomUUID() })).value).toMatchObject({ code: "NOT_FOUND" });
+    await callTool(key, "create_card", { boardId, columnId: backlogColumn!.id, title: "Idea" });
+    await callTool(key, "create_card", { boardId, columnId: done!.id, title: "Shipped", sprintId: first });
+
+    const moved = (await callTool(key, "update_card", { cardId: task.id, baseRevision: task.revision, sprintId: next })).value.card;
+    expect(moved).toMatchObject({ sprint_id: next, sprint_name: "Sprint 2", revision: task.revision + 1 });
+    const detail = (await callTool(key, "get_card", { cardId: subtask.id })).value.card;
+    expect(detail).toMatchObject({ sprint_id: next, sprint_name: "Sprint 2" });
+
+    const titles = async (sprint: string) => ((await callTool(key, "list_cards", { boardId, sprint })).value.cards as Array<{ title: string }>).map((card) => card.title).sort();
+    expect(await titles("current")).toEqual(["Shipped"]);
+    expect(await titles("next")).toEqual(["Checkout", "Form"]);
+    expect(await titles(next)).toEqual(["Checkout", "Form"]);
+    expect(await titles("none")).toEqual(["Idea"]);
+    expect((await callTool(key, "list_cards", { boardId })).value.board).toMatchObject({ sprints_enabled: true });
+    expect((await callTool(key, "list_cards", { boardId, sprint: "later" })).isError).toBe(true);
+
+    const queried = (await callTool(key, "query_cards", { filter: `board:${boardId} sprint:next` })).value;
+    expect(queried.cards.map((card: { title: string }) => card.title).sort()).toEqual(["Checkout", "Form"]);
+    expect(queried.cards.find((card: { title: string }) => card.title === "Form")).toMatchObject({ sprint_id: next, sprint_name: "Sprint 2" });
+    // No sprint lifecycle tools (D139): agents plan cards, the owner runs the sprints.
+    expect((await toolNames(key)).filter((name) => /sprint/.test(name))).toEqual(["list_sprints"]);
   });
 });

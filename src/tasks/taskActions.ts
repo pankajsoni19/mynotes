@@ -63,8 +63,8 @@ export const unlinkConfirmMessage = (name: string, ownFile: boolean) => ownFile
   : `Remove “${name}” from this card? If no other card uses it, it moves to its uploader's Bin for 30 days.`;
 
 /** The Files-style confirm copy for moving a card or board to the Bin. */
-export const binConfirmMessage = (kind: "card" | "board", name: string) => kind === "card"
-  ? `Move “${name}” to the Bin? You can restore it for 30 days.`
+export const binConfirmMessage = (kind: "card" | "board", name: string, descendants = 0) => kind === "card"
+  ? `Move “${name}”${descendants ? ` and ${descendants === 1 ? "the card under it" : `the ${descendants} cards under it`}` : ""} to the Bin? You can restore ${descendants ? "them together" : "it"} for 30 days.`
   : `Move the board “${name}” and all its cards to the Bin? You can restore it for 30 days.`;
 
 /** A toast action, such as Undo after moving something to the Bin. */

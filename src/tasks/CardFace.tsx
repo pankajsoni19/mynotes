@@ -1,4 +1,4 @@
-import { AlignLeft, CalendarDays, Link2, MessageSquare, OctagonAlert, Paperclip } from "lucide-react";
+import { AlignLeft, CalendarDays, Link2, ListChecks, MessageSquare, OctagonAlert, Paperclip } from "lucide-react";
 import { cardTags, FLAG_LABELS, visibleItems } from "./cardTags";
 import { FlagIcon } from "./TagPicker";
 import { assigneeSentence, attachmentCountLabel, cardAssignees, commentCountLabel, dueStatus } from "./taskActions";
@@ -8,7 +8,14 @@ import type { BoardTag, CardSummary } from "./tasksApi";
 export const FACE_TAGS = 3;
 export const FACE_PEOPLE = 3;
 
-type FaceInput = { card: CardSummary; tags: readonly BoardTag[]; done: boolean; today: string };
+type FaceInput = {
+  card: CardSummary; tags: readonly BoardTag[]; done: boolean; today: string;
+  /** Hierarchy (17A, §7.3): the parent's title (its chip is a button next to the face), and the children's roll-up. */
+  parentTitle?: string | null;
+  rollup?: { done: number; total: number } | null;
+  /** What the children are called, lower case ("subtasks"). */
+  childLabel?: string;
+};
 
 /** "Asha", "Asha and Ben", "Asha, Ben, and Chen": every name, for screen readers. */
 function listSentence(names: readonly string[]) {
@@ -40,8 +47,10 @@ export function avatarTone(id: string) {
  * tomorrow at 17:00, tags Backend, assigned to Asha and Ben, 2 comments". The excerpt is its
  * description instead.
  */
-export function cardFaceLabel({ card, tags, done, today }: FaceInput) {
+export function cardFaceLabel({ card, tags, done, today, parentTitle, rollup, childLabel = "subtasks" }: FaceInput) {
   const parts = [card.title];
+  if (parentTitle) parts.push(`in ${parentTitle}`);
+  if (rollup?.total) parts.push(`${rollup.done} of ${rollup.total} ${childLabel} done`);
   for (const flag of card.flags ?? []) parts.push(FLAG_LABELS[flag].toLowerCase());
   const due = dueStatus(card.due_on, today, done, { dueAt: card.due_at });
   if (due) parts.push(lowerFirst(due.description));
@@ -63,7 +72,7 @@ export function cardFaceLabel({ card, tags, done, today }: FaceInput) {
  * (`cardFaceLabel`), so the face itself is hidden from screen readers; `excerptId` lets the card
  * point its description at the excerpt.
  */
-export function CardFace({ card, tags, done, today, excerptId }: FaceInput & { excerptId: string }) {
+export function CardFace({ card, tags, done, today, excerptId, rollup, childLabel = "subtasks" }: FaceInput & { excerptId: string }) {
   const flags = card.flags ?? [];
   const excerpt = card.description_excerpt?.trim() ?? "";
   const due = dueStatus(card.due_on, today, done, { dueAt: card.due_at });
@@ -72,7 +81,8 @@ export function CardFace({ card, tags, done, today, excerptId }: FaceInput & { e
   const shownPeople = visibleItems(people, FACE_PEOPLE);
   const assigned = people.length ? `Assigned to ${assigneeSentence(people.map((person) => person.display_name))}` : "";
   const counts = (card.has_description === 1 && !excerpt) || card.comment_count > 0 || card.attachment_count > 0 || Boolean(card.relation_count) || Boolean(card.open_blockers);
-  const meta = due || tagList.shown.length > 0 || counts || people.length > 0;
+  const children = rollup && rollup.total > 0 ? rollup : null;
+  const meta = due || tagList.shown.length > 0 || counts || people.length > 0 || children;
 
   return <div className="task-card-face" aria-hidden="true">
     {flags.length > 0 && <span className="task-card-flags">
@@ -81,6 +91,7 @@ export function CardFace({ card, tags, done, today, excerptId }: FaceInput & { e
     <span className="task-card-title">{card.title}</span>
     {excerpt && <span id={excerptId} className="task-card-excerpt">{excerpt}</span>}
     {meta && <span className="task-card-meta">
+      {children && <span className={`task-subtask-chip${children.done === children.total ? " complete" : ""}`} title={`${children.done} of ${children.total} ${childLabel} done`}><ListChecks />{children.done}/{children.total}</span>}
       {due && <span className={`task-due-chip ${due.tone}`} title={due.description}><CalendarDays />{due.label}</span>}
       {tagList.shown.length > 0 && <span className="task-card-tags">
         {tagList.shown.map((tag) => <span key={tag.id} className={`task-tag color-${tag.color}`} title={tag.name}>{tag.name}</span>)}

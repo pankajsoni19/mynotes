@@ -10,6 +10,7 @@ import { RELATION_TYPES, type RelationType } from "./relations";
 import { registerCardRelationRoutes } from "./relationRoutes";
 import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NAME_MAX, updateTag } from "./tags";
 import { registerTaskQueryRoutes } from "./queryRoutes";
+import { cardHierarchy } from "./hierarchy";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
   createBoard,
@@ -27,14 +28,21 @@ import {
   patchColumn,
   putSharing,
   renameBoard,
+  setBoardStructure,
   TaskError
 } from "./service";
+import { BOARD_TEMPLATES, validateStructure } from "../../shared/boardStructure";
 
 // C0/C1 controls and bidi overrides never belong in a board, column, or card name.
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F‪-‮⁦-⁩]/;
 const label = (max: number) => z.string().trim().min(1).max(max).refine((value) => !controlCharacters.test(value), "Names cannot contain control characters");
 
 export const boardNameSchema = z.object({ name: label(120) }).strict();
+/** `POST /boards`: a name and an optional template (D136). */
+export const boardCreateSchema = z.object({ name: label(120), template: z.enum(BOARD_TEMPLATES).optional() }).strict();
+/** `PATCH /boards/:b`: a new name and/or a new structure (checked by `validateStructure`, D122). */
+export const boardPatchSchema = z.object({ name: label(120).optional(), structure: z.unknown().optional() }).strict()
+  .refine((value) => value.name !== undefined || value.structure !== undefined, "Provide a name or a structure");
 export const boardSharingSchema = z.object({
   visibility: z.enum(["private", "selected", "all_users"]),
   userIds: z.array(uuid).max(100).default([])
@@ -83,6 +91,8 @@ const flagsSchema = z.array(z.enum(CARD_FLAGS)).max(CARD_FLAGS.length).refine((f
 const createRelationsSchema = z.array(z.object({ targetCardId: uuid, type: z.enum(RELATION_TYPES as [RelationType, ...RelationType[]]) }).strict())
   .max(MAX_RELATIONS_PER_CARD)
   .refine((relations) => new Set(relations.map((relation) => relation.targetCardId.toLowerCase())).size === relations.length, "Each card can be related once");
+/** A card level (migration 019): 0–2; the service also checks the board's level count (D121). */
+const levelSchema = z.number().int().min(0).max(2);
 export const tagCreateSchema = z.object({ name: label(TAG_NAME_MAX), color: z.enum(TAG_COLORS).optional() }).strict();
 export const tagPatchSchema = z.object({ name: label(TAG_NAME_MAX).optional(), color: z.enum(TAG_COLORS).optional() }).strict()
   .refine((value) => value.name !== undefined || value.color !== undefined, "Provide a name or a color");
@@ -99,6 +109,11 @@ export const cardCreateSchema = z.object({
   relations: createRelationsSchema.optional(),
   /** The caller's own unlinked task-attachment uploads (LIMITS.attachmentsPerCard). */
   attachmentIds: z.array(uuid).max(50).optional(),
+  /** A live card of this board one level up (D121). */
+  parentId: uuid.nullable().optional(),
+  level: levelSchema.optional(),
+  /** A planned or active sprint of this board (17B); work-level cards only. */
+  sprintId: uuid.nullable().optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
 export const cardPatchSchema = z.object({
@@ -112,12 +127,19 @@ export const cardPatchSchema = z.object({
   assigneeIds: assigneeIdsSchema.optional(),
   tagIds: tagIdsSchema.optional(),
   flags: flagsSchema.optional(),
+  /** Reparent (D128): a live card of this board one level up, or null to detach. */
+  parentId: uuid.nullable().optional(),
+  /** Change level (D128); 409 HAS_CHILDREN while the card has live children. */
+  level: levelSchema.optional(),
+  /** Plan the card in a sprint of its board, or null for the backlog (17B); work-level cards only. */
+  sprintId: uuid.nullable().optional(),
   revision: z.number().int().positive()
 }).strict()
   .refine((value) => value.assigneeId === undefined || value.assigneeIds === undefined, "Send assigneeIds or the legacy assigneeId, not both")
   .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.dueTime !== undefined
-    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined,
-  "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, or flags");
+    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined
+    || value.parentId !== undefined || value.level !== undefined || value.sprintId !== undefined,
+  "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, flags, parentId, level, or sprintId");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
 export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();
@@ -176,8 +198,8 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.get("/api/tasks/boards", (c) => c.json({ boards: listBoards(c.get("user").id) }));
 
   app.post("/api/tasks/boards", async (c) => {
-    const body = await parseJson(c.req.raw, boardNameSchema);
-    return respond(c, () => createBoard(c.get("user").id, body.name), 201);
+    const body = await parseJson(c.req.raw, boardCreateSchema);
+    return respond(c, () => createBoard(c.get("user").id, body.name, body.template), 201);
   });
 
   app.get("/api/tasks/boards/:boardId", (c) => {
@@ -187,8 +209,15 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
 
   app.patch("/api/tasks/boards/:boardId", async (c) => {
     const boardId = id(c, "boardId");
-    const body = await parseJson(c.req.raw, boardNameSchema);
-    return respond(c, () => renameBoard(c.get("user").id, boardId, body.name));
+    const body = await parseJson(c.req.raw, boardPatchSchema);
+    const structure = body.structure === undefined ? null : validateStructure(body.structure);
+    if (structure && !structure.ok) return c.json(invalid(structure.error), 400);
+    const userId = c.get("user").id;
+    return respond(c, async () => {
+      let result = structure?.ok ? await setBoardStructure(userId, boardId, structure.structure) : null;
+      if (body.name !== undefined) result = await renameBoard(userId, boardId, body.name);
+      return result!;
+    });
   });
 
   app.delete("/api/tasks/boards/:boardId", (c) => {
@@ -271,7 +300,16 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     return respond(c, () => {
       const { card } = getCard(userId, cardId);
       const page = listComments(userId, cardId);
-      return { card, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
+      // Parent, ancestors, and children are on the card's own board (D133, T112).
+      return { card: { ...card, ...cardHierarchy(cardId) }, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
+    });
+  });
+
+  app.get("/api/tasks/cards/:cardId/children", (c) => {
+    const cardId = id(c, "cardId");
+    return respond(c, () => {
+      getCard(c.get("user").id, cardId);
+      return { children: cardHierarchy(cardId).children };
     });
   });
 

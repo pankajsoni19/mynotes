@@ -263,6 +263,8 @@ export type BinItem = {
   attachment_kind: "card" | "row" | null;
   /** Whether the caller may delete it forever (a card's deleter may only restore it). */
   can_purge: boolean;
+  /** Cards: descendants binned with it, restored and purged with it (task hierarchy D129). */
+  descendant_count?: number;
 };
 
 export const BIN_LIST_LIMIT = 500;
@@ -308,7 +310,8 @@ export function listBin(ownerId: string, type: BinListType | null) {
     items.push(...listTaskBin(ownerId, type === "card" || type === "board" ? type : null, BIN_LIST_LIMIT).map((row): BinItem => ({
       type: row.type, id: row.id, title: row.title, folder_id: null, folder_name: null, size_bytes: null,
       deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purging, attachment: false, attachment_of: null, attachment_kind: null,
-      board_id: row.board_id, board_name: row.board_name, can_purge: row.can_purge
+      board_id: row.board_id, board_name: row.board_name, can_purge: row.can_purge,
+      ...(row.descendant_count ? { descendant_count: row.descendant_count } : {})
     })));
   }
   if (type === null) items.push(...[...providers.values()].flatMap((provider) => provider.list(ownerId)));

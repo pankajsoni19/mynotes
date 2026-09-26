@@ -80,6 +80,8 @@ export type EventInput = {
  */
 export type DueTask = {
   cardId: string; boardId: string; boardName: string; title: string; dueOn: string;
+  /** The parent card on the same board (task hierarchy D138). */
+  parentTitle?: string | null;
   dueTime?: string | null; dueTz?: string | null; dueAt?: string | null; date?: string;
 };
 export type OccurrenceList = { occurrences: Occurrence[]; truncated: boolean; tasks?: DueTask[] };

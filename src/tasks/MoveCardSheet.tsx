@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowDownToLine, ArrowUpToLine, Check, Columns3 } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, Check, ChevronLeft, Columns3, Layers } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { canEnterColumn } from "./taskActions";
 import type { BoardColumn, CardSummary } from "./tasksApi";
@@ -13,12 +13,21 @@ type MoveCardSheetProps = {
   cards?: readonly CardSummary[];
   onMove: (columnId: string, place: MovePlace) => Promise<void>;
   onCancel: () => void;
+  /** Hierarchy (17A, D128): "Set parent…", the path to reparent without drag (phones, keyboard). */
+  parentPicker?: {
+    label: string;
+    noneLabel: string;
+    currentParentId: string | null;
+    options: Array<{ id: string; title: string; disabled?: boolean }>;
+    onPick: (parentId: string | null) => Promise<void>;
+  };
 };
 
 // "Move to…": a dialog on desktop, a full-screen sheet on phones. Lists the board's columns and
 // Top or Bottom; the current column is allowed, so a card can jump to the top or bottom of its own.
 // A column at its WIP limit is listed but disabled.
-export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel }: MoveCardSheetProps) {
+export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, parentPicker }: MoveCardSheetProps) {
+  const [picking, setPicking] = useState(false);
   const [chosen, setChosen] = useState<string | null>(null);
   const [place, setPlace] = useState<MovePlace>("bottom");
   const [busy, setBusy] = useState(false);
@@ -39,7 +48,34 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel }: M
     }
   }
 
+  async function pickParent(parentId: string | null) {
+    if (!parentPicker) return;
+    setBusy(true);
+    await parentPicker.onPick(parentId);
+    onCancel();
+  }
+
+  if (picking && parentPicker) {
+    return <ModalDialog title={`${parentPicker.label.replace(/…$/, "")} for “${card.title}”`} eyebrow="Parent" onClose={onCancel} variant="sheet" busy={busy}>
+      <div className="move-list" role="radiogroup" aria-label="Parent">
+        <button className="move-option" onClick={() => setPicking(false)} disabled={busy}><ChevronLeft aria-hidden="true" /><span>Back to columns</span></button>
+        {[{ id: null as string | null, title: parentPicker.noneLabel, disabled: false }, ...parentPicker.options].map((option, index) => {
+          const current = option.id === parentPicker.currentParentId;
+          return <button key={option.id ?? "none"} role="radio" aria-checked={current} className={`move-option${current ? " active" : ""}`} autoFocus={index === 0}
+            disabled={busy || option.disabled || current} onClick={() => { void pickParent(option.id); }}>
+            <Layers aria-hidden="true" /><span>{option.title}{current ? <small>Current</small> : option.disabled && <small>Full (100 children)</small>}</span>
+            {current && <Check aria-hidden="true" />}
+          </button>;
+        })}
+        {!parentPicker.options.length && <p className="task-comment-empty">No cards one level up on this board yet.</p>}
+      </div>
+    </ModalDialog>;
+  }
+
   return <ModalDialog title={`Move “${card.title}”`} eyebrow="Move to" onClose={onCancel} variant="sheet" busy={busy}>
+    {parentPicker && <div className="move-list task-move-parent">
+      <button className="move-option" onClick={() => setPicking(true)} disabled={busy}><Layers aria-hidden="true" /><span>{parentPicker.label}<small>{parentPicker.currentParentId ? `Now: ${parentPicker.options.find((option) => option.id === parentPicker.currentParentId)?.title ?? "its parent"}` : "It has none now"}</small></span></button>
+    </div>}
     <div className="move-list" role="radiogroup" aria-label="Column">
       {columns.map((column, index) => {
         const current = column.id === card.column_id;

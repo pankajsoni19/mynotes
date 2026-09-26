@@ -9,10 +9,16 @@ import { TEXT_DEBOUNCE_MS } from "../FilterBar";
 import { committableDueDate } from "../taskActions";
 import { STATE_LABELS, type RefNames } from "./homeResults";
 
-/** The cross-board fields (§10.3): `column:` needs one board, so it is not offered here. */
-type HomeField = "board" | "state" | "assignee" | "tag" | "flag" | "due" | "has";
-const FIELD_LABELS: Record<HomeField, string> = { board: "Board", state: "State", assignee: "Assignee", tag: "Tag", flag: "Flag", due: "Due", has: "Relations" };
-const FIELD_ORDER: HomeField[] = ["board", "state", "assignee", "tag", "flag", "due", "has"];
+/**
+ * The cross-board fields (§10.3): `column:` needs one board, so it is not offered here. `sprint:`,
+ * `level:`, and `parent:` (17A, 17B) offer only their board-independent values (`current`, `next`,
+ * `none`, `work`, level numbers); a sprint or parent id from a link or a saved view shows as a chip.
+ */
+type HomeField = "board" | "state" | "assignee" | "tag" | "flag" | "due" | "sprint" | "parent" | "level" | "has";
+const FIELD_LABELS: Record<HomeField, string> = { board: "Board", state: "State", assignee: "Assignee", tag: "Tag", flag: "Flag", due: "Due", sprint: "Sprint", parent: "Parent", level: "Level", has: "Relations" };
+const FIELD_ORDER: HomeField[] = ["board", "state", "assignee", "tag", "flag", "due", "sprint", "parent", "level", "has"];
+const SPRINT_LABELS: Record<string, string> = { current: "Current sprint", next: "Next sprint", none: "Backlog" };
+const LEVEL_LABELS: Record<string, string> = { work: "Work level", 0: "Top level", 1: "Second level", 2: "Third level" };
 
 export type HomeFilterOptions = {
   boards: Array<{ id: string; name: string }>;
@@ -36,7 +42,7 @@ type HomeFilterBarProps = {
 };
 
 const DUE_PHRASES: Record<string, string> = { overdue: "Overdue", today: "Due today", week: "Due in the next 7 days", "next-week": "Due in the 7 days after", none: "No due date" };
-const HAS_PHRASES: Record<string, [string, string]> = { relation: ["Has relations", "No relations"], blocked: ["Blocked by a card", "Not blocked by a card"] };
+const HAS_PHRASES: Record<string, [string, string]> = { relation: ["Has relations", "No relations"], blocked: ["Blocked by a card", "Not blocked by a card"], subtasks: ["Has subtasks", "No subtasks"] };
 
 /** A term value in words, resolved for this viewer (restricted ids are never named, T116). */
 export function homeValueLabel(key: string, value: string, names: RefNames) {
@@ -49,6 +55,10 @@ export function homeValueLabel(key: string, value: string, names: RefNames) {
     case "flag": return value === "none" ? "No flag" : FLAG_LABELS[value as keyof typeof FLAG_LABELS] ?? value;
     case "due": return dueValueLabel(value);
     case "has": return HAS_LABELS[value] ?? value;
+    // Ids are never named across boards (T116): a sprint or parent id reads generically.
+    case "sprint": return SPRINT_LABELS[value] ?? "a sprint";
+    case "parent": return value === "none" ? "No parent" : "a parent card";
+    case "level": return LEVEL_LABELS[value] ?? value;
     default: return value;
   }
 }
@@ -61,7 +71,7 @@ export function homeChipLabel(term: FilterTerm, names: RefNames) {
     const phrases = term.values.map((value) => DUE_PHRASES[value] ?? `Due ${dueValueLabel(value)}`).join(" or ");
     return term.negate ? `Not: ${phrases}` : phrases;
   }
-  const label = { board: "Board", column: "Column", state: "State", assignee: "Assignee", creator: "Created by", tag: "Tag", flag: "Flag" }[term.key] ?? term.key;
+  const label = ({ board: "Board", column: "Column", state: "State", assignee: "Assignee", creator: "Created by", tag: "Tag", flag: "Flag", sprint: "Sprint", parent: "Parent", level: "Level" } as Record<string, string>)[term.key] ?? term.key;
   return `${label} ${term.negate ? "is not" : "is"} ${term.values.map((value) => homeValueLabel(term.key, value, names)).join(", ")}`;
 }
 
@@ -125,7 +135,10 @@ export function HomeFilterBar({ filter, onChange, names, options, lockedKeys = [
       case "tag": return [...[...new Set(options.tagNames)].sort().map((name) => ({ value: name, label: name })), { value: "none", label: "No tag" }];
       case "flag": return [...TASK_FLAGS.map((flag) => ({ value: flag, label: FLAG_LABELS[flag] })), { value: "none", label: "No flag" }];
       case "due": return [{ value: "overdue", label: "Overdue" }, { value: "today", label: "Today" }, { value: "week", label: "Next 7 days" }, { value: "next-week", label: "The 7 days after" }, { value: "none", label: "No date" }];
-      case "has": return [{ value: "relation", label: "Has relations" }, { value: "blocked", label: "Is blocked" }];
+      case "sprint": return (["current", "next", "none"] as const).map((value) => ({ value, label: SPRINT_LABELS[value] }));
+      case "parent": return [{ value: "none", label: "No parent" }];
+      case "level": return ["work", "0", "1", "2"].map((value) => ({ value, label: LEVEL_LABELS[value] }));
+      case "has": return [{ value: "relation", label: "Has relations" }, { value: "blocked", label: "Is blocked" }, { value: "subtasks", label: "Has subtasks" }];
     }
   };
   const chips = filter.terms.map((term, index) => ({ term, index }))

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronLeft, Gauge, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Settings2, Trash2, TriangleAlert } from "lucide-react";
+import { BoardSettingsSheet } from "./BoardSettingsSheet";
+import { useBoardHierarchy } from "./useBoardHierarchy";
+import { useBoardSprints } from "./useBoardSprints";
+import { SprintBar } from "./SprintBar";
+import { SprintCompleteDialog } from "./SprintCompleteDialog";
+import { SprintSettingsSection } from "./SprintSettingsSection";
+import { withLocalCounts } from "./sprintModel";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
@@ -24,7 +31,7 @@ import { STATE_LABELS } from "./home/homeResults";
 import { BoardGroupedList } from "./BoardGroupedList";
 import { BoardTable } from "./BoardTable";
 import { BoardViewSwitch } from "./BoardViewSwitch";
-import { applyBoardQuery, boardData, type BoardContext } from "./boardQuery";
+import { applyBoardQuery, boardData, filterBoardCards, type BoardContext } from "./boardQuery";
 import { hasBoardFilter, withBoardQuery, type BoardQuery } from "./boardUrl";
 import { localDateString, viewerTimeZone } from "./taskActions";
 import { FilterBar } from "./FilterBar";
@@ -79,9 +86,10 @@ type BoardViewProps = {
 };
 
 type BoardDialog =
-  | { kind: "rename" | "share" | "addColumn" | "deleteBoard" }
+  | { kind: "rename" | "share" | "addColumn" | "deleteBoard" | "settings" }
   | { kind: "columnMenu" | "renameColumn" | "deleteColumn" | "wipLimit"; columnId: string }
-  | { kind: "moveCard"; cardId: string };
+  | { kind: "moveCard"; cardId: string }
+  | { kind: "completeSprint"; sprintId: string };
 
 export const MAX_COLUMNS = 20;
 
@@ -95,7 +103,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const [dropTarget, setDropTarget] = useState<{ columnId: string; index: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   // The card composer (a guarded dialog, no history entry): the column it was opened from, or null.
-  const [composer, setComposer] = useState<{ columnId: string | null } | null>(null);
+  const [composer, setComposer] = useState<{ columnId: string | null; parentId?: string } | null>(null);
   const detailRef = useRef(detail);
   detailRef.current = detail;
   // The control that opened the current dialog, so focus can return to it.
@@ -163,8 +171,13 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     setDialog(next);
   };
 
+  // Cards this view just moved to the Bin with a tree (D129): Back may land on one (a subtask opened
+  // from its parent's breadcrumb); it then steps on quietly, keeping the Undo toast.
+  const binnedRef = useRef(new Set<string>());
+  const openCardIdRef = useRef(openCardId);
+  openCardIdRef.current = openCardId;
   const onCardMissing = useCallback(() => {
-    notify("Card not found");
+    if (!openCardIdRef.current || !binnedRef.current.has(openCardIdRef.current)) notify("Card not found");
     onCloseCard();
   }, [notify, onCloseCard]);
 
@@ -185,13 +198,25 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   // One pipeline for every view (§4.5): filter, sort, and (in the list view) group the loaded board.
   const data = useMemo(() => detail ? boardData(detail) : null, [detail]);
   const viewContext: BoardContext = { userId, today: localDateString(), now: Date.now(), timeZone: viewerTimeZone() };
-  const result = data ? applyBoardQuery(data, query, viewContext) : null;
+  // Sprints (17B): the sprint on screen (`?sprint=`, the active one by default) scopes every view
+  // through one more grammar term; the filter bar keeps only the viewer's own terms.
+  const sprints = useBoardSprints({ detail, setDetail, query, onQueryChange, notify, load });
+  const sprintScoped = sprints.term !== null;
+  const scopedQuery = sprints.term ? { ...query, filter: { terms: [...query.filter.terms, sprints.term] } } : query;
+  const result = data ? applyBoardQuery(data, scopedQuery, viewContext) : null;
+  const scopedTotal = data && sprints.term ? filterBoardCards(data, { terms: [sprints.term] }, viewContext).length : cards.length;
   const filtered = hasBoardFilter(query);
   const view = query.view;
   // The lanes show the matching cards; drag and keyboard moves anchor on the cards in view.
-  const laneCards: CardSummary[] = filtered && result ? result.cards : cards;
+  const laneCards: CardSummary[] = (filtered || sprintScoped) && result ? result.cards : cards;
   const laneCardsRef = useRef(laneCards);
   laneCardsRef.current = laneCards;
+  // Hierarchy (17A): which levels the lanes show, chips, nesting by drag, and the card dialog's checklist.
+  const hierarchy = useBoardHierarchy({
+    detail, detailRef, setDetail, notify, load, onOpenCard,
+    move: (cardId, columnId, afterCardId) => move(cardId, columnId, afterCardId),
+    openComposer: ({ parentId }) => setComposer({ columnId: null, parentId })
+  });
 
   const setCards = (change: (cards: CardSummary[]) => CardSummary[]) =>
     setDetail((current) => current ? { ...current, cards: change(current.cards) } : current);
@@ -422,13 +447,18 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     const siblings = card ? columnCards(detailRef.current!.cards, card.column_id) : [];
     const index = siblings.findIndex((item) => item.id === cardId);
     const place = card ? { columnId: card.column_id, afterCardId: index > 0 ? siblings[index - 1]!.id : null } : {};
-    await deleteCard(cardId);
-    setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => item.id !== cardId), board: { ...current.board, card_count: Math.max(0, current.board.card_count - 1) } } : current);
+    const { descendantCount = 0 } = await deleteCard(cardId);
+    // Its live children and grandchildren went to the Bin with it (D129).
+    const gone = new Set([cardId]);
+    for (let step = 0; step < 2; step += 1) for (const item of detailRef.current?.cards ?? []) if (item.parent_card_id && gone.has(item.parent_card_id)) gone.add(item.id);
+    for (const id of gone) binnedRef.current.add(id);
+    setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => !gone.has(item.id)), board: { ...current.board, card_count: Math.max(0, current.board.card_count - gone.size) } } : current);
     lastOpenCardRef.current = null;
     onCloseCard();
-    notify(`Moved “${card?.title ?? "card"}” to the Bin`, { label: "Undo", run: () => {
+    notify(`Moved “${card?.title ?? "card"}”${descendantCount ? ` and ${descendantCount === 1 ? "1 card" : `${descendantCount} cards`} under it` : ""} to the Bin`, { label: "Undo", run: () => {
       restoreTaskItem("card", cardId, place).then((result) => {
-        notify(`Restored to ${result.columnName ?? "the board"}`);
+        for (const id of gone) binnedRef.current.delete(id);
+        notify(`Restored to ${result.columnName ?? "the board"}${result.descendantCount ? ` with ${result.descendantCount === 1 ? "1 card" : `${result.descendantCount} cards`} under it` : ""}${result.detached ? ", without its parent (it is in the Bin)" : ""}`);
         void load();
       }, (reason) => notify(taskErrorMessage(reason, "Could not restore the card")));
     } });
@@ -464,12 +494,14 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       {board && <span className="task-board-count">{cardCountLabel(board.card_count)}</span>}
       {detail && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
       {detail && <BoardViewSwitch value={view} onChange={(next) => onQueryChange(withBoardQuery(query, { view: next }), { push: true })} />}
-      {owner && <span className="task-board-actions">
-        <button className="icon-button" onClick={(event) => openDialog({ kind: "rename" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Rename board" title="Rename board"><Pencil /></button>
-        <button className="icon-button" onClick={(event) => openDialog({ kind: "share" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Share board" title="Share board"><Share2 /></button>
-        <button className="icon-button" onClick={(event) => openDialog({ kind: "deleteBoard" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Delete board" title="Move to the Bin"><Trash2 /></button>
+      {board && <span className="task-board-actions">
+        <button className="icon-button" onClick={(event) => openDialog({ kind: "settings" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Board settings" title="Board settings"><Settings2 /></button>
       </span>}
     </header>
+    {data && sprints.selection && <SprintBar sprints={sprints.sprints} selection={sprints.selection} cards={data.cards} columns={columns} workLevel={hierarchy.structure.workLevel}
+      name={hierarchy.structure.levels[hierarchy.structure.workLevel]?.name ?? "Card"} plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"}
+      today={viewContext.today} owner={owner} onSelect={sprints.select} onStart={(sprint) => { void sprints.start(sprint); }}
+      onComplete={(sprint, trigger) => openDialog({ kind: "completeSprint", sprintId: sprint.id }, trigger)} />}
     <KeyboardMoveHint id="task-card-keys">Press Alt with an arrow key to move a card up, down, or to the next column.</KeyboardMoveHint>
     <p className="sr-only" aria-live="polite">{announcement}</p>
 
@@ -480,7 +512,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!loadError && !detail && <p className="bin-loading task-board-state" role="status">Loading the board…</p>}
-    {detail && data && result && <FilterBar board={data} context={viewContext} filter={query.filter} shown={result.cards.length} total={cards.length}
+    {detail && data && result && <FilterBar board={data} context={viewContext} filter={query.filter} shown={result.cards.length} total={scopedTotal}
       onChange={(filter) => onQueryChange(withBoardQuery(query, { filter }))} />}
     {detail && data && result && view === "table" && <div className="task-view-body">
       <BoardTable board={data} cards={result.cards} sort={query.sort} today={viewContext.today} filtered={filtered}
@@ -512,8 +544,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       {columns.map((column, index) => <BoardColumnView
         key={column.id}
         column={column}
-        cards={columnCards(laneCards, column.id)}
-        totalCount={filtered ? columnCards(cards, column.id).length : undefined}
+        cards={columnCards(hierarchy.visible(laneCards, filtered), column.id)}
+        totalCount={columnCards(cards, column.id).length}
+        emptyText={filtered ? "No matching cards" : sprintScoped ? (sprints.selection?.kind === "backlog" ? "Nothing from the backlog here" : "Nothing from this sprint here") : "Its cards sit inside their parents"}
+        nesting={hierarchy.nesting}
         tags={detail.tags}
         owner={owner}
         isFirst={index === 0}
@@ -522,7 +556,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         dropIndex={dropTarget?.columnId === column.id ? dropTarget.index : null}
         refuseDrop={draggingId !== null && !canEnterColumn(cards, column, draggingId)}
         onDragStart={(card) => setDraggingId(card.id)}
-        onDragEnd={() => { setDraggingId(null); setDropTarget(null); }}
+        onDragEnd={() => { setDraggingId(null); setDropTarget(null); hierarchy.clearNest(); }}
         onDragOverIndex={(slot) => setDropTarget((current) => slot === null
           ? current?.columnId === column.id ? null : current
           : current?.columnId === column.id && current.index === slot ? current : { columnId: column.id, index: slot })}
@@ -561,6 +595,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onTagsChange={(change) => setDetail((current) => current ? applyTagChange(current, change) : current)}
       onOpenRelated={(target) => onOpenCardRoute?.(target.board_id, target.id)}
       onRelationsChanged={(id, counts) => setCards((items) => items.map((item) => item.id === id ? { ...item, ...counts } : item))}
+      hierarchy={hierarchy.dialog}
+      sprints={sprints.enabled ? sprints.sprints : undefined}
     /></CardPage>}
     {composer && detail && board && <CardComposer
       boardId={boardId}
@@ -575,7 +611,33 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       tags={detail.tags ?? []}
       owner={owner}
       onTagsChange={(change) => setDetail((current) => current ? applyTagChange(current, change) : current)}
+      structure={hierarchy.structure}
+      parentCards={cards}
+      initialParentId={composer.parentId}
+      sprints={sprints.enabled ? sprints.sprints : undefined}
+      initialSprintId={sprints.composerSprintId}
     />}
+    {dialog?.kind === "settings" && board && <BoardSettingsSheet board={board} owner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
+      onClose={closeDialog} notify={notify}
+      onRename={() => setDialog({ kind: "rename" })} onShare={() => setDialog({ kind: "share" })} onDelete={() => setDialog({ kind: "deleteBoard" })} onAddColumn={() => setDialog({ kind: "addColumn" })}
+      onStructureSaved={(saved) => setDetail((current) => current ? { ...current, board: saved } : current)}
+      sprintsSection={<SprintSettingsSection boardId={boardId} sprints={data ? withLocalCounts(sprints.sprints, data.cards, columns, hierarchy.structure.workLevel) : sprints.sprints} owner={owner} today={viewContext.today}
+        plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"}
+        onCreate={sprints.create} onUpdate={sprints.update} onStart={sprints.start} onDelete={sprints.remove}
+        onComplete={(sprint) => setDialog({ kind: "completeSprint", sprintId: sprint.id })} />} />}
+    {dialog?.kind === "completeSprint" && data && (() => {
+      const sprint = sprints.sprints.find((item) => item.id === dialog.sprintId && item.state === "active");
+      if (!sprint) return null;
+      const { structure } = hierarchy;
+      return <SprintCompleteDialog sprint={sprint} sprints={sprints.sprints} cards={data.cards} columns={columns} workLevel={structure.workLevel}
+        name={structure.levels[structure.workLevel]?.name ?? "Card"} plural={structure.levels[structure.workLevel]?.plural ?? "Cards"}
+        childPlural={structure.levels[structure.workLevel + 1]?.plural ?? null} today={viewContext.today} onCancel={closeDialog}
+        onComplete={async (carryTo, next) => {
+          await sprints.complete(sprint, carryTo, next);
+          setDialog(null);
+          returnFocusRef.current = null;
+        }} />;
+    })()}
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
     {dialog?.kind === "share" && board && <BoardSharePanel board={board} onClose={closeDialog} onChanged={() => {
       closeDialog();
@@ -612,7 +674,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}
-    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} onMove={async (columnId, place) => {
+    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} parentPicker={hierarchy.parentPicker(dialogCard)} onMove={async (columnId, place) => {
       const current = detailRef.current;
       setDialog(null);
       returnFocusRef.current = null;

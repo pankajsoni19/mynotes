@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
-import { cardFilterFromQuery, format, parse, queryCards, queryFromCardFilter, type CardFilter, type QueryCard } from "../shared/taskQuery";
+import { cardFilterFromQuery, format, matchesQuery, parse, queryCards, queryFromCardFilter, type CardFilter, type MemoryQueryCard, type QueryCard } from "../shared/taskQuery";
 
 const { filterBoardCardIds } = await import("../server/tasks/cardQuery");
 const { runQuery } = await import("../server/tasks/query");
@@ -150,5 +150,77 @@ describe("one grammar across the board pipeline, list_cards SQL, and the cross-b
       expect(parsed.ok).toBe(true);
       expect(cardFilterFromQuery((parsed as { ok: true; query: never }).query)).toBeNull();
     }
+  });
+});
+
+describe("hierarchy keys (17A): the board's in-memory matcher and the cross-board query agree", () => {
+  test("parent:, level:, and has:subtasks, positive and negated", async () => {
+    const user = await createUser("Parity hierarchy");
+    const created = await call(user, "POST", "/boards", { name: "Parity tree" });
+    const treeBoard = created.body.board.id as string;
+    const todo = created.body.columns[0].id as string;
+    const structure = { levels: [{ name: "Epic", plural: "Epics" }, { name: "Story", plural: "Stories" }, { name: "Subtask", plural: "Subtasks" }], workLevel: 1, sprints: false };
+    expect((await call(user, "PATCH", `/boards/${treeBoard}`, { structure })).status).toBe(200);
+    const add = async (title: string, extra: Record<string, unknown>) => (await call(user, "POST", `/boards/${treeBoard}/cards`, { columnId: todo, title, ...extra })).body.card.id as string;
+    const epic = await add("Epic", { level: 0 });
+    const story = await add("Story", { parentId: epic });
+    await add("Subtask", { parentId: story });
+    await add("Loose story", {});
+    await add("Loose subtask", { level: 2 });
+    const board = (await call(user, "GET", `/boards/${treeBoard}`)).body;
+    for (const text of ["parent:none", `parent:${epic}`, `parent:${story},none`, "level:work", "level:0,2", "-level:work", "has:subtasks", "-has:subtasks", `level:1 parent:${epic}`]) {
+      const parsed = parse(`board:${treeBoard} ${text}`);
+      if (!parsed.ok) throw new Error(`${text}: ${parsed.error.message}`);
+      const memory = (board.cards as MemoryQueryCard[]).filter((card) => matchesQuery({ ...card, board_id: treeBoard } as MemoryQueryCard, parsed.query, { userId: user.userId, today: "2026-09-26", workLevel: 1 }))
+        .map((card) => card.id).sort();
+      const server = runQuery(user.userId, parsed.query, { tz: "UTC", limit: 100 }).cards.map((card) => card.id).sort();
+      expect(server).toEqual(memory);
+      expect(server.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("sprint key (17B): the board's in-memory matcher and the cross-board query agree", () => {
+  test("sprint:current, next, none, and ids, positive and negated, with subtasks inheriting", async () => {
+    const user = await createUser("Parity sprints");
+    const created = await call(user, "POST", "/boards", { name: "Parity sprints", template: "scrum" });
+    const sprintBoard = created.body.board.id as string;
+    const todo = created.body.columns[0].id as string;
+    const done = created.body.columns[4].id as string;
+    const first = (await call(user, "GET", `/boards/${sprintBoard}`)).body.sprints[0].id as string;
+    expect((await call(user, "PATCH", `/sprints/${first}`, { state: "active" })).status).toBe(200);
+    const next = (await call(user, "POST", `/boards/${sprintBoard}/sprints`, { name: "Sprint 2" })).body.sprint.id as string;
+    const later = (await call(user, "POST", `/boards/${sprintBoard}/sprints`, { name: "Sprint 3" })).body.sprint.id as string;
+    const add = async (title: string, extra: Record<string, unknown>) => (await call(user, "POST", `/boards/${sprintBoard}/cards`, { columnId: todo, title, ...extra })).body.card.id as string;
+    const task = await add("Current task", { sprintId: first });
+    await add("Its subtask", { parentId: task });
+    await add("Shipped", { sprintId: first, columnId: done });
+    const nextTask = await add("Next task", { sprintId: next });
+    await add("Next subtask", { parentId: nextTask });
+    await add("Later task", { sprintId: later });
+    await add("Backlog task", {});
+    await add("Loose subtask", { level: 1 });
+    // A second board with its own active sprint: `current` is per board.
+    const other = await call(user, "POST", "/boards", { name: "Parity sprints two", template: "scrum" });
+    const otherSprint = (await call(user, "GET", `/boards/${other.body.board.id}`)).body.sprints[0].id as string;
+    await call(user, "PATCH", `/sprints/${otherSprint}`, { state: "active" });
+    await call(user, "POST", `/boards/${other.body.board.id}/cards`, { columnId: other.body.columns[0].id, title: "Other current", sprintId: otherSprint });
+
+    const board = (await call(user, "GET", `/boards/${sprintBoard}`)).body;
+    const sprints = { current: first, next };
+    for (const text of ["sprint:current", "sprint:next", "sprint:none", "sprint:backlog", `sprint:${later}`, `sprint:${later},none`, "-sprint:current", "-sprint:none", "sprint:current state:done", "sprint:current,next"]) {
+      const parsed = parse(`board:${sprintBoard} ${text}`);
+      if (!parsed.ok) throw new Error(`${text}: ${parsed.error.message}`);
+      const memory = (board.cards as MemoryQueryCard[]).filter((card) => matchesQuery({ ...card, board_id: sprintBoard } as MemoryQueryCard, parsed.query,
+        { userId: user.userId, today: "2026-09-26", workLevel: 0, sprints, columnStates: Object.fromEntries(board.columns.map((column: { id: string; state: "todo" | "doing" | "done" }) => [column.id, column.state])) }))
+        .map((card) => card.id).sort();
+      const server = runQuery(user.userId, parsed.query, { tz: "UTC", limit: 100 }).cards.map((card) => card.id).sort();
+      expect(server).toEqual(memory);
+      expect(server.length).toBeGreaterThan(0);
+    }
+    // Across boards, `current` matches each board's own active sprint; cards carry the sprint name.
+    const across = runQuery(user.userId, parse("sprint:current").ok ? (parse("sprint:current") as { ok: true; query: never }).query : { terms: [] }, { tz: "UTC", limit: 100 }).cards;
+    expect(across.map((card) => card.title).sort()).toEqual(["Current task", "Its subtask", "Other current", "Shipped"]);
+    expect(across.find((card) => card.title === "Its subtask")).toMatchObject({ sprint_id: first, sprint_name: "Sprint 1" });
   });
 });

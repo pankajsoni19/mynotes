@@ -10,13 +10,16 @@ import { createUser, db, request, type Session } from "./support/harness";
  * Measured in 13C (recorded in the plan's D113 note): the full board is about
  * 1.25–1.39 MB of JSON depending on display-name length, over the plan's 1 MB
  * target, so this test guards against growth past 1.5 MB instead and the
- * director decides the D113 follow-up. Set MYNOTES_PAYLOAD_REPORT=1 to print
+ * director decides the D113 follow-up. 17A adds four hierarchy fields to each
+ * card (`parent_card_id`, `level`, `child_count`, `done_child_count`, about
+ * 75 bytes a card, 1.50 MB for this fixture), so the ceiling is 1.6 MB; the
+ * research plan's bound is 1.5× the v0.8 payload. Set MYNOTES_PAYLOAD_REPORT=1 to print
  * sizes (raw and gzip) and median timings, and MYNOTES_PAYLOAD_SHORT=1 for
  * short display names.
  */
 
 const CARDS = 1000;
-const CEILING_BYTES = 1_500_000;
+const CEILING_BYTES = 1_600_000;
 const short = Boolean(process.env.MYNOTES_PAYLOAD_SHORT);
 
 async function boardJson(session: Session, boardId: string) {
@@ -60,7 +63,7 @@ async function fixture(label: string, full: boolean) {
 }
 
 describe("board payload for 1000 cards (D113)", () => {
-  test("every Wave 13 field filled stays under the 1.5 MB regression ceiling", async () => {
+  test("every Wave 13 field filled stays under the 1.6 MB regression ceiling", async () => {
     const full = await fixture("Payload full", true);
     const bare = await fixture("Payload bare", false);
     await boardJson(full.owner, full.boardId);

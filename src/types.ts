@@ -80,6 +80,8 @@ export type BinItem = {
   attachment_kind?: "card" | "row" | null;
   /** False for a card, row, or event the caller deleted on someone else's board, collection, or calendar: they may only restore it. */
   can_purge?: boolean;
+  /** A card's descendants binned with it; they come back and are deleted with it (task hierarchy D129). */
+  descendant_count?: number;
 };
 export type BinRestoreResult = {
   ok: true;
@@ -92,6 +94,9 @@ export type BinRestoreResult = {
   boardName?: string;
   columnId?: string | null;
   columnName?: string | null;
+  /** Cards: descendants restored with it, and whether it came back without its parent (D129, D130). */
+  descendantCount?: number;
+  detached?: true;
   /** Calendars and events. */
   calendarId?: string;
   calendarName?: string;

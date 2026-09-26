@@ -1,6 +1,7 @@
 import { api, ApiError, getCsrfToken } from "../api";
 import { uploadErrorMessage } from "../files/filesApi";
 import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
+import type { BoardStructure, BoardTemplateId } from "../../shared/boardStructure";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -13,6 +14,8 @@ export type BoardSummary = {
   is_owner: 0 | 1;
   visibility: BoardVisibility;
   card_count: number;
+  /** Level names, work level, and sprints (migration 019); older servers omit it (Flat). */
+  structure?: BoardStructure;
   created_at: string;
   updated_at: string;
 };
@@ -68,17 +71,38 @@ export type CardSummary = {
   /** Relations this viewer sees (restricted rows count, hidden binned ones do not), and readable open `depends_on` cards (13D). */
   relation_count?: number;
   open_blockers?: number;
+  /** The parent on the same board, one level up (migration 019, D121); older servers omit it. */
+  parent_card_id?: string | null;
+  /** 0 (top) to 2; names come from the board's structure. */
+  level?: number;
+  /** Live direct children, and those in a done column (D134). */
+  child_count?: number;
+  done_child_count?: number;
+  /** The sprint (17B): stored on work-level cards, the parent's below them, null in the backlog. */
+  sprint_id?: string | null;
   created_at: string;
   updated_at: string;
 };
 
 /** `tags` (Wave 13) are by name. */
-export type BoardDetail = { board: BoardSummary; columns: BoardColumn[]; cards: CardSummary[]; tags?: BoardTag[] };
+/** `sprints` (17B): open sprints plus the latest completed ones; older servers omit it. */
+export type BoardDetail = { board: BoardSummary; columns: BoardColumn[]; cards: CardSummary[]; tags?: BoardTag[]; sprints?: SprintSummary[] };
+
+/** A sprint (17B, D124). Counts are live work-level cards planned in it, and those in a done column. */
+export type SprintSummary = {
+  id: string; board_id: string; name: string; goal: string; start_on: string | null; end_on: string | null;
+  state: "planned" | "active" | "completed"; is_active: boolean; position: number; completed_at: string | null;
+  card_count: number; done_count: number; created_at: string; updated_at: string;
+};
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 
 export const listBoards = () => api<{ boards: BoardSummary[] }>("/tasks/boards");
-export const createBoard = (name: string) => api<{ board: BoardSummary; columns: BoardColumn[] }>("/tasks/boards", json("POST", { name }));
+export const createBoard = (name: string, template?: BoardTemplateId) =>
+  api<{ board: BoardSummary; columns: BoardColumn[] }>("/tasks/boards", json("POST", template ? { name, template } : { name }));
+/** Owner only (D122): 409 `LEVEL_IN_USE` or `SPRINTS_IN_USE` when the change would hide cards. */
+export const updateBoardStructure = (boardId: string, structure: BoardStructure) =>
+  api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { structure }));
 export const getBoard = (boardId: string) => api<BoardDetail>(`/tasks/boards/${boardId}`);
 export const renameBoard = (boardId: string, name: string) => api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { name }));
 export type BoardReader = { id: string; displayName: string };
@@ -119,6 +143,11 @@ export type CardCreate = {
   flags?: string[];
   relations?: Array<{ targetCardId: string; type: RelationType }>;
   attachmentIds?: string[];
+  /** A card one level up on this board (D121); the level then defaults to the parent's plus one. */
+  parentId?: string | null;
+  level?: number;
+  /** A planned or active sprint of this board (17B); work-level cards only. */
+  sprintId?: string | null;
 };
 export const createCard = (boardId: string, body: CardCreate) =>
   api<{ card: CardDetail; renormalized?: boolean }>(`/tasks/boards/${boardId}/cards`, json("POST", body));
@@ -130,7 +159,15 @@ export const taskErrorCode = (reason: unknown) => reason instanceof ApiError && 
   : undefined;
 export const taskErrorMessage = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
 
-export type CardDetail = CardSummary & { description: string };
+/** A child as `GET /cards/:k` lists it (live, by column position then card position, at most 100). */
+export type ChildCard = { id: string; title: string; level: number; column_id: string; column_name: string; is_done: 0 | 1; position: number; due_on: string | null; child_count: number; done_child_count: number };
+export type CardDetail = CardSummary & {
+  description: string;
+  /** `GET /cards/:k` only (17A): the parent, the breadcrumb (root first), and the children, all on this board. */
+  parent?: { id: string; title: string; level: number } | null;
+  ancestors?: Array<{ id: string; title: string; level: number }>;
+  children?: ChildCard[];
+};
 export type CardComment = {
   id: string;
   card_id: string;
@@ -157,7 +194,15 @@ export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}
  * A card edit. `dueTime` comes with `dueTz` (the setter's browser zone, D101); `dueTime: null` clears
  * the time, and `dueOn: null` clears both. `assigneeIds` replaces the whole set (`[]` clears it).
  */
-export type CardChange = { title?: string; description?: string; dueOn?: string | null; dueTime?: string | null; dueTz?: string; assigneeIds?: string[]; tagIds?: string[]; flags?: CardFlag[] };
+export type CardChange = {
+  title?: string; description?: string; dueOn?: string | null; dueTime?: string | null; dueTz?: string; assigneeIds?: string[]; tagIds?: string[]; flags?: CardFlag[];
+  /** Reparent (D128): a card one level up on this board, or null to detach. */
+  parentId?: string | null;
+  /** Change level (D128): refused with 409 `HAS_CHILDREN` while the card has live children. */
+  level?: number;
+  /** Plan the card in a sprint, or null for the backlog (17B); work-level cards only. */
+  sprintId?: string | null;
+};
 export const updateCard = (cardId: string, change: CardChange & { revision: number }) =>
   api<{ card: CardDetail }>(`/tasks/cards/${cardId}`, json("PATCH", change));
 /** Any reader creates a tag; 409 `TAG_EXISTS` carries the existing one (D109). */
@@ -220,8 +265,29 @@ export const createRelation = (cardId: string, type: RelationType, targetCardId:
 export const deleteRelation = (cardId: string, relationId: string) =>
   api<{ ok: true }>(`/tasks/cards/${cardId}/relations/${relationId}`, json("DELETE", {}));
 
-export const deleteCard = (cardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/cards/${cardId}`, json("DELETE", {}));
+/** Its live descendants go to the Bin with it (D129); `descendantCount` says how many. */
+export const deleteCard = (cardId: string) => api<{ ok: true; purgeAfter: string; descendantCount?: number }>(`/tasks/cards/${cardId}`, json("DELETE", {}));
 export const deleteBoard = (boardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/boards/${boardId}`, json("DELETE", {}));
 /** `place` (cards only) asks for the old column and neighbour; the server falls back to the bottom. */
 export const restoreTaskItem = (type: "card" | "board", id: string, place: { columnId?: string; afterCardId?: string | null } = {}) =>
-  api<{ ok: true; alreadyRestored?: true; boardId: string; boardName: string; columnId: string | null; columnName: string | null }>(`/bin/${type}/${id}/restore`, json("POST", place));
+  api<{ ok: true; alreadyRestored?: true; boardId: string; boardName: string; columnId: string | null; columnName: string | null; descendantCount?: number; detached?: true }>(`/bin/${type}/${id}/restore`, json("POST", place));
+
+// Sprints (17B, API_CONTRACTS.md § Sprints). Everyone who can open the board lists them; only the owner changes them.
+export type SprintFields = { name?: string; goal?: string; startOn?: string | null; endOn?: string | null };
+export const listSprints = (boardId: string, options: { state?: SprintSummary["state"]; cursor?: string } = {}) => {
+  const params = new URLSearchParams();
+  if (options.state) params.set("state", options.state);
+  if (options.cursor) params.set("cursor", options.cursor);
+  const query = params.toString();
+  return api<{ sprints: SprintSummary[]; nextCursor: string | null }>(`/tasks/boards/${boardId}/sprints${query ? `?${query}` : ""}`);
+};
+export const createSprint = (boardId: string, fields: SprintFields & { name: string }) =>
+  api<{ sprint: SprintSummary }>(`/tasks/boards/${boardId}/sprints`, json("POST", fields));
+/** `state: "active"` starts a planned sprint (409 `SPRINT_ACTIVE` while another is active). */
+export const updateSprint = (sprintId: string, change: SprintFields & { afterSprintId?: string | null; state?: "active" }) =>
+  api<{ sprint: SprintSummary }>(`/tasks/sprints/${sprintId}`, json("PATCH", change));
+export const deleteSprint = (sprintId: string) => api<{ ok: true }>(`/tasks/sprints/${sprintId}`, json("DELETE", {}));
+/** Where the unfinished cards go when a sprint completes: the next planned sprint, the backlog, a new sprint, or a planned sprint's id. */
+export type SprintCarryTo = "next" | "backlog" | "new" | string;
+export const completeSprint = (sprintId: string, carryTo: SprintCarryTo, next: SprintFields = {}) =>
+  api<{ sprint: SprintSummary; carried: number; doneCount: number; target: SprintSummary | null; created: boolean }>(`/tasks/sprints/${sprintId}/complete`, json("POST", { carryTo, ...next }));

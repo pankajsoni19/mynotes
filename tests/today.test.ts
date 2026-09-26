@@ -311,7 +311,7 @@ describe("GET /api/today", () => {
     const ownerView = await expectParity(owner);
     expect(among(ownerView.sections.tasksDue, all, "cardId")).toEqual([overdue.id, soon.id]);
     expect(ownerView.sections.tasksDue!.items[0]).toEqual({
-      cardId: overdue.id, boardId, boardName: "Today board", title: "Overdue", dueOn: addDays(date, -3), dueTime: null, dueTz: null, dueAt: null, overdue: true
+      cardId: overdue.id, boardId, boardName: "Today board", title: "Overdue", dueOn: addDays(date, -3), dueTime: null, dueTz: null, dueAt: null, overdue: true, parentTitle: null
     });
     expect(ownerView.sections.tasksDue!.items[1]).toMatchObject({ overdue: false });
     expect(ids(ownerView.sections.tasksDue, "cardId")).not.toContain(later.id);

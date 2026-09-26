@@ -22,6 +22,9 @@ export function purgeCountdownLabel(purgeAfter: string, nowMs = Date.now()) {
   return days === 1 ? "Deletes in 1 day" : `Deletes in ${days} days`;
 }
 
+/** "+ 7 subitems": a card's descendants that were binned with it and come back with it (D129). */
+export const subitemLabel = (count: number) => count === 1 ? "+ 1 subitem" : `+ ${count} subitems`;
+
 /**
  * Where a restore will put the item: its original folder (Default when that folder is gone), a
  * card's board, Collections for a collection, a row's collection (Wave 11), Calendar for a
@@ -90,7 +93,12 @@ export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<
   }
   if (item.type === "card") {
     const where = [result.columnName, result.boardName].filter(Boolean).join(" on ");
-    return result.alreadyRestored ? `Already restored${where ? ` to ${where}` : ""}` : `Restored${where ? ` to ${where}` : ""}`;
+    if (result.alreadyRestored) return `Already restored${where ? ` to ${where}` : ""}`;
+    const extra = [
+      result.descendantCount ? ` with ${result.descendantCount === 1 ? "1 subitem" : `${result.descendantCount} subitems`}` : "",
+      result.detached ? ", without its parent (it is in the Bin)" : ""
+    ].join("");
+    return `Restored${where ? ` to ${where}` : ""}${extra}`;
   }
   if (item.type === "calendar" || item.type === "event") return restoredCalendarMessage({ type: item.type, title: "" }, result.calendarName, Boolean(result.alreadyRestored));
   if (item.type === "collection" || item.type === "collection_row") {

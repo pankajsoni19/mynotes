@@ -104,7 +104,7 @@ describe("MCP list_views and query_cards", () => {
     // Grammar errors carry the position; scope and bounds are enforced.
     expect((await callTool(aliceKey, "query_cards", { filter: "state:todo owner:me" })).value).toMatchObject({ code: "INVALID", reason: "FILTER_INVALID", position: 11 });
     expect((await callTool(aliceKey, "query_cards", { filter: `column:${crypto.randomUUID()}` })).value).toMatchObject({ code: "INVALID", reason: "FILTER_SCOPE" });
-    expect((await callTool(aliceKey, "query_cards", { filter: "sprint:current" })).value).toMatchObject({ code: "INVALID", reason: "FILTER_UNSUPPORTED" });
+    expect((await callTool(aliceKey, "query_cards", { filter: "sprint:someday" })).value).toMatchObject({ code: "INVALID", reason: "FILTER_INVALID" });
     expect((await callTool(aliceKey, "query_cards", { filter: "", limit: 51 })).isError).toBe(true);
     expect((await callTool(aliceKey, "query_cards", {})).value).toMatchObject({ code: "INVALID" });
     expect((await callTool(aliceKey, "query_cards", { filter: "", viewId: w.viewId })).value).toMatchObject({ code: "INVALID" });

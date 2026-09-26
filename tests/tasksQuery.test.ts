@@ -138,7 +138,7 @@ describe("POST /api/tasks/query: filters", () => {
     expect(scoped.body.refs.columns).toEqual([{ id: w.home.columns[1].id, name: "Doing", board_id: w.home.id }]);
     expect(await query(w.alice, { q: `column:${w.home.columns[1].id}` })).toMatchObject({ status: 400, body: { code: "FILTER_SCOPE", position: 0 } });
     expect(await query(w.alice, { q: "state:todo owner:me" })).toMatchObject({ status: 400, body: { code: "FILTER_INVALID", position: 11 } });
-    expect(await query(w.alice, { q: "sprint:current" })).toMatchObject({ status: 400, body: { code: "FILTER_UNSUPPORTED" } });
+    expect(await query(w.alice, { q: "sprint:someday" })).toMatchObject({ status: 400, body: { code: "FILTER_INVALID", position: 7 } });
     expect((await query(w.alice, { q: "x".repeat(2001) })).status).toBe(400);
     expect((await query(w.alice, { q: "", limit: 101 })).status).toBe(400);
     expect((await query(w.alice, { q: "", limit: 0 })).status).toBe(400);

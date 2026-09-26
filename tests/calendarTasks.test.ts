@@ -49,7 +49,7 @@ describe("the Tasks due overlay", () => {
     const range = { fromDate: "2026-05-01", toDate: "2026-06-01" };
     expect(overlay.list("owner", range).map((task) => task.cardId)).toEqual(["k1", "k6"]);
     expect(overlay.list("member", range)).toEqual([
-      { cardId: "k1", boardId: "shared", boardName: "Home", title: "Pay rent", dueOn: "2026-05-01", dueTime: null, dueTz: null, dueAt: null, date: "2026-05-01" }
+      { cardId: "k1", boardId: "shared", boardName: "Home", title: "Pay rent", parentTitle: null, dueOn: "2026-05-01", dueTime: null, dueTz: null, dueAt: null, date: "2026-05-01" }
     ]);
     expect(overlay.list("stranger", range)).toEqual([]);
 

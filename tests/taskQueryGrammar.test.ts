@@ -115,11 +115,21 @@ describe("parse and format", () => {
     expect(fail(`"${"x".repeat(101)}"`)).toMatchObject({ code: "FILTER_INVALID" });
   });
 
-  test("reserved hierarchy and sprint keys are refused as unsupported, not ignored", () => {
-    expect(fail("parent:none")).toMatchObject({ code: "FILTER_UNSUPPORTED", position: 0 });
-    expect(fail("state:todo level:work")).toMatchObject({ code: "FILTER_UNSUPPORTED", position: 11 });
-    expect(fail("sprint:current")).toMatchObject({ code: "FILTER_UNSUPPORTED" });
-    expect(fail("has:subtasks")).toMatchObject({ code: "FILTER_UNSUPPORTED" });
+  test("the sprint key (17B): current, next, none (backlog), and ids, in canonical form", () => {
+    expect(format(ok(`sprint:${A.toUpperCase()},next,backlog,current`))).toBe(`sprint:current,next,none,${A}`);
+    expect(format(ok("sprint:BACKLOG"))).toBe("sprint:none");
+    expect(format(ok("level:work -sprint:none due:today state:todo"))).toBe("state:todo due:today -sprint:none level:work");
+    expect(fail("sprint:later")).toMatchObject({ code: "FILTER_INVALID", position: 7 });
+    expect(fail("state:todo sprint:")).toMatchObject({ code: "FILTER_INVALID" });
+  });
+
+  test("hierarchy keys (17A): parent, level, and has:subtasks parse to canonical form", () => {
+    expect(format(ok(`has:subtasks level:2,WORK parent:${A.toUpperCase()},none state:todo`)))
+      .toBe(`state:todo parent:none,${A} level:work,2 has:subtasks`);
+    expect(format(ok("-has:subtasks,relation"))).toBe("-has:relation,subtasks");
+    expect(fail("parent:someone")).toMatchObject({ code: "FILTER_INVALID", position: 7 });
+    expect(fail("level:3")).toMatchObject({ code: "FILTER_INVALID" });
+    expect(fail("level:top")).toMatchObject({ code: "FILTER_INVALID" });
   });
 
   test("caps: length, terms, and values per term", () => {
@@ -148,7 +158,7 @@ describe("parse and format", () => {
     expect(format(ok(`owner:me state:todo,later "unclosed`, { lenient: true }))).toBe("state:todo");
     expect(format(ok(`column:${A} state:done`, { lenient: true }))).toBe("state:done");
     expect(ok(Array.from({ length: 25 }, (_, index) => `w${index}`).join(" "), { lenient: true }).terms).toHaveLength(20);
-    expect(format(ok("parent:none state:doing", { lenient: true }))).toBe("state:doing");
+    expect(format(ok("sprint:someday level:9 state:doing", { lenient: true }))).toBe("state:doing");
   });
 
   test("canonicalize and validateQuery re-check hand-built queries", () => {
