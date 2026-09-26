@@ -134,9 +134,9 @@ type SelectedCard = Omit<CardSummary, "due_at" | "assignees" | "assignee_id" | "
 type GroupedFields = { assignees: CardAssignee[]; tagIds: string[]; flags: CardFlag[] };
 
 /** Adds the computed and grouped fields; the deprecated `assignee_id`/`assignee_name` are the first assignee (D103). */
-function withCardFields<T extends SelectedCard>(card: T, { assignees, tagIds, flags }: GroupedFields) {
+function withCardFields<T extends SelectedCard>(card: T, { assignees, tagIds, flags }: GroupedFields, instant: typeof dueAt = dueAt) {
   const first = assignees[0];
-  return { ...card, due_at: dueAt(card), assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null, tag_ids: tagIds, flags };
+  return { ...card, due_at: instant(card), assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null, tag_ids: tagIds, flags };
 }
 
 /** The due fields after a change, or 400 with the rule that failed (D100). */
@@ -152,7 +152,15 @@ export function listCards(boardId: string): CardSummary[] {
   const assignees = assigneesForBoard(boardId);
   const tags = tagIdsForBoard(boardId);
   const flags = flagsForBoard(boardId);
-  return cards.map((card) => withCardFields(card, { assignees: assignees.get(card.id) ?? [], tagIds: tags.get(card.id) ?? [], flags: flags.get(card.id) ?? [] }));
+  // Cards often share a due date, time, and zone; each instant costs a few Intl calls (measured in 13C, D113).
+  const instants = new Map<string, string | null>();
+  const instant = (card: Parameters<typeof dueAt>[0]) => {
+    if (!card.due_time) return null;
+    const key = `${card.due_on}T${card.due_time} ${card.due_tz}`;
+    if (!instants.has(key)) instants.set(key, dueAt(card));
+    return instants.get(key)!;
+  };
+  return cards.map((card) => withCardFields(card, { assignees: assignees.get(card.id) ?? [], tagIds: tags.get(card.id) ?? [], flags: flags.get(card.id) ?? [] }, instant));
 }
 
 export function getBoard(userId: string, boardId: string) {
