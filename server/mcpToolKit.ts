@@ -23,6 +23,7 @@ export type McpErrorCode =
   | "LIMIT_REACHED"
   | "CARD_CHANGED"
   | "OWNER_ONLY"
+  | "COLUMN_FULL"
   | "READ_ONLY"
   | "EVENT_CHANGED"
   | "REMINDER_EXISTS"
