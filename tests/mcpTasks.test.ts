@@ -69,7 +69,7 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
-const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "search_cards"];
+const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "list_views", "query_cards", "search_cards"];
 const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "link_cards", "move_card", "update_card"];
 
 describe("MCP task tools", () => {

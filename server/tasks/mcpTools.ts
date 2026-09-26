@@ -14,6 +14,7 @@ import { filterBoardCardIds } from "./cardQuery";
 import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema, isCalendarDate } from "./routes";
 import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchCard, TaskError, type CardSummary } from "./service";
 import { listBoardTags, type BoardTag } from "./tags";
+import { taskViewTools } from "./viewMcpTools";
 
 /**
  * MCP tools for Task Boards (docs/plan/WAVES_7-9.md §4.2, D38–D40, D70).
@@ -381,5 +382,7 @@ export const taskTools: McpToolSpec[] = [
         return { comment: { id: comment.id, card_id: comment.card_id, created_at: comment.created_at } };
       });
     }
-  })
+  }),
+  // Saved views and the cross-board query (17C, D145): list_views and query_cards.
+  ...taskViewTools
 ];
