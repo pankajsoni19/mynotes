@@ -10,6 +10,7 @@ import { CardComposer, type ComposerMode } from "./CardComposer";
 import { CardDialog } from "./CardDialog";
 import { CardPage } from "./CardPage";
 import { MoveCardSheet } from "./MoveCardSheet";
+import { focusBoardCard } from "./cardFocus";
 import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, mergeMovedCard, moveChangesBlockers, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute } from "../router";
@@ -224,8 +225,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
 
   function focusCard(cardId: string) {
     // Lane cards are focusable themselves; table, list, and calendar rows focus their open button.
-    window.setTimeout(() => (window.document.querySelector<HTMLElement>(`[data-open-card="${CSS.escape(cardId)}"]`)
-      ?? window.document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(cardId)}"]`))?.focus(), 0);
+    focusBoardCard(cardId);
   }
 
   /**
