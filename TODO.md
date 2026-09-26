@@ -192,6 +192,11 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [ ] Calendar: the calendars dropdown becomes a custom picker instead of a native `<select>`.
 - [x] `/collections` list: inline rename / share / Move to Bin actions like the board list (merged `fdac35c`, ships in v0.8.0). (observation or change request?).
 
+### Closing docs pass (after Waves 13, 14, 17 ship)
+- [ ] Rewrite `README.md` to lead with features (Today, Notes, Files, Tasks with views/hierarchy/sprints, Collections, Calendar + reminders, Search, Team, MCP, Modules), concise, details on the docs site.
+- [ ] Replace `docs/images/dashboard-dark.png` with fresh screenshots of the current product (Today dashboard + a task board; dark and light if cheap), taken from an isolated QA instance with seeded placeholder data only — never real user data.
+- [ ] Refresh `site/index.html` and `docs/USING.md` for every feature shipped in v0.8–v0.10.
+
 ## Backlog — candidate modules and enhancements (for later picking)
 
 Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md). Nothing here is scheduled until the operator picks it.
