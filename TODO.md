@@ -164,6 +164,29 @@ Bump `80e4892`; release SHA `1cd2eb24753d239828ee5144889c7e44222a63c9`; pushed; 
 
 Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 11, 12 A–C (main `4cf555f`, 559 tests, Docker verify passes). Next: Calendar review + QA → release v0.7.0 (Today + Collections + Calendar core); feeds + MCP calendar/collections tools → v0.7.1. Each gets one independent review; QA is delegated; container verification once per release.
 
+## Queued (operator requests 2026-09-26)
+
+### Team module — plan of record: `docs/plan/research/2026-09-26-team-module.md` (§11 director review)
+- [ ] Wave 14 (Team A): roles + admin + block/unblock, `/team` UI, `team:read` MCP scope, CLI `server/team-admin.ts`, migration `017`. Runs in parallel with Wave 13.
+- [ ] Wave 15 (Team B): viewer and guest enforcement (write gate, `AUDIENCE_ALL_USERS`, MCP role filter, `SIGNUP_ROLE`, role-aware chrome).
+- [ ] Wave 16 (Team C, unscheduled): invites, migration `018`.
+
+### Wave 13 — Task card UX and Calendar picker (planning in progress)
+- [ ] Column WIP limit: each board column/lane gets an optional max card count (default: no limit). Shown as `n / limit` in the column header, warns or blocks moves that would exceed it (kanban + agile).
+- [ ] Card tags and flags: cards get tags (free-form, board-scoped, coloured) and flags (fixed set, e.g. blocked, urgent, needs review) in create, edit, list, and MCP tools.
+- [ ] Lane card face shows title, description excerpt, assignees, due date + due time if present, tags, flags.
+- [ ] Board views: column (current swimlanes), table (all fields, sortable columns), grouped list (group by column/assignee/tag/due). Switch via icons in the board header; view is part of the URL.
+- [ ] Linear-style filter bar: compose filters on assignee, tag, flag, due, column, relation; filters live in the URL query so they survive Back/Forward and sharing.
+- [ ] Rule D91: every dropdown is a custom component; migrate all 15 existing native `<select>` usages (7 files under `src/`).
+- [ ] Settings → new left-nav item "Modules": per-user on/off toggle for every module, all on by default (D92). Hidden modules leave the launcher, nav, routes, and Today; data and server authorization untouched.
+- [ ] Add-card flow opens a full-screen dialog so every detail can be entered at once.
+- [ ] Optional due time alongside the due date.
+- [ ] Assignee picker: custom dropdown with type-to-search, multiple assignees per card.
+- [ ] Card dialog gets an expand control that opens the card as a full page (`/tasks/:board/card/:key` full view).
+- [ ] Card relations: link cards with typed relations (related, depends on, needed by, …).
+- [ ] Calendar: the calendars dropdown becomes a custom picker instead of a native `<select>`.
+- [ ] `/collections` list: give each collection row the same inline edit / share / delete actions the task board list has in `/tasks` (this resolves the earlier "/collections page has list of collection" note). (observation or change request?).
+
 ## Backlog — candidate modules and enhancements (for later picking)
 
 Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md). Nothing here is scheduled until the operator picks it.
