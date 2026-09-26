@@ -164,7 +164,7 @@ export function CalendarSharePanel({ calendar, onClose, onSaved }: CalendarShare
       <div className="share-options" role="radiogroup" aria-label="Who can see this calendar">
         {option("private", Lock, "Private", "Only you can see this calendar")}
         {option("selected", Users, "Selected people", "Choose registered users below")}
-        {option("all_users", Share2, "Everyone here", "All signed-in users, never public")}
+        {option("all_users", Share2, "Everyone here", "Everyone signed in except guests; never public")}
       </div>
       {visibility !== "private" && <div className="share-options calendar-role-options" role="radiogroup" aria-label="What they can do">
         <label><input type="radio" name="calendar-role" checked={shareRole === "viewer"} onChange={() => setShareRole("viewer")} /><span><Eye />Can view<small>See events; only you and editors change them</small></span></label>

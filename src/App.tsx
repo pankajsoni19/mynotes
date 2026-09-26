@@ -567,7 +567,7 @@ function SharePanel({ note, onClose, onChanged }: { note: NoteDetail; onClose: (
         <label><input type="radio" checked={visibility === "inherit"} onChange={() => setVisibility("inherit")} /><span><FolderIcon />Use folder access<small>Inherit this note’s folder sharing</small></span></label>
         <label><input type="radio" checked={visibility === "private"} onChange={() => setVisibility("private")} /><span><Lock />Private<small>Only you can open this note</small></span></label>
         <label><input type="radio" checked={visibility === "selected"} onChange={() => setVisibility("selected")} /><span><Users />Selected people<small>Choose registered users below</small></span></label>
-        <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>All signed-in users, never public</small></span></label>
+        <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>Everyone signed in except guests; never public</small></span></label>
       </div>
       {visibility === "selected" && <div className="user-picker">
         {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} />{user.email && <small>{user.email}</small>}</span></label>)}

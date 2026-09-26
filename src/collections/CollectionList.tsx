@@ -177,7 +177,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
     {!loadError && collections && !all.length && <div className="bin-state">
       <span className="bin-state-icon"><Table2 /></span>
       <h2>No collections yet</h2>
-      <p>Start from a template such as Home inventory or Recipes, or from a blank table.</p>
+      <p>{canWrite ? "Start from a template such as Home inventory or Recipes, or from a blank table." : "Collections shared with you appear here."}</p>
       {canWrite && <button className="primary-button" onClick={() => setDialog({ kind: "new" })}><Plus />New collection</button>}
     </div>}
     {owned.length > 0 && <><h2 className="collections-section-label">Your collections</h2><ul className="collection-list" aria-label="Your collections">{owned.map(row)}</ul></>}

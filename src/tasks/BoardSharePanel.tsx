@@ -65,7 +65,7 @@ export function BoardSharePanel({ board, onClose, onChanged }: BoardSharePanelPr
       <div className="share-options" role="radiogroup" aria-label="Who can open this board">
         {option("private", Lock, "Private", "Only you can open this board")}
         {option("selected", Users, "Selected people", "Choose registered users below")}
-        {option("all_users", Share2, "Everyone here", "All signed-in users, never public")}
+        {option("all_users", Share2, "Everyone here", "Everyone signed in except guests; never public")}
       </div>
       {visibility === "selected" && <div className="user-picker" role="group" aria-label="People">
         {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} />{pickerDetail(user, users) && <small>{pickerDetail(user, users)}</small>}</span></label>)}

@@ -55,6 +55,17 @@ function formatDate(value: string) {
  * leaves the member for the list, then the list for Home. Desktop shows the two side by side.
  * Members and viewers see names and roles only; admins also manage roles and blocks.
  */
+/** What a role change means for the account, from the permission matrix (Team plan §2.2). */
+function roleChangeBody(member: { displayName: string; role: Role; isYou: boolean }, to: Role) {
+  if (to === "admin") return "Admins can change anyone's team role, block accounts, and sign accounts out. They still cannot open anyone's private content.";
+  const who = member.isYou ? "You" : member.displayName;
+  const when = member.isYou ? "straight away" : "on their next request";
+  const lead = member.role === "admin" ? `${who} will lose Team management ${when}. ` : "";
+  if (to === "viewer") return `${lead}${who} will read what is shared with them or with everyone, and cannot create, edit, share, or upload. API keys keep only read permissions.`;
+  if (to === "guest") return `${lead}${who} will see only what is shared with them by name, and cannot create, edit, share, or upload. Guests have no Team list and no API keys.`;
+  return `${lead}${who} can create, edit, and share notes, files, tasks, collections, and events.`;
+}
+
 export function TeamApp({ displayName, role, totpEnabled, navigate, flash, onHome, onBin, onSettings, onSignOut }: TeamAppProps) {
   const admin = canManageTeam(role);
   const binCount = useBinCount(Boolean(onBin));
@@ -344,7 +355,7 @@ function TeamDialog({ dialog, member, totpEnabled, onClose, onDone, onStale }: {
   }, [busy, onClose]);
 
   const copy = dialog.kind === "role"
-    ? { title: `Make ${member.displayName} ${ROLE_LABELS[dialog.to] === "Admin" ? "an admin" : `a ${ROLE_LABELS[dialog.to].toLowerCase()}`}?`, body: dialog.to === "admin" ? "Admins can change anyone's team role, block accounts, and sign accounts out. They still cannot open anyone's private content." : member.isYou ? "You will lose access to Team management straight away." : `${member.displayName} will lose Team management on their next request.`, confirm: "Change role" }
+    ? { title: `Make ${member.displayName} ${ROLE_LABELS[dialog.to] === "Admin" ? "an admin" : `a ${ROLE_LABELS[dialog.to].toLowerCase()}`}?`, body: roleChangeBody(member, dialog.to), confirm: "Change role" }
     : dialog.kind === "block"
       ? { title: `Block ${member.displayName}?`, body: "They are signed out on every device at once and cannot sign in until an admin unblocks them. Their MCP keys and calendar feeds pause. Their notes, files, and other content stay shared as before.", confirm: "Block" }
       : dialog.kind === "unblock"
