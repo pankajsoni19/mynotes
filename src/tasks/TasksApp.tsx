@@ -4,7 +4,7 @@ import { House, Sparkles } from "lucide-react";
 import { AccountActions, useBinCount } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
-import { formatRoute, parseRoute, type Route } from "../router";
+import { formatRoute, locationUrl, routeFromLocation, type Route } from "../router";
 import { tasksBackAction, tasksRoute, type TasksRoute } from "../tasksRoute";
 import { BoardList } from "./BoardList";
 import { BoardView } from "./BoardView";
@@ -28,7 +28,7 @@ type TasksAppProps = {
 };
 
 const currentTasksRoute = (): TasksRoute => {
-  const route = parseRoute(window.location.pathname);
+  const route = routeFromLocation(window.location);
   return route.app === "tasks" ? route : tasksRoute();
 };
 
@@ -57,7 +57,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       if (popStateClosedDialog(event)) return;
-      const next = parseRoute(window.location.pathname);
+      const next = routeFromLocation(window.location);
       if (next.app === "tasks") setRoute(next);
     };
     window.addEventListener("popstate", onPopState);
@@ -67,7 +67,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
 
   const go = useCallback((next: TasksRoute, replace = false) => {
     setRoute(next);
-    if (formatRoute(next) !== window.location.pathname || replace) navigateRef.current(next, { replace });
+    if (formatRoute(next) !== locationUrl(window.location) || replace) navigateRef.current(next, { replace });
   }, []);
 
   const back = useCallback(() => {
@@ -78,16 +78,17 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
   }, [go, onHome]);
 
   // A card is a view with its own entry: opening pushes it, and closing steps back to the board
-  // (or replaces a deep-linked card entry with its board).
+  // (or replaces a deep-linked card entry with its board). The card's URL carries the board's
+  // query, so closing it returns to the same view and filters (D112).
   const openCard = useCallback((cardId: string) => {
-    const boardId = routeRef.current.boardId;
-    if (boardId) go(tasksRoute(boardId, cardId));
+    const { boardId, query } = routeRef.current;
+    if (boardId) go(tasksRoute(boardId, cardId, query));
   }, [go]);
   const closeCard = useCallback(() => {
     const current = routeRef.current;
     if (!current.cardId) return;
     if (readHistoryDepth(window.history.state) > 0) window.history.back();
-    else go(tasksRoute(current.boardId), true);
+    else go(tasksRoute(current.boardId, null, current.query), true);
   }, [go]);
 
   const onMissing = useCallback(() => {

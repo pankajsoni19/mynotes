@@ -447,6 +447,13 @@ Manual QA (headless Chrome over CDP at 1280×800 and 390×844 with touch, a scra
 - [ ] Not checked in the browser: a "(no access)" chip after unsharing (covered by the render test), and a real pointer drag (synthetic drag events only).
 
 
+## Wave 13E: board views, filter bar, and board calendar
+
+Plan of record: [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §4.5–§4.7, §7. Pure modules are unit tested; views are rendered with `react-dom/server`, as 13A.
+
+- [x] `tests/boardUrl.test.ts` (URL codec, T102): the default query is no query string; the codec round-trips and is canonical (fixed key order, sorted values, readable `:`); invalid views, groups, sorts, layouts, months, ids, flags, due tokens, relation values, and unknown keys are dropped without throwing, and a query over 4 KiB reads as the default; `due` keeps one `before:` and one `after:` bound plus `none` and the relative buckets; at most 30 filter values, duplicates counted once; `q` loses control and bidi characters, is capped at 100 characters, and stays inside its parameter when encoded; the month rule matches the router's `isRouteMonth`.
+- [x] `tests/routerSearch.test.ts` (router, §10 risk): a Tasks location keeps its query only when `location.search` is passed; card URLs carry the board query and closing (or in-app Back at depth 0) returns to the same view, while the board list drops it; an href with its own `?query` parses like a location; other apps ignore the search; `locationUrl` adds the query only on Tasks paths; and a source check fails if `src/App.tsx`, `src/tasksRoute.ts`, or `src/tasks/**` parse `location.pathname` without the search or compare Tasks URLs without it.
+
 ## Wave 13F: Modules
 
 With 13B merged, `tests/migrations.test.ts`, `tests/api.test.ts`, and `tests/searchIndex.test.ts` pin 1–16 and allow 017 onwards.

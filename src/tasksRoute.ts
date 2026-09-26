@@ -1,17 +1,20 @@
 import type { Route } from "./router";
+import { isDefaultBoardQuery, type BoardQuery } from "./tasks/boardUrl";
 
 export type TasksRoute = Extract<Route, { app: "tasks" }>;
 
-export function tasksRoute(boardId: string | null = null, cardId: string | null = null): TasksRoute {
-  return { app: "tasks", boardId, cardId: boardId ? cardId : null };
+/** A Tasks route. `query` (the board's view and filters, D112) is kept only with a board and when it is not the default. */
+export function tasksRoute(boardId: string | null = null, cardId: string | null = null, query?: BoardQuery | null): TasksRoute {
+  const route: TasksRoute = { app: "tasks", boardId, cardId: boardId ? cardId : null };
+  return boardId && query && !isDefaultBoardQuery(query) ? { ...route, query } : route;
 }
 
 /**
  * The view one level up, used when in-app Back has no history entry of this visit to step back
- * to (a deep link): card → board → board list → Home (null).
+ * to (a deep link): card → board (in the same view) → board list → Home (null).
  */
 export function parentTasksRoute(route: TasksRoute): TasksRoute | null {
-  if (route.cardId) return tasksRoute(route.boardId);
+  if (route.cardId) return tasksRoute(route.boardId, null, route.query);
   if (route.boardId) return tasksRoute();
   return null;
 }

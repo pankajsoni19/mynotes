@@ -152,8 +152,9 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     if (hintTimerRef.current !== null) window.clearTimeout(hintTimerRef.current);
     hintTimerRef.current = window.setTimeout(() => {
       hintTimerRef.current = null;
+      // Only on this board's own entry (not a card's); the URL, query included, stays as it is.
       if (window.location.pathname !== formatRoute(tasksRoute(boardId))) return;
-      window.history.replaceState(createTasksHistoryState(userId, { boardId, column: index }, window.history.state), "", window.location.pathname);
+      window.history.replaceState(createTasksHistoryState(userId, { boardId, column: index }, window.history.state), "", `${window.location.pathname}${window.location.search}`);
     }, 150);
   }
 
