@@ -2,6 +2,8 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
+import { MAX_ASSIGNEES } from "./assignees";
+import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
@@ -34,8 +36,15 @@ export const boardSharingSchema = z.object({
   userIds: z.array(uuid).max(100).default([])
 }).strict();
 export const columnCreateSchema = z.object({ name: label(60), afterColumnId: uuid.nullable().optional() }).strict();
-export const columnPatchSchema = z.object({ name: label(60).optional(), afterColumnId: uuid.nullable().optional(), isDone: z.boolean().optional() }).strict()
-  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined || value.isDone !== undefined, "Provide a name, an afterColumnId, or isDone");
+export const columnPatchSchema = z.object({
+  name: label(60).optional(),
+  afterColumnId: uuid.nullable().optional(),
+  isDone: z.boolean().optional(),
+  /** WIP limit (D108): 1–1000 or null for none. */
+  wipLimit: z.number().int().min(1).max(1000).nullable().optional()
+}).strict()
+  .refine((value) => value.name !== undefined || value.afterColumnId !== undefined || value.isDone !== undefined || value.wipLimit !== undefined,
+    "Provide a name, an afterColumnId, isDone, or wipLimit");
 
 /** A real calendar date `YYYY-MM-DD` between 1900 and 2999 (T71). */
 export function isCalendarDate(value: string) {
@@ -47,24 +56,40 @@ export function isCalendarDate(value: string) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 export const dueOnSchema = z.string().refine(isCalendarDate, "Use a real date as YYYY-MM-DD");
+/** `HH:MM`, 00:00–23:59 (D100, T94). */
+export const dueTimeSchema = z.string().refine(isDueTime, "Use a time as HH:MM (00:00 to 23:59)");
+/** An IANA zone, as `isValidTimeZone` accepts it (browser aliases included, T71, T94). */
+export const dueTzSchema = z.string().refine(isDueTimeZone, "Use a known time zone");
 
 export const DESCRIPTION_MAX_BYTES = 65_536;
 const description = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= DESCRIPTION_MAX_BYTES, `Descriptions can be at most ${DESCRIPTION_MAX_BYTES} bytes`);
+/** Assignee ids (D102): at most 20 after deduplication; the service dedupes and checks each can read the board. */
+const assigneeIdsSchema = z.array(uuid).max(MAX_ASSIGNEES * 2);
 export const cardCreateSchema = z.object({
   columnId: uuid,
   title: label(200),
   description: description.optional(),
   dueOn: dueOnSchema.nullable().optional(),
+  dueTime: dueTimeSchema.nullable().optional(),
+  dueTz: dueTzSchema.nullable().optional(),
+  assigneeIds: assigneeIdsSchema.optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
 export const cardPatchSchema = z.object({
   title: label(200).optional(),
   description: description.optional(),
   dueOn: dueOnSchema.nullable().optional(),
+  dueTime: dueTimeSchema.nullable().optional(),
+  dueTz: dueTzSchema.nullable().optional(),
+  /** Legacy (D103), kept for the Wave 10 client and MCP; 400 together with assigneeIds. */
   assigneeId: uuid.nullable().optional(),
+  assigneeIds: assigneeIdsSchema.optional(),
   revision: z.number().int().positive()
-}).strict().refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.assigneeId !== undefined,
-  "Provide a title, description, dueOn, or assigneeId");
+}).strict()
+  .refine((value) => value.assigneeId === undefined || value.assigneeIds === undefined, "Send assigneeIds or the legacy assigneeId, not both")
+  .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.dueTime !== undefined
+    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined,
+  "Provide a title, description, dueOn, dueTime, or assigneeIds");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
 export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();
@@ -73,6 +98,37 @@ export const commentPatchSchema = z.object({ body: commentBody }).strict();
 export const cardMoveSchema = z.object({ columnId: uuid, afterCardId: uuid.nullable() }).strict();
 
 const id = (c: Context<AppEnv>, name: string) => uuid.parse(c.req.param(name));
+const invalid = (detail: string) => ({ error: "Invalid request", details: [detail] });
+
+export const READERS_QUERY_MAX = 64;
+export const READERS_LIMIT_MAX = 50;
+const READERS_RATE_LIMIT = 60;
+const READERS_RATE_WINDOW_MS = 60_000;
+const readerRequests = new Map<string, number[]>();
+
+/**
+ * The assignee picker's sliding window per user (T92): 60 requests a minute,
+ * in memory (one app instance per data directory). Returns seconds to wait, or 0.
+ */
+function readersRateLimited(userId: string, time = Date.now()) {
+  const windowStart = time - READERS_RATE_WINDOW_MS;
+  if (readerRequests.size > 1000) {
+    for (const [key, stamps] of readerRequests) if ((stamps[stamps.length - 1] ?? 0) <= windowStart) readerRequests.delete(key);
+  }
+  const stamps = (readerRequests.get(userId) ?? []).filter((stamp) => stamp > windowStart);
+  if (stamps.length >= READERS_RATE_LIMIT) {
+    readerRequests.set(userId, stamps);
+    return Math.max(1, Math.ceil((stamps[0]! + READERS_RATE_WINDOW_MS - time) / 1000));
+  }
+  stamps.push(time);
+  readerRequests.set(userId, stamps);
+  return 0;
+}
+
+/** Test hook: forget the assignee picker's rate-limit history. */
+export function resetReadersRateLimit() {
+  readerRequests.clear();
+}
 
 /** Runs a service call and maps TaskError to its JSON response; other errors reach app.onError. */
 async function respond(c: Context<AppEnv>, operation: () => unknown, status: 200 | 201 = 200) {
@@ -120,9 +176,22 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     return respond(c, () => putSharing(c.get("user").id, boardId, body.visibility, body.userIds));
   });
 
-  app.get("/api/tasks/boards/:boardId/readers", (c) => {
+  app.get("/api/tasks/boards/:boardId/readers", async (c) => {
     const boardId = id(c, "boardId");
-    return respond(c, () => listBoardReaders(c.get("user").id, boardId));
+    const userId = c.get("user").id;
+    const retryAfter = readersRateLimited(userId);
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      return c.json({ error: "Too many requests. Try again in a moment.", code: "RATE_LIMITED" }, 429);
+    }
+    const q = c.req.query("q");
+    const limitParam = c.req.query("limit");
+    if (q !== undefined && (q.length < 1 || q.length > READERS_QUERY_MAX)) return c.json(invalid(`q must be 1 to ${READERS_QUERY_MAX} characters`), 400);
+    if (limitParam !== undefined && (!/^\d+$/.test(limitParam) || Number(limitParam) < 1 || Number(limitParam) > READERS_LIMIT_MAX)) {
+      return c.json(invalid(`limit must be an integer from 1 to ${READERS_LIMIT_MAX}`), 400);
+    }
+    if (limitParam !== undefined && q === undefined) return c.json(invalid("limit needs q"), 400);
+    return respond(c, () => listBoardReaders(userId, boardId, { q, limit: limitParam === undefined ? undefined : Number(limitParam) }));
   });
 
   app.post("/api/tasks/boards/:boardId/columns", async (c) => {

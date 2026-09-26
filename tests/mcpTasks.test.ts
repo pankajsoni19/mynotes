@@ -70,7 +70,7 @@ const auditRows = (actorId: string, eventType: string) => (db.query("SELECT meta
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
 const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards"];
-const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "move_card"];
+const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "move_card", "update_card"];
 
 describe("MCP task tools", () => {
   test("task tools appear only for task scopes, write implies read, and there is nothing that deletes", async () => {
@@ -205,11 +205,82 @@ describe("MCP task tools", () => {
     expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "bad‮title" })).value).toMatchObject({ code: "INVALID" });
     expect((await callTool(key, "comment_on_card", { cardId: s.cardId, body: "   " })).value).toMatchObject({ code: "INVALID" });
 
-    expect(taskErrorToMcp(new TaskError(409, "changed", "CARD_CHANGED", { card: { id: "k" } }))).toMatchObject({ code: "CARD_CHANGED", details: { card: { id: "k" } } });
+    // CARD_CHANGED carries the current revision, never the stored card (its description is Markdown).
+    const changed = taskErrorToMcp(new TaskError(409, "changed", "CARD_CHANGED", { card: { id: "k", revision: 4, description: "**x**" } }));
+    expect(changed).toMatchObject({ code: "CARD_CHANGED", details: { currentRevision: 4 } });
+    expect(changed.details).not.toHaveProperty("card");
+    expect(taskErrorToMcp(new TaskError(409, "full", "COLUMN_FULL", { columnId: "c", wipLimit: 2, cardCount: 2 }))).toMatchObject({ code: "COLUMN_FULL", details: { wipLimit: 2, cardCount: 2 } });
+    expect(taskErrorToMcp(new TaskError(400, "not a member", "ASSIGNEE_NOT_MEMBER"))).toMatchObject({ code: "INVALID", details: { reason: "ASSIGNEE_NOT_MEMBER" } });
     expect(taskErrorToMcp(new TaskError(403, "owner", "OWNER_ONLY")).code).toBe("OWNER_ONLY");
     expect(taskErrorToMcp(new TaskError(409, "cap", "LIMIT_REACHED")).code).toBe("LIMIT_REACHED");
     expect(taskErrorToMcp(new TaskError(400, "bad")).code).toBe("INVALID");
     expect(taskErrorToMcp(new TaskError(404, "gone")).code).toBe("NOT_FOUND");
+  });
+
+  test("due time and assignees: create_card, update_card with a revision CAS, and the read fields (WAVE_13 §5.5, T99)", async () => {
+    const s = await setup("MCP fields");
+    const key = makeKey(s.member, ["tasks:write"]);
+    const created = await callTool(key, "create_card", {
+      boardId: s.boardId, columnId: s.todo, title: "Call", dueOn: "2026-10-01", dueTime: "17:30", dueTz: "Europe/Berlin", assigneeIds: [s.owner.userId, s.member.userId]
+    });
+    expect(created.isError).toBe(false);
+    expect(created.value.card).toMatchObject({
+      title: "Call", revision: 1, due_on: "2026-10-01", due_time: "17:30", due_tz: "Europe/Berlin", due_at: "2026-10-01T15:30:00.000Z",
+      assignees: ["MCP fields owner", "MCP fields member"], assignee_name: "MCP fields owner"
+    });
+    const cardId = created.value.card.id as string;
+    expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "x", dueOn: "2026-10-01", dueTime: "17:30" })).value).toMatchObject({ code: "INVALID" });
+    expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "x", assigneeIds: [s.stranger.userId] })).value)
+      .toMatchObject({ code: "INVALID", reason: "ASSIGNEE_NOT_MEMBER" });
+
+    // update_card changes fields with the revision compare-and-swap.
+    const updated = await callTool(key, "update_card", { cardId, baseRevision: 1, title: "Call back", dueTime: "09:00", dueTz: "UTC", assigneeIds: [s.member.userId] });
+    expect(updated.isError).toBe(false);
+    expect(updated.value.card).toMatchObject({ title: "Call back", revision: 2, due_time: "09:00", due_tz: "UTC", due_at: "2026-10-01T09:00:00.000Z", assignees: ["MCP fields member"] });
+    const stale = await callTool(key, "update_card", { cardId, baseRevision: 1, title: "Lost" });
+    expect(stale.value).toMatchObject({ code: "CARD_CHANGED", currentRevision: 2 });
+    expect(JSON.stringify(stale.value)).not.toContain("description");
+    // It never changes the description.
+    const withDescription = await callTool(key, "update_card", { cardId, baseRevision: 2, description: "Overwritten" });
+    expect(withDescription.isError).toBe(true);
+    const direct = await invokeMcpToolForTests("update_card", { cardId, baseRevision: 2, description: "Overwritten" }, key.id);
+    expect(JSON.parse(direct.content[0]!.text)).toMatchObject({ code: "INVALID" });
+    expect((await api(s.owner, "GET", `/cards/${cardId}`)).body.card).toMatchObject({ description: "", revision: 2, title: "Call back" });
+    expect((await callTool(key, "update_card", { cardId, baseRevision: 2 })).value).toMatchObject({ code: "INVALID" });
+    expect((await callTool(key, "update_card", { cardId, baseRevision: 2, dueTime: "25:00", dueTz: "UTC" })).value).toMatchObject({ code: "INVALID" });
+    // Clearing the date clears the time; [] clears assignees.
+    const cleared = await callTool(key, "update_card", { cardId, baseRevision: 2, dueOn: null, assigneeIds: [] });
+    expect(cleared.value.card).toMatchObject({ revision: 3, due_on: null, due_time: null, due_tz: null, due_at: null, assignees: [], assignee_name: null });
+    // Strangers and private cards look missing.
+    const strangerKey = makeKey(s.stranger, ["tasks:write"]);
+    expect((await callTool(strangerKey, "update_card", { cardId, baseRevision: 3, title: "x" })).value).toEqual(
+      (await callTool(strangerKey, "update_card", { cardId: crypto.randomUUID(), baseRevision: 3, title: "x" })).value);
+    expect((await callTool(key, "update_card", { cardId: s.privateCardId, baseRevision: 1, title: "x" })).value).toMatchObject({ code: "NOT_FOUND" });
+
+    // Reads carry the same fields, and columns their WIP limit.
+    await api(s.owner, "PATCH", `/cards/${cardId}`, { dueOn: "2026-10-02", dueTime: "08:15", dueTz: "America/New_York", assigneeIds: [s.owner.userId], revision: 3 });
+    expect((await api(s.owner, "PATCH", `/columns/${s.doing}`, { wipLimit: 1 })).status).toBe(200);
+    const listed = await callTool(key, "list_cards", { boardId: s.boardId });
+    expect(listed.value.columns.map((column: { wip_limit: number | null }) => column.wip_limit)).toEqual([null, 1, null]);
+    expect(listed.value.cards.find((card: { id: string }) => card.id === cardId)).toMatchObject({
+      due_on: "2026-10-02", due_time: "08:15", due_tz: "America/New_York", due_at: "2026-10-02T12:15:00.000Z", assignees: ["MCP fields owner"], assignee_name: "MCP fields owner"
+    });
+    expect((await callTool(key, "get_card", { cardId })).value.card).toMatchObject({ due_time: "08:15", assignees: ["MCP fields owner"], revision: 4 });
+
+    // Audit: marked as MCP, with counts only.
+    expect(auditRows(s.member.userId, "task.card_update").at(-1)).toMatchObject({ boardId: s.boardId, cardId, via: "mcp", keyId: key.id, assigneesRemoved: 1, dueTime: "cleared" });
+  });
+
+  test("create_card and move_card return COLUMN_FULL with the counts", async () => {
+    const s = await setup("MCP full");
+    const key = makeKey(s.member, ["tasks:write"]);
+    expect((await api(s.owner, "PATCH", `/columns/${s.todo}`, { wipLimit: 1 })).status).toBe(200);
+    expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "One too many" })).value)
+      .toMatchObject({ code: "COLUMN_FULL", columnId: s.todo, wipLimit: 1, cardCount: 1 });
+    const other = (await callTool(key, "create_card", { boardId: s.boardId, columnId: s.doing, title: "Elsewhere" })).value.card as { id: string };
+    expect((await callTool(key, "move_card", { cardId: other.id, columnId: s.todo })).value).toMatchObject({ code: "COLUMN_FULL", cardCount: 1 });
+    // Within the full column is fine.
+    expect((await callTool(key, "move_card", { cardId: s.cardId, columnId: s.todo, afterCardId: null })).isError).toBe(false);
   });
 
   test("task writes count against the daily task_write bucket; reads do not", async () => {

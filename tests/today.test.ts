@@ -310,7 +310,9 @@ describe("GET /api/today", () => {
 
     const ownerView = await expectParity(owner);
     expect(among(ownerView.sections.tasksDue, all, "cardId")).toEqual([overdue.id, soon.id]);
-    expect(ownerView.sections.tasksDue!.items[0]).toEqual({ cardId: overdue.id, boardId, boardName: "Today board", title: "Overdue", dueOn: addDays(date, -3), overdue: true });
+    expect(ownerView.sections.tasksDue!.items[0]).toEqual({
+      cardId: overdue.id, boardId, boardName: "Today board", title: "Overdue", dueOn: addDays(date, -3), dueTime: null, dueTz: null, dueAt: null, overdue: true
+    });
     expect(ownerView.sections.tasksDue!.items[1]).toMatchObject({ overdue: false });
     expect(ids(ownerView.sections.tasksDue, "cardId")).not.toContain(later.id);
     expect(ids(ownerView.sections.tasksDue, "cardId")).not.toContain(finished.id);
@@ -346,6 +348,49 @@ describe("GET /api/today", () => {
     expect((await tasks(owner, "DELETE", `/boards/${boardId}`)).status).toBe(200);
     const binned = await expectParity(owner);
     expect(binned.sections.tasksMine!.items).toEqual([]);
+  });
+
+  test("tasks: timed cards carry dueAt, sort by time, go overdue at their instant, and My tasks reads card_assignees", async () => {
+    const owner = await createUser("Today timed owner");
+    const member = await createUser("Today timed member");
+    const { boardId, todo } = await board(owner, "Timed board", [member]);
+    const now = new Date();
+    const date = dateInZone(now, "UTC");
+    const timed = async (title: string, dueOn: string, dueTime: string, dueTz: string) => {
+      const created = await tasks(owner, "POST", `/boards/${boardId}/cards`, { columnId: todo, title, dueOn, dueTime, dueTz });
+      expect(created.status).toBe(201);
+      return created.body.card as { id: string; revision: number; due_at: string };
+    };
+    // One minute ago and in an hour, in UTC, plus a date-only card on the same day.
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const hm = (at: Date) => `${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`;
+    const past = new Date(now.getTime() - 60_000);
+    const future = new Date(now.getTime() + 3_600_000);
+    const pastCard = await timed("Just passed", dateInZone(past, "UTC"), hm(past), "UTC");
+    const dateOnly = await card(owner, boardId, todo, "Today, no time", date);
+    const futureCard = await timed("In an hour", dateInZone(future, "UTC"), hm(future), "UTC");
+    const all = [pastCard.id, dateOnly.id, futureCard.id];
+
+    const view = await expectParity(owner);
+    const items = view.sections.tasksDue!.items.filter((item) => all.includes(item.cardId as string));
+    const byId = Object.fromEntries(items.map((item) => [item.cardId, item]));
+    expect(byId[pastCard.id]).toMatchObject({ dueTime: hm(past), dueTz: "UTC", dueAt: pastCard.due_at, overdue: true });
+    expect(byId[futureCard.id]).toMatchObject({ dueTime: hm(future), dueTz: "UTC", overdue: false });
+    // A date-only card due today is not overdue.
+    expect(byId[dateOnly.id]).toMatchObject({ dueTime: null, dueAt: null, overdue: false });
+    // Same day: timed cards by time, then the date-only card.
+    if (dateInZone(past, "UTC") === date && dateInZone(future, "UTC") === date) {
+      expect(items.map((item) => item.cardId)).toEqual([pastCard.id, futureCard.id, dateOnly.id]);
+    }
+
+    // My tasks reads card_assignees: a second assignee sees the card as assigned.
+    const later = await card(owner, boardId, todo, "Later, shared", addDays(date, 30));
+    expect((await tasks(owner, "PATCH", `/cards/${later.id}`, { assigneeIds: [owner.userId, member.userId], revision: later.revision })).status).toBe(200);
+    expect((db.query("SELECT assignee_id FROM cards WHERE id = ?").get(later.id) as { assignee_id: string }).assignee_id).toBe(owner.userId);
+    const memberMine = (await expectParity(member)).sections.tasksMine!.items;
+    expect(memberMine.find((item) => item.cardId === later.id)).toMatchObject({ reason: "assigned" });
+    const ownerMine = (await expectParity(owner)).sections.tasksMine!.items;
+    expect(ownerMine.find((item) => item.cardId === later.id)).toMatchObject({ reason: "assigned" });
   });
 
   test("sections hold ten items plus more", async () => {

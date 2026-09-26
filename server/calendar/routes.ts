@@ -160,7 +160,7 @@ export function registerCalendarRoutes(app: Hono<AppEnv>) {
       const range = rangeFor(query.from, query.to, query.tz);
       const result: ReturnType<typeof listOccurrences> & { tasks?: DueTask[] } = listOccurrences(userId, range, query.calendarIds);
       // The "Tasks due" overlay (D67): present only when asked for, empty until migration 011 adds cards.due_on.
-      if (query.includeTasks) result.tasks = listDueTasks(userId, range);
+      if (query.includeTasks) result.tasks = listDueTasks(userId, range, query.tz);
       return result;
     });
   });
