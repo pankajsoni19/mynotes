@@ -14,19 +14,21 @@ import { taskDatesMigration } from "../server/migrations/011_task_dates";
 import { collectionsMigration } from "../server/migrations/012_collections";
 import { calendarMigration } from "../server/migrations/013_calendar";
 import { eventNextOccurrenceMigration } from "../server/migrations/014_event_next_occurrence";
+import { userPreferencesMigration } from "../server/migrations/016_user_preferences";
 import { registeredMigrationIds, runMigrations } from "../server/migrations";
 
 const legacyMigrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration];
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not the parallel migrations 016 (user preferences) and
- * 017 (Team) are present yet, and pins the ids this branch depends on.
+ * holds whether or not later migrations (017 onwards, Team) are present yet,
+ * and pins the ids this branch depends on (1–16).
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  expect(ids.slice(0, 15)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-  expect(ids.slice(15).every((id) => id === 16 || id === 17)).toBe(true);
+  // 017 onwards (Team, Wave 14) land from a parallel wave and may or may not be present yet.
+  expect(ids.slice(0, 16)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  expect(ids.slice(16).every((id) => id >= 17)).toBe(true);
 }
 
 function openDb() {
@@ -411,6 +413,56 @@ describe("database migrations", () => {
     db.query("DELETE FROM boards WHERE id = 'b1'").run();
     expect([count("card_assignees"), count("card_relations"), count("card_flags"), count("cards")]).toEqual([0, 0, 0, 0]);
     expect(db.query("SELECT id FROM board_tags").all()).toEqual([{ id: "t3" }]);
+    db.close();
+  });
+
+  test("migration 016 adds user preferences with defaults, a bounded JSON array CHECK, and a user cascade", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    // A 014-shaped database: every released migration, then 016 on top without a backfill.
+    for (const migration of [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2026-01-02T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u2', 'other@example.test', 'Other', 'x', ?)").run(old);
+    runMigrations(db);
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 16").get() as { name: string }).name).toBe("user_preferences");
+    expect((db.query("SELECT COUNT(*) AS count FROM user_preferences").get() as { count: number }).count).toBe(0);
+
+    db.query("INSERT INTO user_preferences (user_id, updated_at) VALUES ('u1', ?)").run(old);
+    expect(db.query("SELECT disabled_modules, revision FROM user_preferences WHERE user_id = 'u1'").get()).toEqual({ disabled_modules: "[]", revision: 1 });
+    const insert = db.query("INSERT INTO user_preferences (user_id, disabled_modules, updated_at) VALUES ('u2', ?, ?)");
+    expect(() => insert.run("not json", old)).toThrow();
+    expect(() => insert.run('{"a":1}', old)).toThrow();
+    expect(() => insert.run(JSON.stringify(["x".repeat(520)]), old)).toThrow();
+    expect(() => db.query("INSERT INTO user_preferences (user_id, updated_at) VALUES ('missing', ?)").run(old)).toThrow();
+    insert.run('["calendar"]', old);
+    db.query("DELETE FROM users WHERE id = 'u1'").run();
+    expect((db.query("SELECT user_id FROM user_preferences").all() as Array<{ user_id: string }>).map((row) => row.user_id)).toEqual(["u2"]);
+    db.close();
+  });
+
+  test("a database that ran 016 before 015 existed still gets 015 (sub-waves merge in any order)", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
+      taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, userPreferencesMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b1', 'u1', 'Plan', ?, ?)").run(old, old);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES ('c1', 'b1', 'To do', 1024, ?, ?)").run(old, old);
+    db.query("INSERT INTO cards (id, board_id, column_id, position, title, created_at, updated_at, assignee_id) VALUES ('k1', 'b1', 'c1', 1024, 'A', ?, ?, 'u1')").run(old, old);
+    runMigrations(db);
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect(db.query("SELECT card_id, user_id FROM card_assignees").all()).toEqual([{ card_id: "k1", user_id: "u1" }]);
     db.close();
   });
 });

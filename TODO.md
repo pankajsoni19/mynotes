@@ -171,10 +171,10 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [ ] Wave 15 (Team B): viewer and guest enforcement (write gate, `AUDIENCE_ALL_USERS`, MCP role filter, `SIGNUP_ROLE`, role-aware chrome).
 - [ ] Wave 16 (Team C, unscheduled): invites, migration `018`.
 
-### Task hierarchy and team workflows (research in progress → plan → build)
-- [ ] Cross-board visibility at `/tasks`: a Linear-style filter over cards from every board the user can read, and saved **views** (filter + display settings) that can be private or shared. Researched together with hierarchy for a cohesive Tasks UX.
-- [ ] UX cohesion research: how hierarchy, sprints, cross-board views, and the existing board list fit together in the product without feeling bolted on.
-- [ ] Card hierarchy: sprint > task, or sprint > task > subtask, chosen per board. Research the workflows most teams use (kanban, scrum sprints, epics/stories/subtasks, simple to-do lists, GTD) and how one board model can support them. Research doc: `docs/plan/research/2026-09-26-task-hierarchy-workflows.md`.
+### Wave 17 — Task hierarchy, sprints, Tasks home and views — plan of record: `docs/plan/research/2026-09-26-task-hierarchy-workflows.md` (§14 director review)
+- [ ] 17A Hierarchy (migration 019): parent/level (max 3), board structure presets (Flat, Task › Subtask, Sprint › Task, Sprint › Task › Subtask, Epic › Story › Subtask, custom), subtasks section, roll-ups, Bin subtree cascade, templates, MCP fields. After 13A + 13B merge.
+- [ ] 17B Sprints: board_sprints entity, one active per board, close with carry-over, switcher + progress strip, MCP sprint tools. After 17A.
+- [ ] 17C Tasks home and views (migration 020): `/tasks` segments Boards / My work / Views, shared column state todo/doing/done, shared filter grammar (`shared/taskQuery.ts`), paged cross-board query, saved views private/selected/everyone (never widen access), MCP `list_views` / `query_cards`. Server half may start after 13B-server merges.
 
 ### Wave 13 — Task card UX, board views, dropdowns, Modules — plan of record: `docs/plan/WAVE_13_TASK_CARD_UX.md` (§12 director review). Sub-waves 13A–13F; 13A, 13F, 13B-server in progress.
 - [ ] Column WIP limit: each board column/lane gets an optional max card count (default: no limit). Shown as `n / limit` in the column header, warns or blocks moves that would exceed it (kanban + agile).
@@ -191,6 +191,11 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [ ] Card relations: link cards with typed relations (related, depends on, needed by, …).
 - [ ] Calendar: the calendars dropdown becomes a custom picker instead of a native `<select>`.
 - [x] `/collections` list: inline rename / share / Move to Bin actions like the board list (merged `fdac35c`, ships in v0.8.0). (observation or change request?).
+
+### Closing docs pass (after Waves 13, 14, 17 ship)
+- [ ] Rewrite `README.md` to lead with features (Today, Notes, Files, Tasks with views/hierarchy/sprints, Collections, Calendar + reminders, Search, Team, MCP, Modules), concise, details on the docs site.
+- [ ] Replace `docs/images/dashboard-dark.png` with fresh screenshots of the current product (Today dashboard + a task board; dark and light if cheap), taken from an isolated QA instance with seeded placeholder data only — never real user data.
+- [ ] Refresh `site/index.html` and `docs/USING.md` for every feature shipped in v0.8–v0.10.
 
 ## Backlog — candidate modules and enhancements (for later picking)
 
