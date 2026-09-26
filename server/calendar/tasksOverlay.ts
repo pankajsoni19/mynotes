@@ -5,6 +5,8 @@ import { addDays, utcToZoned, zonedToUtc, type ExpansionRange } from "./recurren
 
 export type DueTask = {
   cardId: string; boardId: string; boardName: string; title: string;
+  /** The parent's title on the same board (task hierarchy D138), or null; the parent is readable whenever the card is. */
+  parentTitle: string | null;
   /** The card's civil due date (in `dueTz` when timed). */
   dueOn: string;
   /** Wave 13 (D100): the wall time and zone, and the exact UTC instant, when the card has a time. */
@@ -33,7 +35,7 @@ const wallMinute = (ms: number) => new Date(ms).toISOString().slice(0, 16).repla
 const hasColumn = (database: Database, table: string, column: string) =>
   (database.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((row) => row.name === column);
 
-type DueRow = { cardId: string; boardId: string; boardName: string; title: string; dueOn: string; dueTime: string | null; dueTz: string | null };
+type DueRow = { cardId: string; boardId: string; boardName: string; title: string; parentTitle: string | null; dueOn: string; dueTime: string | null; dueTz: string | null };
 
 /**
  * The read-only "Tasks due" overlay (WAVES_10-12.md D67): live cards with a
@@ -59,12 +61,15 @@ export function createDueTasksQuery(database: Database) {
   const enabled = hasColumn(database, "cards", "due_on");
   const timed = enabled && hasColumn(database, "cards", "due_time");
   const doneFilter = enabled && hasColumn(database, "board_columns", "is_done") ? "AND COALESCE(col.is_done, 0) = 0" : "";
+  const parentColumn = hasColumn(database, "cards", "parent_card_id")
+    ? "(SELECT p.title FROM cards p WHERE p.id = c.parent_card_id AND p.board_id = c.board_id AND p.deleted_at IS NULL) AS parentTitle"
+    : "NULL AS parentTitle";
   const timeColumns = timed ? "c.due_time AS dueTime, c.due_tz AS dueTz" : "NULL AS dueTime, NULL AS dueTz";
   const inRange = timed
     ? `((c.due_time IS NULL AND c.due_on >= $fromDate AND c.due_on < $toDate)
       OR (c.due_time IS NOT NULL AND c.due_on || ' ' || c.due_time >= $bandStart AND c.due_on || ' ' || c.due_time < $bandEnd))`
     : "c.due_on >= $fromDate AND c.due_on < $toDate";
-  const sql = `SELECT c.id AS cardId, c.board_id AS boardId, b.name AS boardName, c.title, c.due_on AS dueOn, ${timeColumns}
+  const sql = `SELECT c.id AS cardId, c.board_id AS boardId, b.name AS boardName, c.title, ${parentColumn}, c.due_on AS dueOn, ${timeColumns}
     FROM cards c JOIN boards b ON b.id = c.board_id JOIN board_columns col ON col.id = c.column_id
     WHERE c.deleted_at IS NULL AND c.due_on >= $wideFrom AND c.due_on < $wideTo AND ${inRange} ${doneFilter}
       AND ${readableBoardPredicate}

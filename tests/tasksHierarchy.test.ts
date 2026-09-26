@@ -311,6 +311,33 @@ describe("board templates (D136)", () => {
   });
 });
 
+describe("parent titles in Today and the calendar overlay (D138, T112)", () => {
+  test("an assigned subtask shows its parent's title; a binned parent shows none", async () => {
+    const { member, boardId, columns } = await setup("Today tree");
+    const todo = columns[0].id;
+    const story = await addCard(member, boardId, todo, "Checkout story");
+    const today = new Date().toISOString().slice(0, 10);
+    const subtask = await addCard(member, boardId, todo, "Build form", { parentId: story.id, dueOn: today, assigneeIds: [member.userId] });
+    const due = async () => ((await (await request("/today?tz=UTC", {}, member)).json()) as { sections: Record<string, { items: Array<{ cardId: string; parentTitle: string | null }> }> })
+      .sections.tasksDue!.items.find((item) => item.cardId === subtask.id);
+    expect((await due())!.parentTitle).toBe("Checkout story");
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const overlay = async () => ((await (await request(`/events?from=${today}&to=${tomorrow}&include=tasks`, {}, member)).json()) as { tasks: Array<{ cardId: string; parentTitle: string | null }> })
+      .tasks.find((task) => task.cardId === subtask.id);
+    expect((await overlay())?.parentTitle).toBe("Checkout story");
+    // The cross-board query carries it too.
+    const { runQuery } = await import("../server/tasks/query");
+    const { parse } = await import("../shared/taskQuery");
+    const parsed = parse(`board:${boardId} level:2`);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    expect(runQuery(member.userId, parsed.query, { tz: "UTC" }).cards.map((card) => card.parent_title)).toEqual(["Checkout story"]);
+    // Detached, it names no parent.
+    expect((await call(member, "PATCH", `/cards/${subtask.id}`, { parentId: null, revision: subtask.revision })).status).toBe(200);
+    expect((await due())!.parentTitle).toBeNull();
+    expect(runQuery(member.userId, parsed.query, { tz: "UTC" }).cards.map((card) => card.parent_title)).toEqual([null]);
+  });
+});
+
 describe("roll-ups", () => {
   test("the board payload counts live direct children and those in a done column, with one grouped query (D134)", async () => {
     const { owner, member, boardId, columns } = await setup("Rollup");

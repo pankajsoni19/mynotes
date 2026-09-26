@@ -30,6 +30,8 @@ export const BIN_SOON_MS = 3 * 86_400_000;
 type TaskRow = {
   cardId: string; boardId: string; boardName: string; title: string;
   dueOn: string | null; dueTime: string | null; dueTz: string | null; assigned: 0 | 1;
+  /** The parent's title on the same board (task hierarchy D138), or null. */
+  parentTitle: string | null;
 };
 
 /** Whether `$userId` is one of the card's assignees (card_assignees, migration 015). */
@@ -37,7 +39,8 @@ const assignedToCaller = "EXISTS (SELECT 1 FROM card_assignees ca WHERE ca.card_
 
 const taskSelect = `
   SELECT k.id AS cardId, b.id AS boardId, b.name AS boardName, k.title, k.due_on AS dueOn, k.due_time AS dueTime, k.due_tz AS dueTz,
-         ${assignedToCaller} AS assigned
+         ${assignedToCaller} AS assigned,
+         (SELECT p.title FROM cards p WHERE p.id = k.parent_card_id AND p.board_id = k.board_id AND p.deleted_at IS NULL) AS parentTitle
   FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id
   WHERE k.deleted_at IS NULL AND col.is_done = 0 AND ${readableBoardPredicate}`;
 
@@ -48,7 +51,7 @@ const taskSelect = `
 const taskItem = (row: TaskRow, today: string, now: Date) => {
   const dueAt = dueAtOf({ due_on: row.dueOn, due_time: row.dueTime, due_tz: row.dueTz });
   return {
-    cardId: row.cardId, boardId: row.boardId, boardName: row.boardName, title: row.title,
+    cardId: row.cardId, boardId: row.boardId, boardName: row.boardName, title: row.title, parentTitle: row.parentTitle,
     dueOn: row.dueOn, dueTime: row.dueTime, dueTz: row.dueTz, dueAt,
     overdue: dueAt !== null ? now.getTime() > Date.parse(dueAt) : row.dueOn !== null && row.dueOn < today
   };

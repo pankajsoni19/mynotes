@@ -35,7 +35,8 @@ function taskRow(item: Record<string, any>, date: string): TodayRow {
   return {
     key: item.cardId,
     label: item.title,
-    meta: [item.boardName, due?.description, reason].filter(Boolean).join(" · "),
+    // A subtask names its parent on the same board (task hierarchy D138): "Web app › Checkout".
+    meta: [item.parentTitle ? `${item.boardName} › ${item.parentTitle}` : item.boardName, due?.description, reason].filter(Boolean).join(" · "),
     route: { app: "tasks", boardId: item.boardId, cardId: item.cardId },
     ...(due && due.tone !== "later" ? { tone: due.tone } : {})
   };
