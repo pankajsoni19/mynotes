@@ -171,10 +171,10 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [ ] Wave 15 (Team B): viewer and guest enforcement (write gate, `AUDIENCE_ALL_USERS`, MCP role filter, `SIGNUP_ROLE`, role-aware chrome).
 - [ ] Wave 16 (Team C, unscheduled): invites, migration `018`.
 
-### Task hierarchy and team workflows (research in progress → plan → build)
-- [ ] Cross-board visibility at `/tasks`: a Linear-style filter over cards from every board the user can read, and saved **views** (filter + display settings) that can be private or shared. Researched together with hierarchy for a cohesive Tasks UX.
-- [ ] UX cohesion research: how hierarchy, sprints, cross-board views, and the existing board list fit together in the product without feeling bolted on.
-- [ ] Card hierarchy: sprint > task, or sprint > task > subtask, chosen per board. Research the workflows most teams use (kanban, scrum sprints, epics/stories/subtasks, simple to-do lists, GTD) and how one board model can support them. Research doc: `docs/plan/research/2026-09-26-task-hierarchy-workflows.md`.
+### Wave 17 — Task hierarchy, sprints, Tasks home and views — plan of record: `docs/plan/research/2026-09-26-task-hierarchy-workflows.md` (§14 director review)
+- [ ] 17A Hierarchy (migration 019): parent/level (max 3), board structure presets (Flat, Task › Subtask, Sprint › Task, Sprint › Task › Subtask, Epic › Story › Subtask, custom), subtasks section, roll-ups, Bin subtree cascade, templates, MCP fields. After 13A + 13B merge.
+- [ ] 17B Sprints: board_sprints entity, one active per board, close with carry-over, switcher + progress strip, MCP sprint tools. After 17A.
+- [ ] 17C Tasks home and views (migration 020): `/tasks` segments Boards / My work / Views, shared column state todo/doing/done, shared filter grammar (`shared/taskQuery.ts`), paged cross-board query, saved views private/selected/everyone (never widen access), MCP `list_views` / `query_cards`. Server half may start after 13B-server merges.
 
 ### Wave 13 — Task card UX, board views, dropdowns, Modules — plan of record: `docs/plan/WAVE_13_TASK_CARD_UX.md` (§12 director review). Sub-waves 13A–13F; 13A, 13F, 13B-server in progress.
 - [ ] Column WIP limit: each board column/lane gets an optional max card count (default: no limit). Shown as `n / limit` in the column header, warns or blocks moves that would exceed it (kanban + agile).
