@@ -44,6 +44,9 @@ function mcpCard(card: QueriedCard) {
     parent_id: card.parent_card_id,
     parent_title: card.parent_title,
     level: card.level,
+    // Sprints (17B): the card's sprint (inherited below the work level) and its name.
+    sprint_id: card.sprint_id,
+    sprint_name: card.sprint_name,
     updated_at: card.updated_at
   };
 }
@@ -92,7 +95,7 @@ export const taskViewTools: McpToolSpec[] = [
       "Find cards across every board the user can open, with a saved view (viewId) or a filter in the task query language (filter); give exactly one.",
       "Terms are separated by spaces and must all match; values after a colon are alternatives: assignee:me,none state:todo,doing due:overdue,week.",
       "Keys: board:<id>, state:todo|doing|done, column:<id> (needs exactly one board:), assignee:me|none|<userId>, creator:me|<userId>, tag:<id>|<name>|none,",
-      "flag:urgent|blocked|needs_review|on_hold|none, due:overdue|today|week|next-week|none|YYYY-MM-DD|<YYYY-MM-DD|>YYYY-MM-DD, has:relation|blocked|subtasks, parent:<cardId>|none, level:0|1|2|work,",
+      "flag:urgent|blocked|needs_review|on_hold|none, due:overdue|today|week|next-week|none|YYYY-MM-DD|<YYYY-MM-DD|>YYYY-MM-DD, has:relation|blocked|subtasks, parent:<cardId>|none, level:0|1|2|work, sprint:current|next|none|<sprintId> (current and next per board; subtasks follow their task),",
       "and \"quoted text\" for title or excerpt text. A leading - negates a term. Results are paged: pass nextCursor back as cursor."
     ].join(" "),
     scopes: ["tasks:read"],
