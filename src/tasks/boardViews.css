@@ -141,3 +141,60 @@ span.task-filter-chip-body { cursor: default; }
   .task-filter-text { min-height: 44px; min-width: 0; flex: 1 1 180px; }
   .task-filter-text input { font-size: 1rem; }
 }
+
+/* Board calendar view (§4.5a): the shared grid (calendar.css) plus card chips and the tray. */
+.task-board-calendar { display: grid; gap: 10px; }
+.task-cal-subtitle { margin: 0; color: #8d8d94; font-size: .8rem; }
+.task-cal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.task-cal-layout { display: inline-flex; gap: 2px; border: 1px solid #2a2a2f; border-radius: 999px; padding: 2px; background: #121214; }
+.task-cal-layout button { min-height: 30px; border: 0; border-radius: 999px; padding: 0 12px; background: transparent; color: #9a9aa1; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.task-cal-layout button.active { background: #2b271d; color: #f5cf79; }
+.task-cal-layout button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.task-cal-tray-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.task-cal-tray-button svg { width: 16px; }
+.task-cal-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; align-items: start; gap: 16px; }
+.task-cal-main { min-width: 0; }
+.task-cal-note { margin: 12px 0 0; color: #8d8d94; font-size: .84rem; }
+.task-cal-help { margin: 0 0 8px; color: #7c7c83; font-size: .76rem; line-height: 1.45; }
+.task-board-calendar .calendar-cell.drop-target { background: #1f1b10; box-shadow: inset 0 0 0 2px #6b572c; }
+.task-cal-chip { min-width: 0; min-height: 24px; display: flex; align-items: center; gap: 4px; overflow: hidden; border-left: 3px solid #c9a85c; border-radius: 6px; padding: 2px 6px; background: #1c1c20; color: #e1e1e3; font-size: .74rem; white-space: nowrap; cursor: grab; outline: 0; }
+.task-cal-chip:hover { background: #26262b; }
+.task-cal-chip:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.task-cal-chip.done { border-left-color: #55555c; color: #8d8d94; }
+.task-cal-chip.done .task-cal-title { text-decoration: line-through; text-decoration-color: #55555c; }
+.task-cal-flag { width: 6px; height: 6px; flex: none; border-radius: 999px; background: #ff8f86; }
+.task-cal-time { flex: none; color: #9a9aa1; font-variant-numeric: tabular-nums; }
+.task-cal-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.calendar-dot.task-cal-dot { background: #c9a85c; }
+.calendar-dot.task-cal-dot.flagged { background: #ff8f86; }
+.task-board-calendar .calendar-day-list ul, .task-cal-tray-list ul, .task-board-calendar .calendar-day-group ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.task-cal-row { display: flex; align-items: center; gap: 4px; border: 1px solid #242428; border-radius: 10px; padding-right: 4px; background: #161618; }
+.task-cal-row.done .task-cal-row-title { color: #8d8d94; }
+.task-cal-row-open { flex: 1; min-width: 0; min-height: 44px; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; column-gap: 8px; border: 0; border-radius: 9px; padding: 6px 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.task-cal-row-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.task-cal-row-time { grid-row: span 2; color: #9a9aa1; font-size: .76rem; font-variant-numeric: tabular-nums; }
+.task-cal-row-title { min-width: 0; display: flex; align-items: center; gap: 6px; color: #ededee; font-size: .86rem; font-weight: 600; }
+.task-cal-row-title > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-cal-row-open small { color: #7c7c83; font-size: .72rem; }
+.task-cal-row-due { flex: none; width: 36px; height: 36px; }
+.task-cal-row-due svg { width: 16px; }
+.task-cal-tray { position: sticky; top: 0; max-height: calc(100dvh - 200px); overflow-y: auto; border: 1px dashed #34343a; border-radius: 14px; padding: 12px; background: #111113; }
+.task-cal-tray.drop-target { border-color: #6b572c; background: #17150f; }
+.task-cal-tray h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; color: #ededee; font-size: .9rem; }
+.task-cal-tray-list .task-cal-row-open { grid-template-columns: minmax(0, 1fr); }
+.task-cal-tray-list .task-cal-row-time { display: none; }
+.task-cal-sheet { padding: 0 14px 14px; overflow-y: auto; }
+.task-cal-due-form { display: grid; gap: 12px; padding: 14px; }
+.task-cal-due-form label { display: grid; gap: 6px; }
+.task-cal-due-form label span { display: inline-flex; align-items: center; gap: 6px; color: #c9c9ce; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.task-cal-due-form label svg { width: 15px; }
+.task-cal-due-form input { min-height: 40px; border: 1px solid #333338; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #ededee; font: inherit; color-scheme: dark; }
+.task-cal-due-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.task-cal-due-actions button { min-height: 40px; margin: 0; }
+
+@media (max-width: 760px) {
+  .task-cal-body { grid-template-columns: minmax(0, 1fr); }
+  .task-cal-layout button { min-height: 40px; }
+  .task-cal-row-due { width: 44px; height: 44px; }
+  .task-cal-due-form input, .task-cal-due-actions button { min-height: 44px; font-size: 1rem; }
+}

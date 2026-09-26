@@ -22,6 +22,9 @@ import { applyBoardQuery, boardData, type BoardContext } from "./boardQuery";
 import { hasBoardFilter, withBoardQuery, type BoardQuery } from "./boardUrl";
 import { localDateString, viewerTimeZone } from "./taskActions";
 import { FilterBar } from "./FilterBar";
+import { BoardCalendar } from "./BoardCalendar";
+import { displayedDay, displayedTime, dueAnnouncement, shiftedDueAt } from "./calendarPlacement";
+import { daysBetween } from "../calendarRoute";
 import "./boardViews.css";
 import {
   createCard,
@@ -31,6 +34,7 @@ import {
   deleteColumn,
   restoreTaskItem,
   getBoard,
+  updateCard,
   moveCard,
   renameBoard,
   taskErrorCode,
@@ -276,6 +280,35 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     void move(card.id, target.columnId, target.afterCardId, { focus: true });
   }
 
+  /**
+   * The calendar view's date change (D115): only `dueOn` is sent with the card's revision, so the
+   * server keeps the time and zone; `null` clears the date and time. The card moves at once; on
+   * CARD_CHANGED (or any failure) it moves back and the board reloads. WIP limits do not apply.
+   */
+  async function setDue(cardId: string, dueOn: string | null) {
+    const current = detailRef.current;
+    const card = current?.cards.find((item) => item.id === cardId);
+    if (!current || !card || card.due_on === dueOn) return;
+    const before = current.cards;
+    const shift = dueOn && card.due_on ? daysBetween(card.due_on, dueOn) : 0;
+    setCards((items) => items.map((item) => item.id !== cardId ? item : dueOn === null
+      ? { ...item, due_on: null, due_time: null, due_tz: null, due_at: null }
+      : { ...item, due_on: dueOn, due_at: shiftedDueAt(item.due_at, shift) }));
+    try {
+      const { card: saved } = await updateCard(cardId, { dueOn, revision: card.revision });
+      setCards((items) => items.map((item) => item.id === cardId
+        ? { ...item, revision: saved.revision, due_on: saved.due_on, due_time: saved.due_time, due_tz: saved.due_tz, due_at: saved.due_at, updated_at: saved.updated_at }
+        : item));
+      const zone = viewerTimeZone();
+      setAnnouncement(`${card.title}: ${dueAnnouncement(displayedDay(saved, zone), displayedTime(saved, zone))}`);
+      focusCard(cardId);
+    } catch (reason) {
+      setCards(() => before);
+      notify(taskErrorCode(reason) === "CARD_CHANGED" ? "Someone else changed this card. It was reloaded." : taskErrorMessage(reason, "Could not change the due date"));
+      void load();
+    }
+  }
+
   async function addCard(columnId: string, title: string) {
     let card: CardSummary;
     try {
@@ -408,7 +441,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         <h1 id="task-board-title" title={board?.name}>{board?.name ?? "Loading…"}</h1>
       </div>
       {board && <span className="task-board-count">{cardCountLabel(board.card_count)}</span>}
-      {detail && <BoardViewSwitch value={view} views={["board", "table", "list"]} onChange={(next) => onQueryChange(withBoardQuery(query, { view: next }), { push: true })} />}
+      {detail && <BoardViewSwitch value={view} onChange={(next) => onQueryChange(withBoardQuery(query, { view: next }), { push: true })} />}
       {owner && <span className="task-board-actions">
         <button className="icon-button" onClick={(event) => openDialog({ kind: "rename" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Rename board" title="Rename board"><Pencil /></button>
         <button className="icon-button" onClick={(event) => openDialog({ kind: "share" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Share board" title="Share board"><Share2 /></button>
@@ -436,6 +469,12 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       <BoardGroupedList board={data} groups={result.groups} group={query.group ?? "column"} today={viewContext.today} filtered={filtered}
         onGroup={(group) => onQueryChange(withBoardQuery(query, { group: group === "column" ? null : group }))}
         onOpenCard={(card) => onOpenCard(card.id)} onCardMenu={(card, trigger) => openDialog({ kind: "moveCard", cardId: card.id }, trigger)} />
+    </div>}
+    {detail && data && result && view === "calendar" && <div className="task-view-body">
+      <BoardCalendar board={data} cards={result.cards} layout={query.cal} month={query.month} today={viewContext.today} viewerZone={viewContext.timeZone} filtered={filtered}
+        onMonth={(month) => onQueryChange(withBoardQuery(query, { month }))}
+        onLayout={(cal) => onQueryChange(withBoardQuery(query, { cal }), { push: true })}
+        onOpenCard={(card) => onOpenCard(card.id)} onSetDue={(card, dueOn) => { void setDue(card.id, dueOn); }} />
     </div>}
     {detail && view === "board" && <nav className="task-column-tabs" aria-label="Columns">
       {columns.map((column, index) => {
