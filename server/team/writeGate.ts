@@ -1,5 +1,7 @@
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../auth";
+import { parse } from "../../shared/taskQuery";
+import { readBoundedBody } from "../validation";
 import { can, type Role } from "./roles";
 
 /**
@@ -36,7 +38,7 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "POST", path: "/api/mcp/keys", why: "own MCP keys; the handler limits scopes by role and refuses guests (O6)" },
   { method: "DELETE", path: "/api/mcp/keys/:id", why: "revoke own MCP keys" },
   { method: "POST", path: "/api/collections/:collectionId/query", why: "a read sent as POST" },
-  { method: "POST", path: "/api/tasks/query", why: "a read sent as POST" },
+  { method: "POST", path: "/api/tasks/query", why: "a read sent as POST; guests only with assignee:me (isGuestTaskQuery)" },
   // Personal task views (task hierarchy plan Q12): viewers keep private views; sharing stays refused.
   { method: "POST", path: "/api/tasks/views", roles: ["viewer"], why: "own private view" },
   { method: "PATCH", path: "/api/tasks/views/:viewId", roles: ["viewer"], why: "own private view (owner-only in the service)" },
@@ -63,11 +65,35 @@ export function isAllowedReadOnlyWrite(role: Role, method: string, path: string)
 
 export const ROLE_READ_ONLY_BODY = { error: "Your team role is read-only", code: "ROLE_READ_ONLY" } as const;
 
+/**
+ * Guests run only "my work" task queries (task hierarchy plan Q12): the filter must carry a plain
+ * `assignee:me` term. Terms AND together, so any other terms only narrow it. Anything unreadable
+ * is refused here; a valid query then goes through the route's own validation.
+ */
+export function isGuestTaskQuery(body: unknown) {
+  if (typeof body !== "object" || body === null) return false;
+  const q = (body as { q?: unknown }).q;
+  if (typeof q !== "string") return false;
+  const parsed = parse(q);
+  return parsed.ok && parsed.query.terms.some((term) => term.key === "assignee" && !term.negate && term.values.length === 1 && term.values[0] === "me");
+}
+
+const GUEST_QUERY_BODY = { error: "Guests can only list cards assigned to them (assignee:me)", code: "ROLE_READ_ONLY" } as const;
+
 /** Registered on `/api/*` after the session, CSRF, and TOTP gates. */
 export async function roleWriteGate(c: Context<AppEnv>, next: Next) {
   const role = c.get("user")?.role;
   if (!role || can(role, "content.write") || ["GET", "HEAD", "OPTIONS"].includes(c.req.method)) return next();
   // Hono matches routes case-sensitively on the raw path, so the gate compares the same path.
-  if (isAllowedReadOnlyWrite(role, c.req.method, c.req.path)) return next();
-  return c.json(ROLE_READ_ONLY_BODY, 403);
+  if (!isAllowedReadOnlyWrite(role, c.req.method, c.req.path)) return c.json(ROLE_READ_ONLY_BODY, 403);
+  if (role === "guest" && c.req.method === "POST" && c.req.path === "/api/tasks/query") {
+    let body: unknown = null;
+    try {
+      body = JSON.parse(new TextDecoder().decode(await readBoundedBody(c.req.raw.clone(), 16_384)));
+    } catch {
+      body = null;
+    }
+    if (!isGuestTaskQuery(body)) return c.json(GUEST_QUERY_BODY, 403);
+  }
+  return next();
 }

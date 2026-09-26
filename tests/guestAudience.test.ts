@@ -81,7 +81,7 @@ describe("guests and all_users audiences (T84)", () => {
     await ok(owner, "POST", `/tasks/boards/${everyoneBoard.board.id}/cards`, { columnId: everyoneBoard.columns[0].id, title: `${marker} everyone card` });
     const namedBoard = await ok(owner, "POST", "/tasks/boards", { name: `${marker} named board` });
     await ok(owner, "PUT", `/tasks/boards/${namedBoard.board.id}/sharing`, { visibility: "selected", userIds: [named.userId] });
-    await ok(owner, "POST", `/tasks/boards/${namedBoard.board.id}/cards`, { columnId: namedBoard.columns[0].id, title: `${marker} named card` });
+    await ok(owner, "POST", `/tasks/boards/${namedBoard.board.id}/cards`, { columnId: namedBoard.columns[0].id, title: `${marker} named card`, assigneeIds: [named.userId] });
     const view = (await ok(owner, "POST", "/tasks/views", { name: `${marker} view`, query: "" })).view.id as string;
     await ok(owner, "PUT", `/tasks/views/${view}/sharing`, { visibility: "all_users", userIds: [] });
 
@@ -102,7 +102,7 @@ describe("guests and all_users audiences (T84)", () => {
     const namedIds = [notes.inNamedFolder, notes.namedOverride, files.namedOverride, namedBoard.board.id, namedCollection.id, namedCalendar, namedEvent, namedFolder];
 
     /** Everything a reader can reach, as one string per read path. */
-    async function reach(session: Session) {
+    async function reach(session: Session, guestQuery = false) {
       const paths = [
         "/notes", "/folders", "/files", "/tasks/boards", "/tasks/views", "/collections", "/calendars",
         "/events?from=2026-05-01&to=2026-05-10&tz=UTC", `/search?q=${marker}`, "/today?tz=UTC"
@@ -114,8 +114,10 @@ describe("guests and all_users audiences (T84)", () => {
         seen[path] = result.text;
       }
       // The query echoes the board ids it was given, so only its cards count (checked by title below).
-      const query = (await send(session, "POST", "/tasks/query", { q: `board:${everyoneBoard.board.id}` })).text
-        + (await send(session, "POST", "/tasks/query", { q: `board:${namedBoard.board.id}` })).text;
+      // Guests may only run "my work" queries (assignee:me); the named card is assigned to the named guest.
+      const mine = guestQuery ? "assignee:me " : "";
+      const query = (await send(session, "POST", "/tasks/query", { q: `${mine}board:${everyoneBoard.board.id}` })).text
+        + (await send(session, "POST", "/tasks/query", { q: `${mine}board:${namedBoard.board.id}` })).text;
       // Single reads: 200 when readable, 404 otherwise.
       const single: Record<string, number> = {
         [notes.inEveryoneFolder]: (await send(session, "GET", `/notes/${notes.inEveryoneFolder}`)).status,
@@ -137,8 +139,8 @@ describe("guests and all_users audiences (T84)", () => {
       return { all, query, single };
     }
 
-    const expectReach = async (label: string, session: Session, everyone: boolean, byName: boolean) => {
-      const { all, query, single } = await reach(session);
+    const expectReach = async (label: string, session: Session, everyone: boolean, byName: boolean, guestQuery = false) => {
+      const { all, query, single } = await reach(session, guestQuery);
       for (const id of everyoneIds) expect({ label, id, listed: all.includes(id) }).toEqual({ label, id, listed: everyone });
       for (const id of namedIds) expect({ label, id, listed: all.includes(id) }).toEqual({ label, id, listed: byName });
       for (const [id, status] of Object.entries(single)) {
@@ -151,8 +153,8 @@ describe("guests and all_users audiences (T84)", () => {
     };
 
     await expectReach("viewer", viewer, true, false);
-    await expectReach("guest", guest, false, false);
-    await expectReach("named guest", named, false, true);
+    await expectReach("guest", guest, false, false, true);
+    await expectReach("named guest", named, false, true, true);
 
     // An everyone board lists only non-guests as readers (assignee picker), plus the owner.
     const readers = (await ok(owner, "GET", `/tasks/boards/${everyoneBoard.board.id}/readers`)).users as Array<{ id: string }>;

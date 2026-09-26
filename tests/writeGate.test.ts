@@ -81,7 +81,8 @@ describe("role write gate (T87)", () => {
         const expectAllowed = isAllowedReadOnlyWrite(role, route.method, path);
         const response = route.method === "POST" && route.path === "/api/files"
           ? await request("/files", { method: "POST", body: new FormData() }, session)
-          : await request(path.slice("/api".length), { method: route.method, body: "{}" }, session);
+          // A guest's task query must carry assignee:me (checked in its own test below).
+          : await request(path.slice("/api".length), { method: route.method, body: key === "POST /api/tasks/query" ? JSON.stringify({ q: "assignee:me" }) : "{}" }, session);
         const body = await response.json().catch(() => ({})) as { code?: string };
         const observed = { route: key, label, readOnly: response.status === 403 && body.code === "ROLE_READ_ONLY" };
         expect(observed).toEqual({ route: key, label, readOnly: !expectAllowed });
@@ -175,8 +176,15 @@ describe("read-only roles and item share roles (§2.4)", () => {
     for (const session of [viewer, guest]) {
       expect((await send(session, "GET", `/tasks/boards/${board.board.id}`)).status).toBe(200);
       expect((await send(session, "POST", `/tasks/boards/${board.board.id}/cards`, { columnId: board.columns[0].id, title: "Nope" })).body.code).toBe("ROLE_READ_ONLY");
-      expect((await send(session, "POST", "/tasks/query", { q: `board:${board.board.id}` })).status).toBe(200);
+      expect((await send(session, "POST", "/tasks/query", { q: `assignee:me board:${board.board.id}` })).status).toBe(200);
     }
+    expect((await send(viewer, "POST", "/tasks/query", { q: `board:${board.board.id}` })).status).toBe(200);
+    // Guests only run "my work" queries: a plain, positive assignee:me term (task plan Q12).
+    for (const q of [`board:${board.board.id}`, "", "-assignee:me", "assignee:me,none", "assignee:none"]) {
+      expect({ q, ...(await send(guest, "POST", "/tasks/query", { q })) }).toMatchObject({ q, status: 403, body: { code: "ROLE_READ_ONLY" } });
+    }
+    expect((await send(guest, "POST", "/tasks/query", { q: "assignee:me state:todo" })).status).toBe(200);
+    expect((await send(guest, "POST", "/tasks/query", "not json")).status).toBe(403);
     const view = await send(viewer, "POST", "/tasks/views", { name: "My work", query: "assignee:me" });
     expect(view.status).toBe(201);
     expect((await send(viewer, "PUT", `/tasks/views/${view.body.view.id}/sharing`, { visibility: "all_users", userIds: [] })).body.code).toBe("ROLE_READ_ONLY");
