@@ -164,7 +164,12 @@ export function acquireDialogSentinel(env: SentinelEnv = {
     if (released) return;
     released = true;
     openDialogs = Math.max(0, openDialogs - 1);
-    if (openDialogs > 0) return;
+    if (openDialogs > 0) {
+      // Back from the sentinel closed only the innermost of stacked dialogs (a dropdown sheet over
+      // a sheet): the ones still open need a sentinel again, or the next Back would leave Nook.
+      if (!pendingSentinelPop) pushSentinelIfNeeded(env);
+      return;
+    }
     releaseTimer = setTimeout(() => {
       releaseTimer = null;
       if (openDialogs > 0 || !sentinelActive) return;

@@ -110,6 +110,27 @@ test("a dialog opened before the sentinel's pop lands gets a sentinel once it ha
   unregister();
 });
 
+test("Back that closes the inner of two stacked dialogs re-arms the sentinel for the outer one", async () => {
+  const { history, deliver, entries, env } = asyncHistory({ route: "collection", "mynotes.depth": 0 });
+  const outer = acquireDialogSentinel(env);
+  const inner = acquireDialogSentinel(env);
+  expect(entries()).toHaveLength(2);
+  let innerOpen = true;
+  const unregister = registerHistoryDialogGuard(() => { if (!innerOpen) return false; innerOpen = false; return false; });
+  // Back pops the sentinel and closes only the inner dialog (a dropdown sheet over a sheet).
+  history.back();
+  expect(deliver()).toBe(true);
+  expect(innerOpen).toBe(false);
+  inner();
+  // The outer dialog is still open, so it holds a fresh sentinel: the next Back closes it in place.
+  expect(entries()).toEqual([{ route: "collection", "mynotes.depth": 0 }, dialogSentinelState({ route: "collection", "mynotes.depth": 0 })]);
+  unregister();
+  outer();
+  await Bun.sleep(5);
+  expect(deliver()).toBe(true);
+  expect(entries()).toEqual([{ route: "collection", "mynotes.depth": 0 }]);
+});
+
 test("an in-app navigation from the sentinel replaces it instead of stacking on it", async () => {
   const { history, entries, env } = asyncHistory({ route: "home", "mynotes.depth": 0 });
   const release = acquireDialogSentinel(env);
