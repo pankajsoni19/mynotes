@@ -15,7 +15,7 @@ import {
   sameIds,
   viewerTimeZone
 } from "./taskActions";
-import { getBoardReaders, type BoardTag, type CardChange, type CardDetail } from "./tasksApi";
+import { getBoardReaders, type BoardTag, type CardAssignee, type CardChange, type CardDetail } from "./tasksApi";
 import { FLAG_LABELS, type TagChange } from "./cardTags";
 import { FlagPicker, TagPicker } from "./TagPicker";
 
@@ -31,7 +31,7 @@ type CardFieldsProps = {
   /** A save is in flight: the fields wait. */
   saving: boolean;
   /** Saves one change with the card's revision; false when it was not saved (a conflict or an error). */
-  onSave: (change: CardChange, success: string) => Promise<boolean>;
+  onSave: (change: CardChange, success: string, context?: { assignees?: CardAssignee[] }) => Promise<boolean>;
   /** The board's tags (13C); without them the Tags field is left out. */
   tags?: BoardTag[];
   /** The caller owns the board: they also manage its tags. */
@@ -51,7 +51,8 @@ export function CardFields({ card, userId, idPrefix, done, saving, onSave, tags,
     <div className="task-card-field">
       <label htmlFor={`${idPrefix}-assignees`}><UsersRound aria-hidden="true" />Assignees</label>
       <AssigneePicker boardId={card.board_id} userId={userId} inputId={`${idPrefix}-assignees`} assignees={cardAssignees(card)} disabled={saving}
-        onCommit={(ids, names) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned")} />
+        onCommit={(ids, names) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned",
+          { assignees: ids.map((id, index) => ({ id, display_name: names[index] ?? "", can_read: 1 })) })} />
     </div>
     {tags && <div className="task-card-field">
       <label htmlFor={`${idPrefix}-tags`}><Tag aria-hidden="true" />Tags</label>

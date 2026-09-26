@@ -63,11 +63,11 @@ export type CardSummary = {
   tag_ids?: string[];
   /** In the fixed order of `CARD_FLAGS` (D110). */
   flags?: CardFlag[];
-  /** Relations this viewer sees, and readable open `depends_on` cards (13D; the board payload only). */
-  relation_count?: number;
-  open_blockers?: number;
   comment_count: number;
   attachment_count: number;
+  /** Relations this viewer sees (restricted rows count, hidden binned ones do not), and readable open `depends_on` cards (13D). */
+  relation_count?: number;
+  open_blockers?: number;
   created_at: string;
   updated_at: string;
 };
@@ -103,8 +103,25 @@ export const updateColumn = (columnId: string, change: { name?: string; afterCol
   api<{ column: BoardColumn; columns: BoardColumn[] }>(`/tasks/columns/${columnId}`, json("PATCH", change));
 export const deleteColumn = (columnId: string) => api<{ ok: true; columns: BoardColumn[] }>(`/tasks/columns/${columnId}`, json("DELETE", {}));
 
-export const createCard = (boardId: string, columnId: string, title: string) =>
-  api<{ card: CardSummary }>(`/tasks/boards/${boardId}/cards`, json("POST", { columnId, title }));
+/**
+ * One call creates the whole card (the composer, §4.3): fields, relations seen from the new card,
+ * and the caller's own unlinked attachment uploads, in one transaction. Any refusal writes nothing.
+ */
+export type CardCreate = {
+  columnId: string;
+  title: string;
+  description?: string;
+  dueOn?: string | null;
+  dueTime?: string | null;
+  dueTz?: string | null;
+  assigneeIds?: string[];
+  tagIds?: string[];
+  flags?: string[];
+  relations?: Array<{ targetCardId: string; type: RelationType }>;
+  attachmentIds?: string[];
+};
+export const createCard = (boardId: string, body: CardCreate) =>
+  api<{ card: CardDetail; renormalized?: boolean }>(`/tasks/boards/${boardId}/cards`, json("POST", body));
 export const moveCard = (cardId: string, columnId: string, afterCardId: string | null) =>
   api<{ card: CardSummary; renormalized?: boolean; positions?: Array<{ id: string; position: number }> }>(`/tasks/cards/${cardId}/move`, json("POST", { columnId, afterCardId }));
 
@@ -124,7 +141,16 @@ export type CardComment = {
   created_at: string;
   edited_at: string | null;
 };
-export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean; attachments: CardAttachment[] };
+export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean; attachments: CardAttachment[]; relations?: CardRelation[] };
+
+/** A relation as seen from the card in the path (D104, API_CONTRACTS.md § Relations). */
+export type RelationType = "relates_to" | "depends_on" | "needed_by" | "duplicates" | "duplicated_by";
+export type RelatedCard = { id: string; board_id: string; board_name: string; title: string; column_name: string | null; is_done: 0 | 1; due_on: string | null };
+/** A card the viewer cannot read shows only as restricted: no id, title, or board (D105, T90). */
+export type CardRelation =
+  | { id: string; type: RelationType; restricted: false; created_at: string; creator_name: string | null; card: RelatedCard }
+  | { id: string; type: RelationType; restricted: true; created_at: string };
+export type CardSearchResult = { id: string; board_id: string; board_name: string; title: string; column_name: string | null; is_done: 0 | 1 };
 
 export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}`);
 /**
@@ -181,6 +207,18 @@ export const unlinkAttachment = (cardId: string, documentId: string) =>
   api<{ ok: true; movedToBin: boolean }>(`/tasks/cards/${cardId}/attachments/${documentId}`, json("DELETE", {}));
 export const createCommentWithFiles = (cardId: string, body: string, attachmentIds: string[]) =>
   api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", attachmentIds.length ? { body, attachmentIds } : { body }));
+
+/** Titles of live cards on boards the caller can read (D106): `boardId` sorts first, `excludeCardId` drops the card itself. */
+export function searchCards(q: string, options: { boardId?: string; excludeCardId?: string; signal?: AbortSignal } = {}) {
+  const params = new URLSearchParams({ q: q.trim().slice(0, 100) });
+  if (options.boardId) params.set("boardId", options.boardId);
+  if (options.excludeCardId) params.set("excludeCardId", options.excludeCardId);
+  return api<{ results: CardSearchResult[]; truncated: boolean }>(`/tasks/cards/search?${params.toString()}`, options.signal ? { signal: options.signal } : {});
+}
+export const createRelation = (cardId: string, type: RelationType, targetCardId: string) =>
+  api<{ relation: CardRelation }>(`/tasks/cards/${cardId}/relations`, json("POST", { type, cardId: targetCardId }));
+export const deleteRelation = (cardId: string, relationId: string) =>
+  api<{ ok: true }>(`/tasks/cards/${cardId}/relations/${relationId}`, json("DELETE", {}));
 
 export const deleteCard = (cardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/cards/${cardId}`, json("DELETE", {}));
 export const deleteBoard = (boardId: string) => api<{ ok: true; purgeAfter: string }>(`/tasks/boards/${boardId}`, json("DELETE", {}));

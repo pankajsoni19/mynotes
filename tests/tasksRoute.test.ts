@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { formatRoute, parseRoute } from "../src/router";
-import { parentTasksRoute, tasksBackAction, tasksRoute } from "../src/tasksRoute";
+import { fullPageAction, hasFromDialogHint, parentTasksRoute, tasksBackAction, tasksRoute, withFromDialogHint } from "../src/tasksRoute";
 import { carriedTasksState, columnIndexFor, createTasksHistoryState, readTasksHistoryHint } from "../src/tasksNavigation";
 
 const boardId = "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e";
@@ -61,4 +61,48 @@ test("a history write on the same board keeps the column hint, another board dro
   expect(carriedTasksState("user-1", otherBoard, state)).toBeNull();
   expect(carriedTasksState("user-1", null, state)).toBeNull();
   expect(carriedTasksState("user-2", boardId, state)).toBeNull();
+});
+
+test("/card/:k/full opens the card as a page and round-trips; malformed input falls back", () => {
+  const full = tasksRoute(boardId, cardId, true);
+  expect(full).toEqual({ app: "tasks", boardId, cardId, full: true });
+  expect(formatRoute(full)).toBe(`/tasks/${boardId}/card/${cardId}/full`);
+  expect(parseRoute(`/tasks/${boardId.toUpperCase()}/card/${cardId.toUpperCase()}/full/`)).toEqual(full);
+  // The dialog route carries no full key at all (existing equality checks keep working).
+  expect("full" in tasksRoute(boardId, cardId)).toBe(false);
+  expect("full" in parseRoute(`/tasks/${boardId}/card/${cardId}`)).toBe(false);
+  // Anything else after the card, or a bad card id, opens the board; a page needs a card.
+  expect(parseRoute(`/tasks/${boardId}/card/${cardId}/page`)).toEqual(tasksRoute(boardId));
+  expect(parseRoute(`/tasks/${boardId}/card/${cardId}/full/x`)).toEqual(tasksRoute(boardId));
+  expect(parseRoute(`/tasks/${boardId}/card/nope/full`)).toEqual(tasksRoute(boardId));
+  expect(parseRoute(`/tasks/${boardId}/full`)).toEqual(tasksRoute(boardId));
+  expect(tasksRoute(boardId, null, true)).toEqual(tasksRoute(boardId));
+  expect(tasksRoute(null, cardId, true)).toEqual(tasksRoute());
+  expect(formatRoute({ app: "tasks", boardId, cardId: "javascript:x", full: true })).toBe(`/tasks/${boardId}`);
+});
+
+test("in-app Back from a deep-linked page steps page → dialog → board → list → Home without leaving Nook", () => {
+  const full = tasksRoute(boardId, cardId, true);
+  expect(parentTasksRoute(full)).toEqual(tasksRoute(boardId, cardId));
+  expect(tasksBackAction(full, 0)).toEqual({ kind: "replace", route: tasksRoute(boardId, cardId) });
+  expect(tasksBackAction(tasksRoute(boardId, cardId), 0)).toEqual({ kind: "replace", route: tasksRoute(boardId) });
+  expect(tasksBackAction(full, 2)).toEqual({ kind: "history" });
+});
+
+test("Collapse and Close on the page step back with the Expand hint, and replace without it", () => {
+  const full = tasksRoute(boardId, cardId, true);
+  const hinted = withFromDialogHint({ "mynotes.depth": 2, other: 1 });
+  expect(hasFromDialogHint(hinted)).toBe(true);
+  expect((hinted as Record<string, unknown>).other).toBe(1);
+  expect(hasFromDialogHint({ "mynotes.tasks.fromDialog": "yes" })).toBe(false);
+  expect(hasFromDialogHint(null)).toBe(false);
+  // Board (depth 0) → dialog (1) → Expand (2): Collapse is one back, Close two back.
+  expect(fullPageAction("collapse", full, hinted, 2)).toEqual({ kind: "history", delta: -1 });
+  expect(fullPageAction("close", full, hinted, 2)).toEqual({ kind: "history", delta: -2 });
+  // A deep-linked dialog (depth 0) expanded to depth 1: Close cannot step two back, so it replaces.
+  expect(fullPageAction("collapse", full, hinted, 1)).toEqual({ kind: "history", delta: -1 });
+  expect(fullPageAction("close", full, hinted, 1)).toEqual({ kind: "replace", route: tasksRoute(boardId) });
+  // No hint (a deep link to /full, or a page opened another way): replace, never leave Nook.
+  expect(fullPageAction("collapse", full, { "mynotes.depth": 3 }, 3)).toEqual({ kind: "replace", route: tasksRoute(boardId, cardId) });
+  expect(fullPageAction("close", full, null, 0)).toEqual({ kind: "replace", route: tasksRoute(boardId) });
 });

@@ -76,7 +76,9 @@ test("format never escapes origin", () => {
       { app: "files", folder: value, documentId: value },
       { app: "files", folder: value, documentId: null },
       { app: "tasks", boardId: value, cardId: value },
-      { app: "tasks", boardId: noteId, cardId: value }
+      { app: "tasks", boardId: noteId, cardId: value },
+      { app: "tasks", boardId: value, cardId: value, full: true },
+      { app: "tasks", boardId: noteId, cardId: value, full: true }
     ];
     for (const route of routes) {
       const url = formatRoute(route);

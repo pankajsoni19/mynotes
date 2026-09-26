@@ -4,7 +4,7 @@ export type Route =
   | { app: "home" }
   | { app: "notes"; folder: "all" | "shared" | string; noteId: string | null }
   | { app: "files"; folder: "all" | "shared" | string; documentId: string | null }
-  | { app: "tasks"; boardId: string | null; cardId: string | null }
+  | { app: "tasks"; boardId: string | null; cardId: string | null; full?: true }
   | { app: "collections"; collectionId: string | null; viewId: string | null; rowId: string | null }
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "notifications" }
@@ -28,14 +28,16 @@ function parseCollection(segments: string[]): { folder: string; itemId: string |
   return { folder: "all", itemId: null };
 }
 
-// /tasks, /tasks/:boardId, and /tasks/:boardId/card/:cardId. Anything malformed after a valid
-// board id still opens that board; a malformed board id opens the board list.
+// /tasks, /tasks/:boardId, /tasks/:boardId/card/:cardId, and /tasks/:boardId/card/:cardId/full (the
+// card as a page, 13D). Anything malformed after a valid board id still opens that board; a
+// malformed board id opens the board list.
 function parseTasks(segments: string[]): Route {
-  const [board, kind, card] = segments;
+  const [board, kind, card, view] = segments;
   if (board === undefined || !isRouteId(board)) return { app: "tasks", boardId: null, cardId: null };
   const boardId = board.toLowerCase();
-  const cardId = segments.length === 3 && kind === "card" && card !== undefined && isRouteId(card) ? card.toLowerCase() : null;
-  return { app: "tasks", boardId, cardId };
+  const full = segments.length === 4 && view === "full";
+  const cardId = (segments.length === 3 || full) && kind === "card" && card !== undefined && isRouteId(card) ? card.toLowerCase() : null;
+  return cardId && full ? { app: "tasks", boardId, cardId, full: true } : { app: "tasks", boardId, cardId };
 }
 
 // /collections, /collections/:c, /collections/:c/view/:v, and /collections/:c/row/:r. Anything
@@ -101,7 +103,8 @@ export function formatRoute(route: Route): string {
   if (route.app === "tasks") {
     if (!route.boardId || !isRouteId(route.boardId)) return "/tasks";
     const board = `/tasks/${route.boardId.toLowerCase()}`;
-    return route.cardId && isRouteId(route.cardId) ? `${board}/card/${route.cardId.toLowerCase()}` : board;
+    if (!route.cardId || !isRouteId(route.cardId)) return board;
+    return `${board}/card/${route.cardId.toLowerCase()}${route.full ? "/full" : ""}`;
   }
   if (route.app === "collections") {
     if (!route.collectionId || !isRouteId(route.collectionId)) return "/collections";

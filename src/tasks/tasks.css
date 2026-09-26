@@ -66,12 +66,6 @@
 .task-add-card { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 0 8px; background: transparent; color: #9a9aa1; font-size: .82rem; cursor: pointer; }
 .task-add-card:hover { background: #1c1c20; color: #ededee; }
 .task-add-card svg { width: 15px; }
-.task-quick-add { display: grid; gap: 8px; }
-.task-quick-add input { min-height: 40px; border: 1px solid #333338; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #ededee; font-size: .86rem; outline: 0; }
-.task-quick-add input:focus { border-color: #6b582f; }
-.task-quick-add .file-dialog-error { margin: 0; }
-.task-quick-add-actions { display: flex; gap: 6px; }
-.task-quick-add-actions button { min-height: 36px; margin: 0; padding: 0 12px; font-size: .8rem; font-weight: 650; }
 .task-add-column { flex: 0 0 220px; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px dashed #34343a; border-radius: 14px; background: transparent; color: #9a9aa1; font-size: .84rem; cursor: pointer; }
 .task-add-column:hover { border-color: #6b572c; color: #f5cf79; }
 .task-add-column svg { width: 16px; }
@@ -105,8 +99,6 @@
   .task-card { min-height: 52px; padding: 12px 48px 12px 14px; font-size: .92rem; }
   .task-card-more { top: 4px; right: 2px; width: 44px; height: 44px; opacity: 1; }
   .task-add-card { min-height: 44px; }
-  .task-quick-add input { min-height: 44px; font-size: 1rem; }
-  .task-quick-add-actions button { min-height: 44px; }
   .tasks-content { padding: 28px 16px calc(40px + env(safe-area-inset-bottom)); }
   .tasks-intro { flex-direction: column; align-items: stretch; }
   .tasks-new-button { min-height: 44px; justify-content: center; }
@@ -318,4 +310,83 @@
   .task-card-face { gap: 4px; }
   .task-card-excerpt { -webkit-line-clamp: 1; }
   .task-card-meta { margin-right: -36px; }
+}
+
+/* Relations (Wave 13D, D104–D105): grouped by type; a card the viewer cannot read is "Restricted card". */
+.task-relation-groups { display: grid; gap: 10px; }
+.task-relation-group { display: grid; gap: 6px; }
+.task-relation-group h4 { margin: 0; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.task-relations { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.task-relation { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid #242428; border-radius: 10px; padding: 6px 6px 6px 8px; background: #121214; }
+.task-relation.restricted { border-style: dashed; }
+.task-relation-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: #1d1d21; color: #c9a85c; }
+.task-relation.restricted .task-relation-icon { color: #8d8d94; }
+.task-relation-icon svg { width: 16px; }
+.task-relation-copy { min-width: 0; display: grid; gap: 2px; }
+.task-relation-copy > a, .task-relation-copy > span { overflow: hidden; color: #e4e4e6; font-size: .86rem; text-overflow: ellipsis; white-space: nowrap; }
+.task-relation-copy > a { text-decoration: none; }
+.task-relation-copy > a:hover, .task-relation-copy > a:focus-visible { color: #f5cf79; text-decoration: underline; }
+.task-relation.restricted .task-relation-copy > span { color: #a8a8ae; font-style: italic; }
+.task-relation-copy small { color: #7c7c83; font-size: .72rem; }
+.task-relation .icon-button svg { width: 16px; }
+.task-relation-adder { display: grid; gap: 6px; }
+.task-relation-adder-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.task-blocked-chip { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin: 0; border-radius: 999px; padding: 4px 10px; background: #3a1d1a; color: #ffb4a8; font-size: .76rem; font-weight: 600; }
+.task-blocked-chip svg { width: 14px; }
+/* The card as a full page (Wave 13D, /card/:k/full): the dialog's frame in the board's place, not
+   modal. Above 1024 px the fields and relations sit in a right column beside the description and
+   comments. In the dialog the column wrappers do not box anything. */
+.task-card-dialog-host, .task-card-side, .task-card-main { display: contents; }
+.task-card-page-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.task-card-page-bar { flex: none; display: flex; align-items: center; padding: 10px clamp(16px, 3vw, 32px) 0; }
+.task-card-page-back { min-width: 0; max-width: 100%; min-height: 36px; display: inline-flex; align-items: center; gap: 4px; border: 0; border-radius: 9px; padding: 0 10px 0 4px; background: transparent; color: #b7b7bd; font: inherit; font-size: .84rem; font-weight: 600; cursor: pointer; }
+.task-card-page-back:hover { background: #1c1c20; color: #ededee; }
+.task-card-page-back svg { width: 17px; flex: none; }
+.task-card-page-back span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-card-dialog.task-card-page { position: relative; z-index: auto; inset: auto; flex: 1; min-height: 0; width: min(1240px, 100%); height: auto; max-height: none; margin: 0 auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.task-card-page .task-card-dialog-header { padding-left: clamp(16px, 3vw, 32px); padding-right: clamp(8px, 3vw, 28px); }
+.task-card-page .task-card-dialog-body { padding: 16px clamp(16px, 3vw, 32px) calc(32px + env(safe-area-inset-bottom)); }
+@media (min-width: 1025px) {
+  .task-card-page .task-card-dialog-body { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); align-items: start; column-gap: 32px; }
+  .task-card-page .task-card-side, .task-card-page .task-card-main { display: grid; align-content: start; gap: 18px; min-width: 0; grid-row: 1; }
+  .task-card-page .task-card-main { grid-column: 1; }
+  .task-card-page .task-card-side { grid-column: 2; }
+  .task-card-page .task-card-details { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .task-card-expand { display: none; }
+  .task-card-page-bar { padding: 4px 8px 0; }
+  .task-card-page-back { min-height: 44px; }
+  .task-card-page .task-card-dialog-header { padding: 4px 6px 8px 16px; }
+  .task-card-page .task-card-dialog-body { padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); }
+}
+
+/* Card composer (Wave 13D, §4.3): the dialog's frame, wider on desktop, full screen on phones. */
+.task-new-card { flex: none; min-height: 36px; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 14px; font-size: .82rem; font-weight: 650; }
+.task-new-card svg { width: 15px; }
+.task-composer { width: min(960px, calc(100vw - 32px)); }
+.task-composer .task-card-title-input::placeholder { color: #6f6f76; }
+.task-composer-footer { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border-top: 1px solid #222226; padding: 12px 20px calc(12px + env(safe-area-inset-bottom)); }
+.task-composer-footer .file-dialog-error { flex: 1 0 100%; margin: 0; }
+.task-composer-hint { color: #7c7c83; font-size: .74rem; }
+.task-composer-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.task-composer-buttons button { min-height: 40px; margin: 0; padding: 0 16px; font-size: .84rem; font-weight: 650; }
+.task-composer .task-description-editor .editor-surface { min-height: 0; }
+.task-composer .task-description-editor .note-prose { min-height: 120px; }
+@media (max-width: 760px) {
+  .task-composer { width: 100vw; }
+  .task-new-card { width: 44px; height: 44px; justify-content: center; padding: 0; }
+  .task-new-card span { display: none; }
+  .task-composer-hint { display: none; }
+  .task-composer-footer { padding: 10px calc(16px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
+  .task-composer-buttons { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .task-composer-buttons .primary-button { grid-column: 1 / -1; grid-row: 1; }
+  .task-composer-buttons button { min-height: 44px; padding: 0 10px; }
+}
+
+@media (max-width: 760px) {
+  .task-relation { min-height: 56px; }
+  .task-relation .icon-button { width: 44px; height: 44px; }
+  .task-relation-adder-row { grid-template-columns: minmax(0, 1fr); }
+  .task-relation-adder-row .task-small-button { justify-self: end; }
 }

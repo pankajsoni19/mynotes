@@ -5,7 +5,7 @@ import { AccountActions, useBinCount } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, parseRoute, type Route } from "../router";
-import { tasksBackAction, tasksRoute, type TasksRoute } from "../tasksRoute";
+import { fullPageAction, tasksBackAction, tasksRoute, withFromDialogHint, type TasksRoute } from "../tasksRoute";
 import { BoardList } from "./BoardList";
 import { BoardView } from "./BoardView";
 import "../bin/bin.css";
@@ -83,12 +83,27 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
     const boardId = routeRef.current.boardId;
     if (boardId) go(tasksRoute(boardId, cardId));
   }, [go]);
+  // Expand pushes the card as a full page with a hint that the dialog is the entry below (§4.7);
+  // Collapse and Close step back through those entries, or replace a deep-linked one.
+  const expandCard = useCallback(() => {
+    const current = routeRef.current;
+    if (!current.boardId || !current.cardId || current.full) return;
+    go(tasksRoute(current.boardId, current.cardId, true));
+    window.history.replaceState(withFromDialogHint(window.history.state), "", window.location.pathname);
+  }, [go]);
+  const leaveFullPage = useCallback((action: "collapse" | "close") => {
+    const step = fullPageAction(action, routeRef.current, window.history.state, readHistoryDepth(window.history.state));
+    if (step.kind === "history") window.history.go(step.delta);
+    else go(step.route, true);
+  }, [go]);
+  const collapseCard = useCallback(() => leaveFullPage("collapse"), [leaveFullPage]);
   const closeCard = useCallback(() => {
     const current = routeRef.current;
     if (!current.cardId) return;
-    if (readHistoryDepth(window.history.state) > 0) window.history.back();
+    if (current.full) leaveFullPage("close");
+    else if (readHistoryDepth(window.history.state) > 0) window.history.back();
     else go(tasksRoute(current.boardId), true);
-  }, [go]);
+  }, [go, leaveFullPage]);
 
   const onMissing = useCallback(() => {
     notify("Board not found");
@@ -102,7 +117,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
     {route.boardId
-      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} />
+      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} openCardFull={route.full === true} onExpandCard={expandCard} onCollapseCard={collapseCard} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} onOpenCardRoute={(boardId, cardId) => go(tasksRoute(boardId, cardId))} />
       : <BoardList onOpen={(board) => go(tasksRoute(board.id))} onOpenBoard={(boardId) => go(tasksRoute(boardId))} notify={notify} />}
     {toast && <div className="toast file-toast" role="status">
       <span>{toast.message}</span>
