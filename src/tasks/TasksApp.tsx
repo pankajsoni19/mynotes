@@ -8,6 +8,7 @@ import { formatRoute, locationUrl, routeFromLocation, type Route } from "../rout
 import { tasksBackAction, tasksRoute, type TasksRoute } from "../tasksRoute";
 import { BoardList } from "./BoardList";
 import { BoardView } from "./BoardView";
+import { DEFAULT_BOARD_QUERY, type BoardQuery } from "./boardUrl";
 import "../bin/bin.css";
 import "../files/files.css";
 import "./tasks.css";
@@ -91,6 +92,13 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
     else go(tasksRoute(current.boardId, null, current.query), true);
   }, [go]);
 
+  // The board's view and filters live in the URL query (D112): switching the view pushes an
+  // entry, and filter, sort, and group edits replace it, so Back steps through views, not chips.
+  const changeQuery = useCallback((query: BoardQuery, options: { push?: boolean } = {}) => {
+    const current = routeRef.current;
+    if (current.boardId) go(tasksRoute(current.boardId, current.cardId, query), !options.push);
+  }, [go]);
+
   const onMissing = useCallback(() => {
     notify("Board not found");
     go(tasksRoute(), true);
@@ -103,7 +111,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
     {route.boardId
-      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} />
+      ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))} query={route.query ?? DEFAULT_BOARD_QUERY} onQueryChange={changeQuery} />
       : <BoardList onOpen={(board) => go(tasksRoute(board.id))} onOpenBoard={(boardId) => go(tasksRoute(boardId))} notify={notify} />}
     {toast && <div className="toast file-toast" role="status">
       <span>{toast.message}</span>
