@@ -94,7 +94,9 @@ test("viewers get read-only cells and editors get inputs", () => {
   const editable = renderToStaticMarkup(<CellEditor field={fields[0]!} row={sample} editable onSave={async () => true} onOpenPicker={() => undefined} />);
   expect(editable).toContain('<input class="cell-input cell-text"');
   const select = renderToStaticMarkup(<CellEditor field={fields[3]!} row={sample} editable onSave={async () => true} onOpenPicker={() => undefined} />);
-  expect(select).toContain("<select");
+  expect(select).not.toContain("<select");
+  expect(select).toMatch(/class="ui-select ui-select-cell cell-select" role="combobox"[^>]*aria-label="[^"]+"/);
+  expect(select).toContain('<span class="ui-option-swatch color-');
   // Multi-line text is edited in the row panel, never in a single-line input that drops line breaks.
   const multiline = renderToStaticMarkup(<CellEditor field={fields[0]!} row={row({ f_aaaaaaaa: "a\nb" })} editable onSave={async () => true} onOpenPicker={() => undefined} />);
   expect(multiline).not.toContain("<input");
