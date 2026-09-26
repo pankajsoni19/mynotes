@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createOptionLoader } from "../src/ui/asyncOptions";
 import {
-  closedSelect, comboboxKey, filterOptions, foldText, groupRuns, moveActive, removeLastValue, selectKey, stepEnabled,
+  closedSelect, comboboxKey, filterOptions, foldText, groupRuns, moveActive, onlyEnabled, removeLastValue, selectKey, stepEnabled,
   toggleValue, typeaheadAppend, typeaheadMatch, wantsSearch, type NavOption
 } from "../src/ui/listNavigation";
 import { correctForContainingBlock, placePopover, POPUP_GAP } from "../src/ui/popoverPosition";
@@ -95,6 +95,26 @@ test("the multi reducer adds, removes, respects maxSelected, and Backspace remov
   // Home/End move the caret while closed, and the list while open.
   expect(comboboxKey({ open: false, active: -1 }, { key: "Home" }, list, { query: "ab", multiple: true, hasValues: false }).handled).toBe(false);
   expect(comboboxKey({ open: true, active: 0 }, { key: "End" }, list, { query: "", multiple: true, hasValues: false }).active).toBe(1);
+});
+
+test("Enter with text typed and nothing active picks the only match, or the Create row when nothing matches", () => {
+  const one: NavOption[] = [{ value: "u1", label: "Asha" }];
+  const context = { query: "as", multiple: true, hasValues: false };
+  // An assignee search that loaded one person: Enter adds them without ArrowDown first.
+  expect(comboboxKey({ open: true, active: -1 }, { key: "Enter" }, one, context)).toMatchObject({ handled: true, commit: 0, active: 0, open: true });
+  expect(comboboxKey({ open: true, active: -1 }, { key: "Enter" }, one, { ...context, multiple: false })).toMatchObject({ commit: 0, close: true });
+  // Only the Create row is left: Enter creates.
+  const create: NavOption[] = [{ value: "\u0000create", label: "Create “Bug”" }];
+  expect(comboboxKey({ open: true, active: -1 }, { key: "Enter" }, create, { ...context, query: "Bug" }).commit).toBe(0);
+  // A disabled neighbour does not count: one enabled option is still the only choice.
+  expect(comboboxKey({ open: true, active: -1 }, { key: "Enter" }, [{ value: "x", label: "Asher", disabled: true }, ...one], context).commit).toBe(1);
+  // Two choices, no text, or a list still loading: Enter waits for a pick.
+  const two: NavOption[] = [...one, { value: "u2", label: "Asif" }];
+  expect(comboboxKey({ open: true, active: -1 }, { key: "Enter" }, two, context)).toEqual({ open: true, active: -1, handled: true });
+  expect(comboboxKey({ open: true, active: -1 }, { key: "Enter" }, one, { ...context, query: "  " }).commit).toBeUndefined();
+  expect(comboboxKey({ open: true, active: -1 }, { key: "Enter" }, one, { ...context, settled: false }).commit).toBeUndefined();
+  expect(onlyEnabled(two)).toBe(-1);
+  expect(onlyEnabled([])).toBe(-1);
 });
 
 test("filtering matches every word in labels and descriptions; groups, and auto search above 8 options", () => {

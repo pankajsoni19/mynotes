@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parse } from "../shared/taskQuery";
 import { BoardCalendar } from "../src/tasks/BoardCalendar";
-import { displayedDay, displayedTime, dropDueOn, dueAnnouncement, keyboardDayDelta, placeCards, shiftedDueAt } from "../src/tasks/calendarPlacement";
+import { cardsDueInMonth, displayedDay, displayedTime, dropDueOn, dueAnnouncement, emptyMonthNote, keyboardDayDelta, placeCards, selectGridDay, shiftedDueAt } from "../src/tasks/calendarPlacement";
+import { monthHeading } from "../src/calendar/calendarFormat";
 import { boardData, filterBoardCards, type BoardContext } from "../src/tasks/boardQuery";
 import type { CardSummary } from "../src/tasks/tasksApi";
 
@@ -85,9 +86,31 @@ test("the view says linked events stay in Calendar, holds the Unscheduled tray, 
   expect(markup).toContain('aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"');
   const empty = renderToStaticMarkup(<BoardCalendar board={board} cards={[]} layout="month" month="2026-05" today="2026-03-02" viewerZone="UTC" filtered={false}
     onMonth={() => undefined} onLayout={() => undefined} onOpenCard={() => undefined} onSetDue={() => undefined} />);
-  expect(empty).toContain("No cards are due this month.");
+  expect(empty).toContain(`No cards are due in ${monthHeading("2026-05")}.`);
   const agenda = renderToStaticMarkup(<BoardCalendar board={board} cards={board.cards} layout="agenda" month={null} today="2026-03-02" viewerZone="UTC" filtered={false}
     onMonth={() => undefined} onLayout={() => undefined} onOpenCard={() => undefined} onSetDue={() => undefined} />);
   expect(agenda).toContain('<section class="calendar-agenda" aria-label="Cards by due date">');
   expect(agenda).toContain('aria-labelledby="task-agenda-2026-03-06"');
+});
+
+test("tapping another month's day pages there and selects it instead of snapping back to Today", () => {
+  // A trailing day of March shown in the April grid, with today in March: back to the current month (null).
+  expect(selectGridDay("2026-03-30", "2026-04", "2026-03-02")).toEqual({ selected: "2026-03-30", month: null });
+  // A leading day of May, from April: page to May.
+  expect(selectGridDay("2026-05-02", "2026-04", "2026-03-02")).toEqual({ selected: "2026-05-02", month: "2026-05" });
+  // A day of the month shown: only the selection changes.
+  expect(selectGridDay("2026-04-15", "2026-04", "2026-03-02")).toEqual({ selected: "2026-04-15" });
+});
+
+test("the month summary counts only the month's own cards, and its note names the month", () => {
+  const byDay = new Map<string, unknown[]>([["2026-04-30", [1, 2]], ["2026-05-01", [3]], ["2026-06-01", [4]]]);
+  expect(cardsDueInMonth(byDay, "2026-05")).toBe(1);
+  // May's grid shows April 30 and June 1 dots, yet May itself has none of them.
+  expect(cardsDueInMonth(new Map([["2026-04-30", [1]], ["2026-06-01", [2]]]), "2026-05")).toBe(0);
+  expect(emptyMonthNote("2026-05", false)).toBe(`No cards are due in ${monthHeading("2026-05")}.`);
+  expect(emptyMonthNote("2026-05", true)).toBe(`No matching cards are due in ${monthHeading("2026-05")}.`);
+  const markup = renderToStaticMarkup(<BoardCalendar board={board} cards={board.cards} layout="month" month="2026-02" today="2026-03-02" viewerZone="UTC" filtered={false}
+    onMonth={() => undefined} onLayout={() => undefined} onOpenCard={() => undefined} onSetDue={() => undefined} />);
+  // February's grid ends with March days that have cards, but February has none.
+  expect(markup).toContain(`No cards are due in ${monthHeading("2026-02")}.`);
 });

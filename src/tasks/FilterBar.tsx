@@ -5,6 +5,7 @@ import { useModuleEnabled } from "../modules";
 import { Combobox } from "../ui/Combobox";
 import { Select } from "../ui/Select";
 import { FILTER_FIELDS, termFieldLabel, termValueLabel, termValues, textTerm, withoutTerm, withTermValues, withText, type BoardContext, type BoardData } from "./boardQuery";
+import { focusWhenRendered } from "./cardFocus";
 import { committableDueDate } from "./taskActions";
 
 type FilterBarProps = {
@@ -54,6 +55,7 @@ export function FilterBar({ board, context, filter, onChange, shown, total }: Fi
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const typedRef = useRef(false);
+  const barRef = useRef<HTMLDivElement>(null);
 
   // Back/Forward or a chip removal changes the text term from outside: follow it.
   const current = textTerm(filter);
@@ -80,6 +82,11 @@ export function FilterBar({ board, context, filter, onChange, shown, total }: Fi
     .filter(({ term }) => !(searchEnabled && term.key === "text" && !term.negate));
   const hasFilter = filter.terms.length > 0;
 
+  function finishSheetEdit() {
+    setEditing(null);
+    focusWhenRendered(() => barRef.current?.querySelector<HTMLElement>(".task-filter-add"));
+  }
+
   function addDate() {
     const valid = committableDueDate(date, null);
     if (!valid || !editing) return;
@@ -87,7 +94,7 @@ export function FilterBar({ board, context, filter, onChange, shown, total }: Fi
     setDate("");
   }
 
-  return <div className="task-filter-bar" role="group" aria-label="Filters">
+  return <div ref={barRef} className="task-filter-bar" role="group" aria-label="Filters">
     {chips.map(({ term, index }) => {
       const label = chipLabel(term, board, context);
       const editable = !term.negate && term.key in FILTER_FIELDS;
@@ -104,7 +111,10 @@ export function FilterBar({ board, context, filter, onChange, shown, total }: Fi
     {editing && field && <span className="task-filter-editor" role="group" aria-label={`${field.label} filter`}>
       <span className="task-filter-editor-label">{field.label} is</span>
       <Combobox<string> multiple defaultOpen label={`${field.label} filter values`} placeholder={`Choose ${field.label.toLowerCase()}…`} value={values}
-        options={options} selectedOptions={selectedOptions} maxSelected={20} onChange={setValues} emptyText="Nothing to choose" />
+        options={options} selectedOptions={selectedOptions} maxSelected={20} onChange={setValues} emptyText="Nothing to choose"
+        // Phones: the sheet is the editor, so closing it finishes the edit instead of leaving a focused
+        // field (and the keyboard) behind. The due filter keeps its editor for the date row.
+        onSheetClose={editing === "due" ? undefined : finishSheetEdit} />
       {editing === "due" && <span className="task-filter-date">
         <Select<DateOperator> variant="chip" label="Date comparison" value={dateOperator} onChange={setDateOperator} searchable={false} options={DATE_OPERATORS.map((item) => ({ value: item.value, label: item.label }))} />
         <input type="date" value={date} onChange={(event) => setDate(event.target.value)} aria-label="Due date" min="1900-01-01" max="2999-12-31"

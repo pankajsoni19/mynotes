@@ -31,11 +31,11 @@ import {
 import { formFromEvent, formToInput, newEventForm, sameForm, shortDate, type EventForm } from "./calendarFormat";
 import { CalendarSharePanel, CalendarsDialog } from "./CalendarsDialog";
 import { FeedDialog } from "./FeedDialog";
-import { EventSheet, RepeatSheet } from "./EventSheet";
+import { DiscardEventPrompt, EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
 import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderSummary } from "./EventReminders";
 import { EventView } from "./EventView";
-import { confirmForcedDiscard, PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
+import { PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
 import { MonthView } from "./MonthView";
 import "../bin/bin.css";
 import "../files/files.css";
@@ -187,7 +187,8 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
 
   // ---- dialogs ---------------------------------------------------------------------------------
 
-  const dialogOpen = sheet !== null || repeatOpen || confirm !== null || calendarsOpen || sharing !== null || feeds !== null || picker !== null || reminderPicker !== null;
+  // The event sheet, its Repeat sheet, and the Discard prompt guard themselves, one layer at a time (EventSheet.tsx).
+  const dialogOpen = (confirm !== null && confirm.kind !== "discard") || calendarsOpen || sharing !== null || feeds !== null || picker !== null || reminderPicker !== null;
   const sheetDirty = sheet !== null && !sameForm(sheet.initial, sheet.form);
 
   function closeSheet() {
@@ -198,11 +199,11 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     if (sheetDirty) setConfirm({ kind: "discard" });
     else closeSheet();
   }
+  const keepEditing = useCallback(() => setConfirm(null), []);
 
-  // Back or Forward while a dialog is open closes the top one; an edited sheet asks first (D69).
+  // Back or Forward while a dialog is open closes the top one (D69).
   useDialogBackGuard(dialogOpen, (forced) => {
     if (forced) {
-      if (confirmForcedDiscard(sheetDirty) === "keep") return "keep";
       setConfirm(null);
       closeSheet();
       setSharing(null);
@@ -213,8 +214,6 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       return;
     }
     if (confirm) setConfirm(null);
-    else if (repeatOpen) setRepeatOpen(false);
-    else if (sheet) requestCloseSheet();
     else if (picker) setPicker(null);
     else if (reminderPicker) setReminderPicker(null);
     else if (sharing) setSharing(null);
@@ -504,7 +503,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {feeds && <FeedDialog calendar={feeds} onClose={() => setFeeds(null)} flash={flash} />}
     {sharing && <CalendarSharePanel calendar={sharing} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Sharing updated"); void loadCalendars(); }} />}
-    {confirm?.kind === "discard" && <ConfirmDialog title="Discard changes?" message="Your changes to this event will be lost." confirmLabel="Discard" danger onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
+    {confirm?.kind === "discard" && <DiscardEventPrompt onDiscard={() => { void confirmAction(); }} onKeep={keepEditing} />}
     {confirm?.kind === "deleteEvent" && <ConfirmDialog title="Move to the Bin?" message={`Move “${confirm.data.event.title}”${confirm.data.event.repeat ? " and all its repeats" : ""} to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
     {confirm?.kind === "deleteCalendar" && <ConfirmDialog title="Move calendar to the Bin?" message={`Move “${confirm.calendar.name}” and its events to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
   </main>;

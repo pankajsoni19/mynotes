@@ -40,17 +40,9 @@ export function guardDialogPop(openDepth: number, poppedState: unknown, onBack: 
 }
 
 /**
- * L4: when Back cannot be undone, an edited sheet still asks before its changes are lost.
- * Returns "keep" when the user cancels.
- */
-export function confirmForcedDiscard(dirty: boolean, ask: (message: string) => boolean = (message) => window.confirm(message)): ForcedBackResult {
-  if (dirty && !ask("Discard changes?\nYour changes to this event will be lost.")) return "keep";
-}
-
-/**
  * D69 for the Calendar: dialogs and sheets push no history entry. While any is open, browser Back
- * or Forward calls `onBack` (which closes the top dialog, or asks "Discard changes?" for an edited
- * sheet) and the browser's move is undone with history.go(). When the direction cannot be told,
+ * or Forward calls `onBack` (which closes the top dialog) and the browser's move is undone with
+ * history.go(). The event sheet's layers guard themselves (EventSheet.tsx). When the direction cannot be told,
  * `onBack(true)` must close everything and the route handlers follow the browser, unless it
  * returns "keep": then the dialog stays and its URL is restored with replaceState.
  */

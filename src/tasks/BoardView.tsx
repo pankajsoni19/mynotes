@@ -10,12 +10,13 @@ import { CardComposer, type ComposerMode } from "./CardComposer";
 import { CardDialog } from "./CardDialog";
 import { CardPage } from "./CardPage";
 import { MoveCardSheet } from "./MoveCardSheet";
-import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
+import { focusBoardCard } from "./cardFocus";
+import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, mergeMovedCard, moveChangesBlockers, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute } from "../router";
 import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
-import { canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
+import { addCardRefusal, canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
 import { BoardGroupedList } from "./BoardGroupedList";
 import { BoardTable } from "./BoardTable";
@@ -24,6 +25,7 @@ import { applyBoardQuery, boardData, type BoardContext } from "./boardQuery";
 import { hasBoardFilter, withBoardQuery, type BoardQuery } from "./boardUrl";
 import { localDateString, viewerTimeZone } from "./taskActions";
 import { FilterBar } from "./FilterBar";
+import { KeyboardMoveHint } from "./boardViewParts";
 import { BoardCalendar } from "./BoardCalendar";
 import { displayedDay, displayedTime, dueAnnouncement, shiftedDueAt } from "./calendarPlacement";
 import { daysBetween } from "../calendarRoute";
@@ -224,8 +226,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
 
   function focusCard(cardId: string) {
     // Lane cards are focusable themselves; table, list, and calendar rows focus their open button.
-    window.setTimeout(() => (window.document.querySelector<HTMLElement>(`[data-open-card="${CSS.escape(cardId)}"]`)
-      ?? window.document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(cardId)}"]`))?.focus(), 0);
+    focusBoardCard(cardId);
   }
 
   /**
@@ -246,9 +247,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     try {
       const result = await moveCard(cardId, columnId, afterCardId);
       setCards((items) => {
-        const moved = items.map((item) => item.id === cardId ? result.card : item);
+        const moved = mergeMovedCard(items, result.card);
         return result.positions ? applyPositions(moved, result.positions) : moved;
       });
+      if (moveChangesBlockers(before, current.columns, cardId, columnId)) void load();
       setAnnouncement(`Moved to ${place}`);
     } catch (reason) {
       setCards(() => before);
@@ -477,7 +479,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         <button className="icon-button" onClick={(event) => openDialog({ kind: "deleteBoard" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Delete board" title="Move to the Bin"><Trash2 /></button>
       </span>}
     </header>
-    <p id="task-card-keys" className="sr-only">Press Alt with an arrow key to move a card up, down, or to the next column.</p>
+    <KeyboardMoveHint id="task-card-keys">Press Alt with an arrow key to move a card up, down, or to the next column.</KeyboardMoveHint>
     <p className="sr-only" aria-live="polite">{announcement}</p>
 
     {loadError && <div className="bin-state bin-error task-board-state" role="alert">
@@ -539,7 +541,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         onOpenCard={(card) => onOpenCard(card.id)}
         onColumnMenu={(trigger) => openDialog({ kind: "columnMenu", columnId: column.id }, trigger)}
         onMoveColumn={(direction) => { void moveColumn(column.id, direction); }}
-        onAddCard={() => setComposer({ columnId: column.id })}
+        onAddCard={() => {
+          const refusal = addCardRefusal(cards, column);
+          if (refusal) { notify(refusal); setAnnouncement(refusal); } else setComposer({ columnId: column.id });
+        }}
       />)}
       {owner && columns.length < MAX_COLUMNS && <button className="task-add-column" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog"><Plus />Add column</button>}
     </div>}

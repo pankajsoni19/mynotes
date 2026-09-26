@@ -1,7 +1,8 @@
 import { useId, useState } from "react";
 import { Repeat } from "lucide-react";
-import { ModalDialog } from "../files/Dialog";
+import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
+import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { CalendarSummary, RepeatRule, Weekday } from "./calendarApi";
 import { repeatSummary, WEEKDAYS, weekdayNames, weekdayOf, type EventForm } from "./calendarFormat";
 
@@ -21,8 +22,16 @@ type EventSheetProps = {
   onClose: () => void;
 };
 
+// The event sheet, its Repeat sheet, and the Discard prompt are shown one at a time, and each holds its
+// own history guard while it is on screen (the task composer's pattern): Back closes only the layer on
+// top, so Repeat goes back to the form, the form asks before losing changes, and Back or Cancel on the
+// prompt returns to the form with the draft. Each guard also holds the phone's depth-0 sentinel, which
+// is pushed again when one layer hands over to the next, so the next Back still stays in Calendar.
+
 /** Create or edit an event. A full-screen sheet on phones; it pushes no history entry (D69). */
 export function EventSheet({ mode, form, calendars, calendarId, busy, error, conflict, onChange, onCalendarChange, onRepeat, onSave, onReload, onClose }: EventSheetProps) {
+  // Back closes the sheet, or asks first when it was edited (the caller's onClose decides).
+  useHistoryDialogGuard(true, onClose);
   const set = <K extends keyof EventForm>(key: K, value: EventForm[K]) => onChange({ ...form, [key]: value });
   const calendarLabelId = useId();
   return <ModalDialog title={mode === "create" ? "New event" : "Edit event"} eyebrow="Calendar" onClose={onClose} variant="sheet" busy={busy}>
@@ -87,6 +96,8 @@ type Ends = "never" | "until" | "count";
 
 /** The Repeat sheet: the D63 subset. Shown in place of the event sheet, so only one dialog is open. */
 export function RepeatSheet({ rule, startDate, onDone, onCancel }: RepeatSheetProps) {
+  // Back returns to the event form, keeping the rule it had.
+  useHistoryDialogGuard(true, onCancel);
   const startDay = weekdayOf(startDate);
   const [freq, setFreq] = useState<RepeatRule["freq"] | "none">(rule?.freq ?? "none");
   const [interval, setIntervalValue] = useState(String(rule?.interval ?? 1));
@@ -163,4 +174,13 @@ export function RepeatSheet({ rule, startDate, onDone, onCancel }: RepeatSheetPr
       </footer>
     </div>
   </ModalDialog>;
+}
+
+/**
+ * "Discard changes?" for an edited event sheet, in place of the sheet. Back and Cancel both keep
+ * editing: the form comes back with everything entered.
+ */
+export function DiscardEventPrompt({ onDiscard, onKeep }: { onDiscard: () => void; onKeep: () => void }) {
+  useHistoryDialogGuard(true, onKeep);
+  return <ConfirmDialog title="Discard changes?" message="Your changes to this event will be lost." confirmLabel="Discard" danger onConfirm={onDiscard} onCancel={onKeep} />;
 }

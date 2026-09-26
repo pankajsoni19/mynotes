@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BoardColumnView } from "../src/tasks/BoardColumnView";
 import { MoveCardSheet } from "../src/tasks/MoveCardSheet";
 import { WipLimitDialog } from "../src/tasks/WipLimitDialog";
-import { canEnterColumn, columnFullMessage, validateWipLimit, wipCountLabel, wipState } from "../src/tasks/taskActions";
+import { addCardRefusal, canEnterColumn, columnFullMessage, validateWipLimit, wipCountLabel, wipState } from "../src/tasks/taskActions";
 import type { BoardColumn, CardSummary } from "../src/tasks/tasksApi";
 
 const noop = () => undefined;
@@ -79,4 +79,13 @@ test("the WIP limit dialog offers Remove limit only when one is set, and warns b
   const none = renderToStaticMarkup(<WipLimitDialog columnName="Doing" limit={null} count={0} onSubmit={async () => undefined} onCancel={noop} />);
   expect(none).not.toContain("Remove limit");
   expect(none).toContain("Leave it empty for no limit.");
+});
+
+test("Add a card on a full column refuses with the drag's COLUMN_FULL copy instead of opening elsewhere", () => {
+  const full = { id: "todo", name: "To do", wip_limit: 2 };
+  const cards = [{ id: "a", column_id: "todo" }, { id: "b", column_id: "todo" }, { id: "c", column_id: "doing" }];
+  expect(addCardRefusal(cards, full)).toBe(columnFullMessage("To do", 2));
+  expect(addCardRefusal(cards, full)).toBe("“To do” is full (limit 2). Move a card out of it first.");
+  expect(addCardRefusal(cards, { ...full, wip_limit: 3 })).toBeNull();
+  expect(addCardRefusal(cards, { id: "doing", name: "Doing", wip_limit: null })).toBeNull();
 });

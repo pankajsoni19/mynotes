@@ -4,7 +4,8 @@
 // - A timed card sits on the viewer-local date of its `due_at` and shows the viewer-local time.
 // - A card without `due_on` is Unscheduled.
 // The board pipeline (filters) runs before placement; the list grouping does not apply here.
-import { addDays, daysBetween } from "../calendarRoute";
+import { addDays, daysBetween, monthOf } from "../calendarRoute";
+import { monthHeading } from "../calendar/calendarFormat";
 import { instantParts } from "./taskActions";
 
 type DueCard = { id: string; due_on: string | null; due_time?: string | null; due_tz?: string | null; due_at?: string | null };
@@ -79,4 +80,27 @@ export function dueAnnouncement(day: string | null, time: string | null) {
   const [year, month, date] = day.split("-").map(Number) as [number, number, number];
   const spoken = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, date)));
   return `Due ${spoken}${time ? ` at ${time}` : ""}`;
+}
+
+/**
+ * Tapping a day of the grid: a leading or trailing day of another month pages to that month and
+ * selects the day there, instead of the selection snapping back to Today. `month` is the route
+ * month to switch to (null for the current month), or undefined to stay.
+ */
+export function selectGridDay(day: string, shownMonth: string, today: string): { selected: string; month?: string | null } {
+  const target = monthOf(day);
+  if (target === shownMonth) return { selected: day };
+  return { selected: day, month: target === monthOf(today) ? null : target };
+}
+
+/** How many cards are due within `month` itself; the grid's leading and trailing days do not count. */
+export function cardsDueInMonth(byDay: ReadonlyMap<string, readonly unknown[]>, month: string) {
+  let count = 0;
+  for (const [day, list] of byDay) if (monthOf(day) === month) count += list.length;
+  return count;
+}
+
+/** The month's empty note, naming the month so the other months' days (and their dots) do not contradict it. */
+export function emptyMonthNote(month: string, filtered: boolean) {
+  return `${filtered ? "No matching cards are" : "No cards are"} due in ${monthHeading(month)}.`;
 }

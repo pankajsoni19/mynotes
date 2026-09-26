@@ -1,3 +1,4 @@
+import { useSyncExternalStore, type ReactNode } from "react";
 import { CalendarDays } from "lucide-react";
 import { avatarTone, FACE_PEOPLE, FACE_TAGS, initials } from "./CardFace";
 import { cardTags, FLAG_LABELS, visibleItems } from "./cardTags";
@@ -53,4 +54,27 @@ export function Avatars({ card }: { card: BoardCard }) {
 export function shortTimestamp(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+const finePointerQuery = "(any-pointer: fine)";
+function subscribeFinePointer(onChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => undefined;
+  const list = window.matchMedia(finePointerQuery);
+  list.addEventListener("change", onChange);
+  return () => list.removeEventListener("change", onChange);
+}
+const finePointerSnapshot = () => typeof window === "undefined" || typeof window.matchMedia !== "function" || window.matchMedia(finePointerQuery).matches;
+
+/** True unless every pointer is coarse (a phone or tablet without a mouse or trackpad). */
+export function useFinePointer() {
+  return useSyncExternalStore(subscribeFinePointer, finePointerSnapshot, () => true);
+}
+
+/**
+ * The screen-reader hint for Alt+Arrow moves (cards reference it by id with aria-describedby). On a
+ * touch-only device there is no Alt key, so it stays empty and describes nothing.
+ */
+export function KeyboardMoveHint({ id, children }: { id: string; children: ReactNode }) {
+  const fine = useFinePointer();
+  return <p id={id} className="sr-only">{fine ? children : null}</p>;
 }

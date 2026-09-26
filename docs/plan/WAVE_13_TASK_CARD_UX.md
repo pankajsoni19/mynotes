@@ -407,7 +407,7 @@ Column headers show the WIP count `n / limit`, with an over-limit style and a la
 - **Everywhere.** The ⋯ menu offers "Set due date…", which opens a guarded date dialog.
 - **WIP.** Changing a due date is not a column move, so WIP limits do not apply.
 
-**Copy.** The header subtitle reads: "Due dates of cards on this board. Events linked to cards are in Calendar." An empty month says "No cards are due this month." Unscheduled has the heading "Unscheduled" and the help line "Cards without a due date. Drag one onto a day to schedule it."
+**Copy.** The header subtitle reads: "Due dates of cards on this board. Events linked to cards are in Calendar." An empty month names it: "No cards are due in October 2026." (only the month's own days count; the grid's days of the months either side may still show dots). Without the Calendar module the subtitle drops its second sentence. Unscheduled has the heading "Unscheduled" and the help line "Cards without a due date. Drag one onto a day to schedule it."
 
 **Relation to the Calendar module.**
 

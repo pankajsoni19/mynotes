@@ -38,7 +38,7 @@ export function BoardGroupedList({ board, groups, group, today, onGroup, onOpenC
   return <div className="task-grouped">
     <div className="task-grouped-bar">
       <span id="task-group-label">Group by</span>
-      <Select<BoardGroupId> variant="chip" labelledBy="task-group-label" value={group} onChange={onGroup}
+      <Select<BoardGroupId> variant="chip" label="Group by" labelledBy="task-group-label" value={group} onChange={onGroup}
         options={BOARD_GROUPS.map((id) => ({ value: id, label: GROUP_DIMENSIONS[id].label }))} searchable={false} />
     </div>
     {empty && <p className="task-view-empty">{filtered ? "No cards match these filters." : "No cards yet. Add one with New card."}</p>}
