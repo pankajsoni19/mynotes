@@ -12,7 +12,10 @@ import { MyWork, statePreset } from "../src/tasks/home/MyWork";
 import { QueryResults } from "../src/tasks/home/QueryResults";
 import { TasksHome } from "../src/tasks/home/TasksHome";
 import { ColumnStateField } from "../src/tasks/views/ColumnStateField";
-import { validateViewName, viewUndoBody } from "../src/tasks/views/viewActions";
+import { validateViewName, viewNameHint, viewRoleAccess, viewUndoBody } from "../src/tasks/views/viewActions";
+import { ViewPage } from "../src/tasks/views/ViewPage";
+import { RoleContext, useRole } from "../src/team/roleAccess";
+import type { Role } from "../src/team/teamRoles";
 import { ViewsList } from "../src/tasks/views/ViewsList";
 
 const viewId = "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e";
@@ -196,4 +199,35 @@ test("view names follow the server rule, and Undo re-creates the same body", () 
   expect(validateViewName("x".repeat(81)).ok).toBe(false);
   expect(validateViewName("bad\u0007").ok).toBe(false);
   expect(viewUndoBody({ name: "A", query: "flag:urgent", display: { layout: "table", group: "none", sort: "due" } })).toEqual({ name: "A", query: "flag:urgent", display: { layout: "table", group: "none", sort: "due" } });
+});
+
+test("views follow the Team role (Wave 15, Q12): viewers save private views, guests save none, read-only roles never share", () => {
+  const as = (role: Role | undefined, node: React.ReactNode) => renderToStaticMarkup(<RoleContext.Provider value={role}>{node}</RoleContext.Provider>);
+  function Access() {
+    const access = viewRoleAccess(useRole());
+    return <span data-create={String(access.canCreate)} data-share={String(access.canShare)} />;
+  }
+  expect(as("admin", <Access />)).toBe(`<span data-create="true" data-share="true"></span>`);
+  expect(as("member", <Access />)).toBe(`<span data-create="true" data-share="true"></span>`);
+  expect(as(undefined, <Access />)).toBe(`<span data-create="true" data-share="true"></span>`);
+  expect(as("viewer", <Access />)).toBe(`<span data-create="true" data-share="false"></span>`);
+  expect(as("guest", <Access />)).toBe(`<span data-create="false" data-share="false"></span>`);
+  expect(viewNameHint(false)).not.toContain("share");
+
+  const list = (role: Role) => as(role, <ViewsList onOpen={noop} onNew={noop} />);
+  for (const role of ["admin", "member", "viewer"] as const) expect(list(role)).toContain("New view");
+  expect(list("guest")).not.toContain("New view");
+
+  const newView = (role: Role) => as(role, <ViewPage userId={me} viewId="new" query={undefined} onQuery={noop} directory={{ boards: [], users: [] }} notify={noop}
+    onOpenCard={noop} onOpenView={noop} onBack={noop} onMissing={noop} onDeleted={noop} />);
+  for (const role of ["member", "viewer"] as const) expect(newView(role)).toContain("Save view");
+  expect(newView("guest")).not.toContain("Save view");
+  // A guest's New view is read only: no + Filter.
+  expect(newView("viewer")).toContain("+ Filter");
+  expect(newView("guest")).not.toContain("+ Filter");
+
+  const filtered = { ...myWorkDefault(), filter: q("assignee:me state:done") };
+  const myWork = (role: Role) => as(role, <MyWork userId={me} query={filtered} onQuery={noop} directory={{ boards: [], users: [] }} notify={noop} onOpenCard={noop} onOpenView={noop} />);
+  for (const role of ["member", "viewer"] as const) expect(myWork(role)).toContain("Save as view");
+  expect(myWork("guest")).not.toContain("Save as view");
 });

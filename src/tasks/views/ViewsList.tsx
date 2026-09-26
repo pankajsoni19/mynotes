@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Bookmark, Lock, Plus, RotateCcw, Share2, TriangleAlert, Users } from "lucide-react";
 import { taskErrorMessage } from "../tasksApi";
 import { listViews, type TaskView, type ViewLists } from "../home/homeApi";
-import { viewVisibilityLabel } from "./viewActions";
+import { useRole } from "../../team/roleAccess";
+import { viewRoleAccess, viewVisibilityLabel } from "./viewActions";
 
 type ViewsListProps = {
   onOpen: (view: TaskView) => void;
@@ -20,6 +21,7 @@ const VisibilityIcon = ({ visibility }: { visibility: TaskView["visibility"] }) 
  * never shows cards from boards the viewer cannot read (T115).
  */
 export function ViewsList({ onOpen, onNew }: ViewsListProps) {
+  const { canCreate } = viewRoleAccess(useRole());
   const [lists, setLists] = useState<ViewLists | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
@@ -48,10 +50,10 @@ export function ViewsList({ onOpen, onNew }: ViewsListProps) {
 
   const empty = lists && !lists.mine.length && !lists.shared.length && !lists.everyone.length;
   return <div className="task-views">
-    <div className="task-home-toolbar">
-      {/* TODO(Wave 15): hide New view for roles that cannot save views once useRole() exists (Q12: viewers save private views, guests do not). */}
+    {/* Q12: viewers save private views; guests save none (the write gate refuses them). */}
+    {canCreate && <div className="task-home-toolbar">
       <button className="primary-button task-home-action" onClick={onNew}><Plus aria-hidden="true" /><span>New view</span></button>
-    </div>
+    </div>}
     {error && <div className="bin-state bin-error" role="alert">
       <span className="bin-state-icon"><TriangleAlert /></span>
       <h2>Could not load your views</h2>
@@ -62,8 +64,10 @@ export function ViewsList({ onOpen, onNew }: ViewsListProps) {
     {empty && <div className="bin-state">
       <span className="bin-state-icon"><Bookmark /></span>
       <h2>No views yet</h2>
-      <p>A view saves a filter across your boards, such as “Urgent cards on Web and Home”. Start one here, or filter My work and choose Save as view.</p>
-      <button className="primary-button" onClick={onNew}><Plus />New view</button>
+      {canCreate
+        ? <p>A view saves a filter across your boards, such as “Urgent cards on Web and Home”. Start one here, or filter My work and choose Save as view.</p>
+        : <p>Views that people share with you show here.</p>}
+      {canCreate && <button className="primary-button" onClick={onNew}><Plus />New view</button>}
     </div>}
     {lists && lists.mine.length > 0 && <><h2 className="tasks-section-label">My views</h2><ul className="task-board-list" aria-label="My views">{lists.mine.map(row)}</ul></>}
     {lists && lists.shared.length > 0 && <><h2 className="tasks-section-label">Shared with me</h2><ul className="task-board-list" aria-label="Views shared with me">{lists.shared.map(row)}</ul></>}

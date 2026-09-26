@@ -23,3 +23,15 @@ export const viewVisibilityLabel = (visibility: TaskView["visibility"]) =>
 
 /** The body that re-creates a deleted view (Undo, §5.2): the same name, query, and display, private again. */
 export const viewUndoBody = (view: Pick<TaskView, "name" | "query" | "display">) => ({ name: view.name, query: view.query, display: { ...view.display } });
+
+/**
+ * What a Team role may do with views (task hierarchy plan Q12, Wave 15): viewers create, edit,
+ * duplicate, and delete their own private views; guests create none; nobody read-only shares.
+ * Chrome only: server/team/writeGate.ts enforces the same rule.
+ */
+export function viewRoleAccess(access: { canWrite: boolean; isGuest: boolean }) {
+  return { canCreate: !access.isGuest, canShare: access.canWrite };
+}
+
+/** The Save dialogs' hint: a read-only role's views stay private. */
+export const viewNameHint = (canShare: boolean) => canShare ? "Up to 80 characters. Only you see it until you share it." : "Up to 80 characters. Only you see it.";

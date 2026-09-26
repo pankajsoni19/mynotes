@@ -9,7 +9,8 @@ import { HomeResultsPane, type HomeDirectory } from "./HomeResultsPane";
 import { withHomeTerm, homeTermValues } from "./HomeFilterBar";
 import { STATE_LABELS } from "./homeResults";
 import { myWorkDefault, sameHomeQuery, serverGroup, withAssigneeMe, type HomeQuery } from "./homeUrl";
-import { validateViewName } from "../views/viewActions";
+import { useRole } from "../../team/roleAccess";
+import { validateViewName, viewNameHint, viewRoleAccess } from "../views/viewActions";
 
 /** My work's state chips: one tap picks a preset; "Open" is the default (`state:todo,doing`). */
 export const STATE_PRESETS: Array<{ id: string; label: string; states: TaskState[] }> = [
@@ -42,6 +43,7 @@ type MyWorkProps = {
  */
 export function MyWork({ userId, query, onQuery, directory, notify, onOpenCard, onOpenView }: MyWorkProps) {
   const effective: HomeQuery = { ...(query ?? myWorkDefault()), filter: withAssigneeMe((query ?? myWorkDefault()).filter) };
+  const { canCreate, canShare } = viewRoleAccess(useRole());
   const [saving, setSaving] = useState(false);
   useHistoryDialogGuard(saving, () => setSaving(false));
   const preset = statePreset(effective);
@@ -62,9 +64,9 @@ export function MyWork({ userId, query, onQuery, directory, notify, onOpenCard, 
         {STATE_PRESETS.map((item) => <button key={item.id} type="button" role="radio" aria-checked={preset === item.id} className={`task-home-state${preset === item.id ? " active" : ""}`}
           onClick={() => { if (preset !== item.id) onQuery({ ...effective, filter: withHomeTerm(effective.filter, "state", item.states) }, { push: true }); }}>{item.label}</button>)}
       </div>}
-      actions={!sameHomeQuery(effective, myWorkDefault()) && <button type="button" className="secondary-button task-home-action" onClick={() => setSaving(true)} aria-haspopup="dialog"><BookmarkPlus aria-hidden="true" /><span>Save as view</span></button>}
+      actions={canCreate && !sameHomeQuery(effective, myWorkDefault()) && <button type="button" className="secondary-button task-home-action" onClick={() => setSaving(true)} aria-haspopup="dialog"><BookmarkPlus aria-hidden="true" /><span>Save as view</span></button>}
       emptyText={preset === "open" ? "Nothing open is assigned to you. Cards assigned to you on any board show here." : "No cards assigned to you match these filters."} />
-    {saving && <NameDialog title="Save as view" eyebrow="My work" label="View name" initialValue="My work" submitLabel="Save view" hint="Up to 80 characters. Only you see it until you share it."
+    {saving && canCreate && <NameDialog title="Save as view" eyebrow="My work" label="View name" initialValue="My work" submitLabel="Save view" hint={viewNameHint(canShare)}
       validate={(value) => validateViewName(value)} onSubmit={saveAsView} onCancel={() => setSaving(false)} />}
   </>;
 }

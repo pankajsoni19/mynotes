@@ -11,7 +11,8 @@ import { createView, deleteView, duplicateView, getView, updateView, type Querie
 import { HomeResultsPane, type HomeDirectory } from "../home/HomeResultsPane";
 import { useTasksTitle } from "../home/HomeSegments";
 import { isSelectiveQuery, NEW_VIEW, newViewDefault, sameHomeQuery, serverGroup, viewHomeQuery, type HomeQuery } from "../home/homeUrl";
-import { validateViewName, viewUndoBody, viewVisibilityLabel } from "./viewActions";
+import { useRole } from "../../team/roleAccess";
+import { validateViewName, viewNameHint, viewRoleAccess, viewUndoBody, viewVisibilityLabel } from "./viewActions";
 import { ViewSharePanel } from "./ViewSharePanel";
 
 type ViewPageProps = {
@@ -80,7 +81,9 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
 
   const saved = view ? viewHomeQuery(view) : newViewDefault();
   const effective = query ?? saved;
-  const owner = isNew || view?.is_owner === 1;
+  const { canCreate, canShare } = viewRoleAccess(useRole());
+  // A guest edits no view, even one kept from before a role change (the write gate refuses it).
+  const owner = canCreate && (isNew || view?.is_owner === 1);
   const dirty = isNew ? isSelectiveQuery(effective.filter) : Boolean(view && query && !sameHomeQuery(query, saved));
   const selective = isSelectiveQuery(effective.filter);
   const tz = viewerTimeZone();
@@ -180,8 +183,8 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       <span className="task-view-actions">
         {!isNew && view && owner && dirty && <button className="icon-button" onClick={() => onQuery(undefined, { push: true })} aria-label="Discard changes" title="Discard changes"><Undo2 /></button>}
         {!isNew && view && owner && <button className="primary-button task-home-action" onClick={() => { void save(); }} disabled={!dirty || busy}><Save aria-hidden="true" /><span>{busy ? "Saving…" : "Save"}</span></button>}
-        {isNew && <button className="primary-button task-home-action" onClick={(event) => open({ kind: "saveAs" }, event.currentTarget)} disabled={!selective} aria-haspopup="dialog"><Save aria-hidden="true" /><span>Save view</span></button>}
-        {!isNew && view && !owner && <button className="primary-button task-home-action" onClick={() => { void duplicate(); }}><Copy aria-hidden="true" /><span>Duplicate</span></button>}
+        {isNew && canCreate && <button className="primary-button task-home-action" onClick={(event) => open({ kind: "saveAs" }, event.currentTarget)} disabled={!selective} aria-haspopup="dialog"><Save aria-hidden="true" /><span>Save view</span></button>}
+        {!isNew && view && !owner && canCreate && <button className="primary-button task-home-action" onClick={() => { void duplicate(); }}><Copy aria-hidden="true" /><span>Duplicate</span></button>}
         {!isNew && view && owner && <button className="icon-button" onClick={(event) => open({ kind: "menu" }, event.currentTarget)} aria-haspopup="dialog" aria-label="View options" title="View options"><Ellipsis /></button>}
       </span>
     </header>
@@ -206,15 +209,15 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
         <button className="move-option" autoFocus onClick={() => setDialog({ kind: "rename" })}><Pencil aria-hidden="true" /><span>Rename</span></button>
         <button className="move-option" onClick={() => setDialog({ kind: "saveAs" })}><Save aria-hidden="true" /><span>Save as a new view…<small>Keeps this one as it is</small></span></button>
         <button className="move-option" onClick={() => { void duplicate(); }}><Copy aria-hidden="true" /><span>Duplicate<small>A private copy of the saved view</small></span></button>
-        <button className="move-option" onClick={() => setDialog({ kind: "share" })}><Share2 aria-hidden="true" /><span>Share…<small>{viewVisibilityLabel(view.visibility)}</small></span></button>
+        {canShare && <button className="move-option" onClick={() => setDialog({ kind: "share" })}><Share2 aria-hidden="true" /><span>Share…<small>{viewVisibilityLabel(view.visibility)}</small></span></button>}
         <button className="move-option danger" onClick={() => setDialog({ kind: "delete" })}><Trash2 aria-hidden="true" /><span>Delete view</span></button>
       </div>
     </ModalDialog>}
     {dialog?.kind === "saveAs" && <NameDialog title={isNew ? "Save view" : "Save as a new view"} eyebrow="Views" label="View name" initialValue={isNew ? "" : `${view?.name ?? "View"} (copy)`.slice(0, 80)} submitLabel="Save view"
-      hint="Up to 80 characters. Only you see it until you share it." validate={(value) => validateViewName(value)} onSubmit={saveAs} onCancel={closeDialog} />}
+      hint={viewNameHint(canShare)} validate={(value) => validateViewName(value)} onSubmit={saveAs} onCancel={closeDialog} />}
     {dialog?.kind === "rename" && view && <NameDialog title="Rename view" eyebrow="Views" label="View name" initialValue={view.name} submitLabel="Rename" hint="Up to 80 characters."
       validate={(value) => validateViewName(value, view.name)} onSubmit={rename} onCancel={closeDialog} />}
-    {dialog?.kind === "share" && view && <ViewSharePanel view={view} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && view && canShare && <ViewSharePanel view={view} onClose={closeDialog} onChanged={() => {
       closeDialog();
       notify("Sharing updated");
       // Sharing bumps the view's revision.

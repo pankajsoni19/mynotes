@@ -31,6 +31,7 @@
 
 /*
  * Tasks' board chrome is being reworked in parallel, so read-only roles hide its write controls by
- * class here instead of in each component. The server refuses these writes anyway (T87).
+ * class here instead of in each component. The server refuses these writes anyway (T87). The Tasks
+ * home (My work, Views) gates its own controls with useRole(), since viewers may save private views.
  */
-.tasks-app[data-read-only="true"] :is(.tasks-new-button, .task-new-card, .task-add-card, .task-add-column, .task-tab-add, .task-board-actions, .tasks-content .bin-state .primary-button) { display: none !important; }
+.tasks-app[data-read-only="true"] :is(.tasks-new-button, .task-new-card, .task-add-card, .task-add-column, .task-tab-add, .task-board-actions, .tasks-content:not(.task-home) > .bin-state:not(.bin-error) .primary-button) { display: none !important; }
