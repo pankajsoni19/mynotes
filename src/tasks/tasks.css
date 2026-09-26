@@ -114,9 +114,11 @@
   .tasks-app .app-home-button { min-height: 44px; }
 }
 
-/* Card dialog (a view over the board with its own history entry). */
+/* Card dialog (a view over the board with its own history entry). Centred with inset and auto
+   margins, not a transform: a transformed ancestor becomes the containing block of the fixed
+   dropdown popups inside it (WAVE_13_TASK_CARD_UX.md §4.1). */
 .task-card-scrim { z-index: 34; }
-.task-card-dialog { position: fixed; z-index: 35; top: 50%; left: 50%; width: min(720px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: hidden; transform: translate(-50%, -50%); border: 1px solid #36363b; border-radius: 16px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
+.task-card-dialog { position: fixed; z-index: 35; inset: 0; margin: auto; width: min(720px, calc(100vw - 32px)); height: fit-content; max-height: min(860px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #36363b; border-radius: 16px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
 .task-card-dialog-header { flex: none; display: flex; align-items: flex-start; gap: 6px; padding: 16px 12px 8px 20px; border-bottom: 1px solid #222226; }
 .task-card-dialog-heading { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .task-card-dialog-heading h2 { margin: 0; color: #f2f2f3; font-size: 1.1rem; }
@@ -160,7 +162,7 @@
 .task-comment-composer .primary-button { min-height: 40px; margin: 0; padding: 0 16px; font-size: .84rem; }
 
 @media (max-width: 760px) {
-  .task-card-dialog { inset: 0; top: 0; left: 0; width: 100vw; max-height: none; height: 100dvh; transform: none; border: 0; border-radius: 0; }
+  .task-card-dialog { inset: 0; margin: 0; width: 100vw; max-height: none; height: 100dvh; border: 0; border-radius: 0; }
   .task-card-dialog-header { padding: calc(8px + env(safe-area-inset-top)) calc(6px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left)); }
   .task-card-title-input { min-height: 44px; }
   .task-attachment { min-height: 56px; }
@@ -208,11 +210,20 @@
 .task-card-field > label { display: inline-flex; align-items: center; gap: 7px; color: #c9c9ce; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .task-card-field > label svg { width: 15px; }
 .task-card-field-control { display: flex; gap: 8px; align-items: center; }
-.task-card-field input, .task-card-field select { flex: 1; min-width: 0; min-height: 38px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; color-scheme: dark; }
-.task-card-field input:focus, .task-card-field select:focus { border-color: #6b582f; outline: 2px solid #6b582f; outline-offset: 1px; }
+.task-card-field-control input { flex: 1; min-width: 0; min-height: 38px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; color-scheme: dark; }
+.task-card-field-control input:focus { border-color: #6b582f; outline: 2px solid #6b582f; outline-offset: 1px; }
 .task-due-text { color: #7c7c83; font-size: .74rem; }
 .task-due-text.overdue { color: #ffb4a8; }
 .task-due-text.today, .task-due-text.soon { color: #d9bf7e; }
 @media (max-width: 760px) {
-  .task-card-field input, .task-card-field select { min-height: 44px; font-size: 1rem; }
+  .task-card-field-control input { min-height: 44px; font-size: 1rem; }
+  .task-add-time { min-height: 44px; }
 }
+
+/* Due time and assignees (Wave 13B) */
+.task-add-time { justify-self: start; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 8px; padding: 0 8px; margin-left: -8px; background: transparent; color: #c9a85c; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.task-add-time:hover { background: #1c1c20; }
+.task-add-time:disabled { opacity: .5; cursor: not-allowed; }
+.task-add-time svg { width: 14px; }
+.task-assignee-picker { display: grid; gap: 6px; min-width: 0; }
+.task-card-more-people { color: #a8a8ae; font-weight: 600; }

@@ -1,0 +1,222 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CalendarDays, Clock, UsersRound } from "lucide-react";
+import { Combobox } from "../ui/Combobox";
+import type { Option } from "../ui/Listbox";
+import {
+  assigneeLabel,
+  assigneeSentence,
+  cardAssignees,
+  committableDueDate,
+  committableDueTime,
+  dueStatus,
+  dueTimeNote,
+  localDateString,
+  pickerDetail,
+  sameIds,
+  viewerTimeZone
+} from "./taskActions";
+import { getBoardReaders, type CardChange, type CardDetail } from "./tasksApi";
+
+export const MAX_ASSIGNEES = 20;
+
+type CardFieldsProps = {
+  card: CardDetail;
+  userId: string;
+  /** Prefix for the fields' ids (the dialog's title id). */
+  idPrefix: string;
+  /** The card sits in a done column: no due chip. */
+  done: boolean;
+  /** A save is in flight: the fields wait. */
+  saving: boolean;
+  /** Saves one change with the card's revision; false when it was not saved (a conflict or an error). */
+  onSave: (change: CardChange, success: string) => Promise<boolean>;
+};
+
+/**
+ * The card's fields (WAVE_13_TASK_CARD_UX.md §4.3): the due date with an optional time, and the
+ * assignees. The card dialog uses it today; the composer and the full page (13D) and the tag and
+ * flag pickers (13C) join here, so each adds a field with a small diff.
+ */
+export function CardFields({ card, userId, idPrefix, done, saving, onSave }: CardFieldsProps) {
+  return <div className="task-card-details">
+    <DueField card={card} idPrefix={idPrefix} done={done} saving={saving} onSave={onSave} />
+    <div className="task-card-field">
+      <label htmlFor={`${idPrefix}-assignees`}><UsersRound aria-hidden="true" />Assignees</label>
+      <AssigneePicker boardId={card.board_id} userId={userId} inputId={`${idPrefix}-assignees`} assignees={cardAssignees(card)} disabled={saving}
+        onCommit={(ids, names) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned")} />
+    </div>
+  </div>;
+}
+
+function DueField({ card, idPrefix, done, saving, onSave }: Omit<CardFieldsProps, "userId">) {
+  const [dueDraft, setDueDraft] = useState<string | null>(null);
+  const [timeDraft, setTimeDraft] = useState<string | null>(null);
+  const [addingTime, setAddingTime] = useState(false);
+  const zone = viewerTimeZone();
+  const hasTime = Boolean(card.due_time);
+  const due = dueStatus(card.due_on, localDateString(), done, { dueAt: card.due_at });
+  const note = dueTimeNote(card, zone);
+  const otherZone = hasTime && card.due_tz !== zone;
+
+  async function saveTime(value: string) {
+    const time = committableDueTime(value, { time: card.due_time, zone: card.due_tz }, zone);
+    setTimeDraft(null);
+    if (!time) {
+      if (!value) setAddingTime(false);
+      return;
+    }
+    await onSave({ dueTime: time, dueTz: zone }, "Due time saved");
+    setAddingTime(false);
+  }
+
+  return <div className="task-card-field">
+    <label htmlFor={`${idPrefix}-due-input`}><CalendarDays aria-hidden="true" />Due</label>
+    <span className="task-card-field-control">
+      <input
+        id={`${idPrefix}-due-input`}
+        type="date"
+        value={dueDraft ?? card.due_on ?? ""}
+        min="1900-01-01"
+        max="2999-12-31"
+        disabled={saving}
+        // The date saves when committed (leaving the field or Enter), and only as a complete
+        // real date; typing passes through partial values. Moving the date keeps the time (D115).
+        onChange={(event) => setDueDraft(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}
+        onBlur={() => {
+          const value = dueDraft === null ? null : committableDueDate(dueDraft, card.due_on);
+          setDueDraft(null);
+          if (value) void onSave({ dueOn: value }, "Due date saved");
+        }}
+        aria-describedby={`${idPrefix}-due`}
+      />
+      {card.due_on && <button type="button" className="secondary-button task-small-button" disabled={saving} onClick={() => { setDueDraft(null); setAddingTime(false); void onSave({ dueOn: null }, "Due date removed"); }}>Clear</button>}
+    </span>
+    {card.due_on && (hasTime || addingTime
+      ? <span className="task-card-field-control">
+        <input
+          id={`${idPrefix}-due-time`}
+          type="time"
+          step={60}
+          value={timeDraft ?? card.due_time ?? ""}
+          disabled={saving}
+          autoFocus={addingTime && !hasTime}
+          aria-label="Due time"
+          aria-describedby={`${idPrefix}-due`}
+          onChange={(event) => setTimeDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
+            if (event.key === "Escape" && timeDraft !== null) { event.preventDefault(); setTimeDraft(null); }
+          }}
+          onBlur={() => { void saveTime(timeDraft ?? card.due_time ?? ""); }}
+        />
+        {hasTime
+          ? <button type="button" className="secondary-button task-small-button" disabled={saving} onClick={() => { setTimeDraft(null); void onSave({ dueTime: null }, "Due time removed"); }}>Remove time</button>
+          : <button type="button" className="secondary-button task-small-button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setTimeDraft(null); setAddingTime(false); }}>Cancel</button>}
+      </span>
+      : <button type="button" className="task-add-time" disabled={saving} onClick={() => setAddingTime(true)}><Clock aria-hidden="true" />Add time</button>)}
+    <small id={`${idPrefix}-due`} className={due ? `task-due-text ${due.tone}` : "task-due-text"}>
+      {due ? due.description : card.due_on ? "In a done column" : "No due date"}
+      {otherZone && note && <><br />{`Set as ${note}. Changing the time uses your zone (${zone}).`}</>}
+    </small>
+  </div>;
+}
+
+type AssigneePickerProps = {
+  boardId: string;
+  userId: string;
+  inputId: string;
+  assignees: ReturnType<typeof cardAssignees>;
+  disabled: boolean;
+  /** Saves the whole list (D102); resolves once the save settled. */
+  onCommit: (ids: string[], names: string[]) => Promise<unknown>;
+};
+
+/**
+ * Multiple assignees in a type-to-search Combobox backed by `GET /boards/:b/readers?q=` (D102, T92).
+ * Chips are the chosen people; someone who lost access to the board is marked and can only be
+ * removed. Choices made while the list is open are saved together when it closes (§4.3), and a
+ * chip removed while it is closed saves at once.
+ */
+export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, onCommit }: AssigneePickerProps) {
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const names = useRef(new Map<string, string>());
+  for (const assignee of assignees) names.current.set(assignee.id, assignee.display_name);
+  const saved = assignees.map((assignee) => assignee.id);
+  const value = draft ?? saved;
+
+  const committing = useRef(false);
+  const commit = async (next: string[]) => {
+    if (committing.current) return;
+    if (sameIds(next, saved)) {
+      setDraft(null);
+      return;
+    }
+    committing.current = true;
+    try {
+      await onCommit(next, next.map((id) => names.current.get(id) ?? "them"));
+    } finally {
+      // Saved or not (a conflict shows the other person's version), the chips follow the card.
+      draftRef.current = null;
+      committing.current = false;
+      setDraft(null);
+    }
+  };
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+
+  const isOpen = () => Boolean(wrapRef.current?.querySelector(".ui-popup, .ui-sheet-layer"));
+  // The popup (or the phone sheet) closing commits what was chosen while it was open.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || typeof MutationObserver === "undefined") return undefined;
+    let open = isOpen();
+    const observer = new MutationObserver(() => {
+      const now = isOpen();
+      if (open && !now && draftRef.current && !disabledRef.current) void commitRef.current(draftRef.current);
+      open = now;
+    });
+    observer.observe(wrap, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+  // Another field's save hid the list meanwhile: commit the choices once it is done.
+  useEffect(() => {
+    if (!disabled && draftRef.current && !isOpen()) void commitRef.current(draftRef.current);
+  }, [disabled]);
+
+  const loadOptions = useCallback(async (query: string, signal: AbortSignal): Promise<Option[]> => {
+    const q = query.trim().slice(0, 64);
+    const { users } = await getBoardReaders(boardId, q ? { q, limit: MAX_ASSIGNEES, signal } : { signal });
+    for (const user of users) names.current.set(user.id, user.displayName);
+    return users.map((user) => {
+      const detail = pickerDetail(user, users);
+      return { value: user.id, label: user.id === userId ? `${user.displayName} (me)` : user.displayName, ...(detail ? { description: detail } : {}) };
+    });
+  }, [boardId, userId]);
+
+  return <div ref={wrapRef} className="task-assignee-picker">
+    <Combobox
+      multiple
+      id={inputId}
+      label="Assignees"
+      placeholder="Add people…"
+      emptyText="Nobody who can open this board matches"
+      value={value}
+      maxSelected={MAX_ASSIGNEES}
+      loadOptions={loadOptions}
+      selectedOptions={assignees.map((assignee) => ({ value: assignee.id, label: assigneeLabel(assignee) }))}
+      disabled={disabled}
+      onChange={(next) => {
+        setDraft(next);
+        if (!isOpen() && !disabled) void commit(next);
+      }}
+    />
+    {value.length >= MAX_ASSIGNEES && <small className="task-due-text">A card can have up to {MAX_ASSIGNEES} assignees.</small>}
+    {assignees.some((assignee) => assignee.can_read === 0) && <small className="task-due-text">Marked “no access”: they can no longer open this board. Remove them, or share the board with them again.</small>}
+  </div>;
+}

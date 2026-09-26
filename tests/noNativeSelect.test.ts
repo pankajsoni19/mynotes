@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { Glob } from "bun";
 import { join } from "node:path";
 
-// D91: every dropdown is the shared Select or Combobox from src/ui. The Tasks card dialog's assignee
-// select moves to Combobox in Wave 13B; drop it from the allowlist then.
-const allowlist = new Set(["tasks/CardDialog.tsx"]);
+// D91: every dropdown is the shared Select or Combobox from src/ui. The last native select, the Tasks
+// card dialog's assignee picker, moved to Combobox in Wave 13B, so nothing is allowlisted.
+const allowlist = new Set<string>();
 const root = join(import.meta.dir, "..", "src");
 
 test("no native select outside src/ui", async () => {

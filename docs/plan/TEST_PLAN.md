@@ -403,6 +403,20 @@ Plan of record: [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §7. Migratio
 - [x] `tests/calendarTasks.test.ts` (overlay): items carry `dueTime`, `dueTz`, `dueAt`, and the viewer-local `date`; a card due 23:30 in UTC+14 appears on the previous day for a UTC−12 viewer and not on its civil date, a UTC−12 card appears two days later for a UTC+14 viewer, date-only cards sort before timed ones, and `GET /api/events?include=tasks` places a timed card by `tz` (T94).
 - [x] `tests/mcpTasks.test.ts` (MCP): `update_card` is listed only for `tasks:write` and re-checked in the handler; `create_card` takes `dueTime`, `dueTz`, and `assigneeIds` (a time without a zone and a stranger assignee are `INVALID`, the latter with `reason: ASSIGNEE_NOT_MEMBER`); `update_card` edits title, due time, and assignees, returns `CARD_CHANGED` with `currentRevision` (and no card) on a stale revision, refuses a `description` key and an empty change, clears the date with the time and `[]` assignees, and is `NOT_FOUND` for strangers exactly like a missing id; `list_cards` and `get_card` carry `due_time`, `due_tz`, `due_at`, and `assignees` names, and columns `wip_limit`; `create_card` and a cross-column `move_card` return `COLUMN_FULL` with the counts while a move within the column works; the audit entry records `via: "mcp"` and counts only; `taskErrorToMcp` maps `COLUMN_FULL` and `ASSIGNEE_NOT_MEMBER` (T99).
 
+## Wave 13: card fields UI (13B)
+
+Plan of record: [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §4.3, §4.4 (only the 13B parts), §7. Rendered with `react-dom/server`, as 13A.
+
+- [x] `tests/tasksCardFields.test.tsx` (due time): a timed chip uses the viewer's local day and time of `due_at` ("Today 17:00"), turns overdue exactly at the instant, and shows "Tomorrow" the day before; a card due 23:30 at UTC+14 is "Today 21:30" the day before for a UTC−12 viewer; date-only cards keep the date chip; the time field saves only a complete, changed `HH:MM` (a changed zone counts, `:00` seconds are dropped, `24:00` and `9:05` are not); the zone note appears only when the card's zone differs from the viewer's, with the day when it differs.
+- [x] `tests/tasksCardFields.test.tsx` (fields): `CardFields` shows no time control without a date, **Add time** after a date, and the time input with **Remove time** for a timed card; the assignee picker is a multiple `Combobox` bound to its label, with "Remove <name>" chips and "(no access)" for `can_read: 0`; no native select; lane cards read "Assigned to Ann and Bo" and show "+1", and a timed chip.
+- [x] `tests/noNativeSelect.test.ts`: the allowlist is empty now that the card dialog uses `Combobox`.
+
+Manual QA (headless Chrome at 1280×800 and 390×844, two throwaway accounts sharing a board):
+
+- [ ] Both people are assigned through the picker (type to search), the chips save when the list closes, and a chip's ✕ saves at once; the lane card shows the first name and "+1".
+- [ ] A due date, then **Add time**, saves a time; the lane chip and the card show it; **Remove time** clears it.
+- [ ] The desktop popup opens right under the assignee field inside the card dialog (no transform offset); on the phone it is a bottom sheet, and Back closes only the sheet, then the card.
+
 ## Wave 13F: Modules
 
 With 13B merged, `tests/migrations.test.ts`, `tests/api.test.ts`, and `tests/searchIndex.test.ts` pin 1–16 and allow 017 onwards.

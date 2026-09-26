@@ -16,8 +16,14 @@ export type BoardSummary = {
   updated_at: string;
 };
 
-/** `is_done` (migration 011): cards in done columns are left out of Today and the due chip. */
-export type BoardColumn = { id: string; board_id: string; name: string; position: number; is_done: 0 | 1; created_at: string; updated_at: string };
+/**
+ * `is_done` (migration 011): cards in done columns are left out of Today and the due chip.
+ * `wip_limit` (migration 015, D108): at most this many cards, or null for no limit; only the owner sets it.
+ */
+export type BoardColumn = { id: string; board_id: string; name: string; position: number; is_done: 0 | 1; wip_limit?: number | null; created_at: string; updated_at: string };
+
+/** An assignee (D102). `can_read` 0: they lost access to the board ("Former member"); they can only be removed. */
+export type CardAssignee = { id: string; display_name: string; can_read: 0 | 1 };
 
 export type CardSummary = {
   id: string;
@@ -29,8 +35,16 @@ export type CardSummary = {
   revision: number;
   created_by: string | null;
   creator_name: string | null;
-  /** YYYY-MM-DD or null. */
+  /** YYYY-MM-DD or null; the civil date in `due_tz` when the card has a time. */
   due_on: string | null;
+  /** "HH:MM" in `due_tz`, or null (D100). */
+  due_time?: string | null;
+  due_tz?: string | null;
+  /** The UTC instant when `due_time` is set. */
+  due_at?: string | null;
+  /** In assignment order, at most 20 (D102). */
+  assignees?: CardAssignee[];
+  /** Deprecated (D103): the first assignee. */
   assignee_id: string | null;
   assignee_name: string | null;
   comment_count: number;
@@ -47,15 +61,25 @@ export const listBoards = () => api<{ boards: BoardSummary[] }>("/tasks/boards")
 export const createBoard = (name: string) => api<{ board: BoardSummary; columns: BoardColumn[] }>("/tasks/boards", json("POST", { name }));
 export const getBoard = (boardId: string) => api<BoardDetail>(`/tasks/boards/${boardId}`);
 export const renameBoard = (boardId: string, name: string) => api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { name }));
-/** Everyone who can open the board, for the assignee picker. */
-export const getBoardReaders = (boardId: string) => api<{ users: Array<{ id: string; displayName: string }> }>(`/tasks/boards/${boardId}/readers`);
+export type BoardReader = { id: string; displayName: string };
+/**
+ * Everyone who can open the board, for the assignee picker: up to 200 without `q`, or a
+ * case-insensitive name match (1–64 characters) of at most `limit` (default 20). Display names only.
+ */
+export function getBoardReaders(boardId: string, options: { q?: string; limit?: number; signal?: AbortSignal } = {}) {
+  const params = new URLSearchParams();
+  if (options.q) params.set("q", options.q.slice(0, 64));
+  if (options.q && options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return api<{ users: BoardReader[]; truncated?: boolean }>(`/tasks/boards/${boardId}/readers${query ? `?${query}` : ""}`, options.signal ? { signal: options.signal } : {});
+}
 export const getBoardSharing = (boardId: string) => api<{ visibility: BoardVisibility; users: Array<{ id: string; display_name: string }> }>(`/tasks/boards/${boardId}/sharing`);
 export const saveBoardSharing = (boardId: string, visibility: BoardVisibility, userIds: string[]) =>
   api<{ ok: true }>(`/tasks/boards/${boardId}/sharing`, json("PUT", { visibility, userIds: visibility === "selected" ? userIds : [] }));
 
 export const createColumn = (boardId: string, name: string, afterColumnId?: string | null) =>
   api<{ column: BoardColumn; columns: BoardColumn[] }>(`/tasks/boards/${boardId}/columns`, json("POST", afterColumnId === undefined ? { name } : { name, afterColumnId }));
-export const updateColumn = (columnId: string, change: { name?: string; afterColumnId?: string | null; isDone?: boolean }) =>
+export const updateColumn = (columnId: string, change: { name?: string; afterColumnId?: string | null; isDone?: boolean; wipLimit?: number | null }) =>
   api<{ column: BoardColumn; columns: BoardColumn[] }>(`/tasks/columns/${columnId}`, json("PATCH", change));
 export const deleteColumn = (columnId: string) => api<{ ok: true; columns: BoardColumn[] }>(`/tasks/columns/${columnId}`, json("DELETE", {}));
 
@@ -83,7 +107,11 @@ export type CardComment = {
 export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean; attachments: CardAttachment[] };
 
 export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}`);
-export type CardChange = { title?: string; description?: string; dueOn?: string | null; assigneeId?: string | null };
+/**
+ * A card edit. `dueTime` comes with `dueTz` (the setter's browser zone, D101); `dueTime: null` clears
+ * the time, and `dueOn: null` clears both. `assigneeIds` replaces the whole set (`[]` clears it).
+ */
+export type CardChange = { title?: string; description?: string; dueOn?: string | null; dueTime?: string | null; dueTz?: string; assigneeIds?: string[] };
 export const updateCard = (cardId: string, change: CardChange & { revision: number }) =>
   api<{ card: CardDetail }>(`/tasks/cards/${cardId}`, json("PATCH", change));
 export const listComments = (cardId: string, before: string) =>

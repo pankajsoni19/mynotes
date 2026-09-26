@@ -411,6 +411,13 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         has_description: card.description.trim() ? 1 : 0,
         comment_count: card.comment_count,
         attachment_count: card.attachment_count,
+        due_on: card.due_on,
+        due_time: card.due_time,
+        due_tz: card.due_tz,
+        due_at: card.due_at,
+        assignees: card.assignees,
+        assignee_id: card.assignee_id,
+        assignee_name: card.assignee_name,
         column_id: item.column_id,
         updated_at: card.updated_at
       } : item))}
