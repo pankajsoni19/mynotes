@@ -168,6 +168,8 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 | Notifications | The bell and `/notifications`. Reminders are still created, and push notifications still arrive on devices where you turned them on. |
 | Team | The **Team** button and `/team`. Guests do not see this row. Admins keep **Settings → Manage team**, which still opens Team while the module is off. Roles and blocking apply as before. |
 
+**Back and Forward past a module that is off.** Back steps over an entry of a module that is off to the page before it. Forward cannot pass beyond such an entry: it stays where you are and shows the hint. For example, after Home, then Team, then Calendar, with Team turned off and Back to Home, Forward stops at Home, and Calendar is not reachable with Forward. Turning the module back on restores it: Forward then goes to Team and on to Calendar again.
+
 **A hidden module is not a security boundary.** Turning a module off only hides it in this app for you. Nothing is deleted, sharing is unchanged, people you share with still see what you share, MCP keys keep every permission they were given, and calendar feed links keep working. To stop an MCP client or a feed, revoke its key or link instead.
 
 ## Team
