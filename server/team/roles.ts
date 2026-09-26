@@ -62,5 +62,19 @@ export function effectiveMcpScopes(stored: readonly McpScope[], role: Role): Mcp
   return stored.filter((scope) => allowed.includes(scope));
 }
 
+/**
+ * True when the user `userExpression` names may be part of an `all_users` audience (D72, T84: every
+ * role except guest). A primary-key lookup; SQLite evaluates the uncorrelated form once per
+ * statement. An unknown user yields NULL, which never matches (fail closed).
+ */
+export const audienceAllUsersFor = (userExpression: string) =>
+  `((SELECT u_aud.role FROM users u_aud WHERE u_aud.id = ${userExpression}) <> 'guest')`;
+
+/**
+ * The fragment every `x.visibility = 'all_users'` in server SQL must be ANDed with, for the caller
+ * bound as `$userId` (§5.3). tests/audienceGuard.test.ts fails on any bare `all_users` comparison.
+ */
+export const AUDIENCE_ALL_USERS = audienceAllUsersFor("$userId");
+
 /** Whether a change from `from` to `to` grants or removes admin, which needs re-authentication (§5.5). */
 export const roleChangeNeedsReauth = (from: Role, to: Role) => from !== to && (from === "admin" || to === "admin");

@@ -5,6 +5,7 @@ import type { BoardVisibility } from "./access";
 import { planInsert } from "./boardOrder";
 import { filterError, QUERY_GROUPS, QUERY_SORTS, runQuery, type QueryGroup, type QueryResult, type QuerySort } from "./query";
 import { applyRenumber, limitReached, TaskError } from "./service";
+import { AUDIENCE_ALL_USERS } from "../team/roles";
 
 /**
  * Saved cross-board task views (research 2026-09-26 §10.2, D140, Q12, Q13;
@@ -55,7 +56,7 @@ const viewSelect = `SELECT v.id, v.owner_id, u.display_name AS owner_name, v.nam
  * Whether `$userId` may read view `v` (owner `u`): the owner, or, while the
  * owner is enabled, everyone for `all_users` and members for `selected`.
  */
-export const readableViewPredicate = `(v.owner_id = $userId OR (u.disabled_at IS NULL AND (v.visibility = 'all_users'
+export const readableViewPredicate = `(v.owner_id = $userId OR (u.disabled_at IS NULL AND ((v.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
   OR (v.visibility = 'selected' AND EXISTS (SELECT 1 FROM task_view_members m WHERE m.view_id = v.id AND m.user_id = $userId)))))`;
 
 function toView(row: ViewRow, userId: string): TaskView {
@@ -105,7 +106,7 @@ export function listViews(userId: string) {
   const mine = db.query(`${viewSelect} WHERE v.owner_id = $userId ORDER BY v.position, v.id`).all({ userId }) as ViewRow[];
   const shared = db.query(`${viewSelect} WHERE v.owner_id <> $userId AND v.visibility = 'selected' AND ${readableViewPredicate}
     ORDER BY v.name COLLATE NOCASE, v.id LIMIT $limit`).all({ userId, limit: VIEW_LIMITS.listed + 1 }) as ViewRow[];
-  const everyone = db.query(`${viewSelect} WHERE v.owner_id <> $userId AND v.visibility = 'all_users' AND ${readableViewPredicate}
+  const everyone = db.query(`${viewSelect} WHERE v.owner_id <> $userId AND (v.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) AND ${readableViewPredicate}
     ORDER BY v.name COLLATE NOCASE, v.id LIMIT $limit`).all({ userId, limit: VIEW_LIMITS.listed + 1 }) as ViewRow[];
   return {
     mine: mine.map((row) => toView(row, userId)),

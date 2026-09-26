@@ -1,4 +1,5 @@
 import { db } from "../db";
+import { AUDIENCE_ALL_USERS } from "../team/roles";
 
 export type CalendarVisibility = "private" | "selected" | "all_users";
 export type ShareRole = "viewer" | "editor";
@@ -56,7 +57,7 @@ export type EventRow = {
  * for `selected`. Binned calendars never match. Events are always joined to
  * their calendar through this predicate (T61).
  */
-export const calendarAudiencePredicate = `(k.owner_id = $userId OR k.visibility = 'all_users'
+export const calendarAudiencePredicate = `(k.owner_id = $userId OR (k.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
   OR (k.visibility = 'selected' AND EXISTS (SELECT 1 FROM calendar_members m WHERE m.calendar_id = k.id AND m.user_id = $userId)))`;
 export const readableCalendarPredicate = `(k.deleted_at IS NULL AND ${calendarAudiencePredicate})`;
 

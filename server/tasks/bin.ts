@@ -2,6 +2,7 @@ import { audit, db, now } from "../db";
 import { binUnlinkedAttachments, cardAttachmentIds } from "./attachments";
 import { planInsert } from "./boardOrder";
 import { applyRenumber, LIMITS, liveCardsIn, withBoardLock } from "./service";
+import { AUDIENCE_ALL_USERS } from "../team/roles";
 
 /**
  * Cards and boards in the shared Bin (WAVES_7-9.md D41 and §3.3). Deleting only sets the Bin
@@ -36,7 +37,7 @@ type CardBinRow = { id: string; board_id: string; column_id: string | null; titl
 type BoardBinRow = { id: string; owner_id: string; name: string; visibility: string; deleted_at: string | null; purge_started_at: string | null };
 
 /** The board's audience ignoring whether it is binned: owner, all_users, or a member row. */
-const boardAudience = `(b.owner_id = $userId OR b.visibility = 'all_users'
+const boardAudience = `(b.owner_id = $userId OR (b.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
   OR (b.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId)))`;
 
 /**

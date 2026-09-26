@@ -1,4 +1,5 @@
 import { db } from "../db";
+import { AUDIENCE_ALL_USERS } from "../team/roles";
 
 export type CollectionVisibility = "private" | "selected" | "all_users";
 export type ShareRole = "viewer" | "editor";
@@ -28,7 +29,7 @@ export type CollectionRecord = {
  * collections never match. Also OR-ed into readableDocument* for attachments.
  */
 export const readableCollectionPredicate = `(
-  c.deleted_at IS NULL AND (c.owner_id = $userId OR c.visibility = 'all_users'
+  c.deleted_at IS NULL AND (c.owner_id = $userId OR (c.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
     OR (c.visibility = 'selected' AND EXISTS (SELECT 1 FROM collection_members m WHERE m.collection_id = c.id AND m.user_id = $userId)))
 )`;
 

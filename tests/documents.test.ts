@@ -468,10 +468,14 @@ describe("document metadata and access", () => {
     const folderReader = await createUser("Matrix folder reader");
     const itemReader = await createUser("Matrix item reader");
     const unrelated = await createUser("Matrix unrelated");
-    const viewers = { owner, folderReader, itemReader, unrelated };
+    // T84: a guest is never in an all-users audience; one shared with by name still reads.
+    const guest = await createUser("Matrix guest");
+    const namedGuest = await createUser("Matrix named guest");
+    db.query("UPDATE users SET role = 'guest' WHERE id IN (?, ?)").run(guest.userId, namedGuest.userId);
+    const viewers = { owner, folderReader, itemReader, unrelated, guest, namedGuest };
 
     const sharedFolder = await folderFor(owner, "Matrix shared");
-    expect((await shareFolder(owner, sharedFolder, "selected", [folderReader.userId])).status).toBe(200);
+    expect((await shareFolder(owner, sharedFolder, "selected", [folderReader.userId, namedGuest.userId])).status).toBe(200);
     const everyoneFolder = await folderFor(owner, "Matrix everyone");
     expect((await shareFolder(owner, everyoneFolder, "all_users")).status).toBe(200);
     const privateFolder = await folderFor(owner, "Matrix private");
@@ -480,10 +484,10 @@ describe("document metadata and access", () => {
 
     type Scenario = { name: string; folderId: string; sharing?: { visibility: string; userIds: string[] }; readers: Array<keyof typeof viewers> };
     const scenarios: Scenario[] = [
-      { name: "inherits a selected folder", folderId: sharedFolder, readers: ["owner", "folderReader"] },
+      { name: "inherits a selected folder", folderId: sharedFolder, readers: ["owner", "folderReader", "namedGuest"] },
       { name: "inherits an all-users folder", folderId: everyoneFolder, readers: ["owner", "folderReader", "itemReader", "unrelated"] },
       { name: "private override in a shared folder", folderId: sharedFolder, sharing: { visibility: "private", userIds: [] }, readers: ["owner"] },
-      { name: "selected override in a private folder", folderId: privateFolder, sharing: { visibility: "selected", userIds: [itemReader.userId] }, readers: ["owner", "itemReader"] },
+      { name: "selected override in a private folder", folderId: privateFolder, sharing: { visibility: "selected", userIds: [itemReader.userId, namedGuest.userId] }, readers: ["owner", "itemReader", "namedGuest"] },
       { name: "all-users override in a private folder", folderId: privateFolder, sharing: { visibility: "all_users", userIds: [] }, readers: ["owner", "folderReader", "itemReader", "unrelated"] },
       { name: "subfolder of a shared folder", folderId: subfolder, readers: ["owner"] }
     ];

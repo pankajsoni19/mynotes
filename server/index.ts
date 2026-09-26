@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
-import { listReadableFolders, ownedNote, readableNote } from "./access";
+import { listReadableFolders, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
@@ -525,11 +525,7 @@ app.get("/api/notes", (c) => {
   if (folderId) uuid.parse(folderId);
   const rows = db.query(`
     SELECT n.id, n.owner_id,
-           CASE WHEN n.owner_id = $userId OR (n.sharing_override = 0 AND (
-             f.visibility = 'all_users' OR EXISTS (
-               SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-             )
-           )) THEN n.folder_id ELSE NULL END AS folder_id,
+           ${visibleNoteFolderIdExpression} AS folder_id,
            n.title,
            CASE WHEN n.sharing_override = 0 THEN COALESCE(f.visibility, 'private') ELSE n.visibility END AS visibility,
            n.current_version,
@@ -538,17 +534,7 @@ app.get("/api/notes", (c) => {
            CASE WHEN n.owner_id = $userId AND n.draft_revision IS NOT NULL THEN k.name ELSE NULL END AS draft_mcp_key_name
     FROM notes n JOIN users u ON u.id = n.owner_id LEFT JOIN folders f ON f.id = n.folder_id
     LEFT JOIN mcp_api_keys k ON k.id = n.draft_mcp_key_id
-    WHERE n.deleted_at IS NULL AND (
-      n.owner_id = $userId OR (n.sharing_override = 1 AND (
-        n.visibility = 'all_users' OR (n.visibility = 'selected' AND EXISTS (
-          SELECT 1 FROM note_shares s WHERE s.note_id = n.id AND s.user_id = $userId
-        ))
-      )) OR (n.sharing_override = 0 AND (
-        f.visibility = 'all_users' OR (f.visibility = 'selected' AND EXISTS (
-          SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-        ))
-      ))
-    ) AND ($folderId IS NULL OR n.folder_id = $folderId)
+    WHERE n.deleted_at IS NULL AND ${readableNotePredicate} AND ($folderId IS NULL OR n.folder_id = $folderId)
     ORDER BY n.updated_at DESC LIMIT 500
   `).all({ userId, folderId: folderId ?? null });
   return c.json({ notes: rows });
