@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CalendarDays, Clock, UsersRound } from "lucide-react";
+import { CalendarDays, Clock, Flag, Tag, UsersRound } from "lucide-react";
 import { Combobox } from "../ui/Combobox";
 import type { Option } from "../ui/Listbox";
 import {
@@ -15,7 +15,9 @@ import {
   sameIds,
   viewerTimeZone
 } from "./taskActions";
-import { getBoardReaders, type CardChange, type CardDetail } from "./tasksApi";
+import { getBoardReaders, type BoardTag, type CardChange, type CardDetail } from "./tasksApi";
+import { FLAG_LABELS, type TagChange } from "./cardTags";
+import { FlagPicker, TagPicker } from "./TagPicker";
 
 export const MAX_ASSIGNEES = 20;
 
@@ -30,20 +32,37 @@ type CardFieldsProps = {
   saving: boolean;
   /** Saves one change with the card's revision; false when it was not saved (a conflict or an error). */
   onSave: (change: CardChange, success: string) => Promise<boolean>;
+  /** The board's tags (13C); without them the Tags field is left out. */
+  tags?: BoardTag[];
+  /** The caller owns the board: they also manage its tags. */
+  owner?: boolean;
+  /** A tag was created, renamed, recoloured, or deleted. */
+  onTagsChange?: (change: TagChange) => void;
 };
 
 /**
- * The card's fields (WAVE_13_TASK_CARD_UX.md §4.3): the due date with an optional time, and the
- * assignees. The card dialog uses it today; the composer and the full page (13D) and the tag and
- * flag pickers (13C) join here, so each adds a field with a small diff.
+ * The card's fields (WAVE_13_TASK_CARD_UX.md §4.3): the due date with an optional time, the
+ * assignees, the tags, and the flags. The card dialog uses it today; the composer and the full
+ * page (13D) join here, so each adds a field with a small diff.
  */
-export function CardFields({ card, userId, idPrefix, done, saving, onSave }: CardFieldsProps) {
+export function CardFields({ card, userId, idPrefix, done, saving, onSave, tags, owner = false, onTagsChange }: CardFieldsProps) {
   return <div className="task-card-details">
     <DueField card={card} idPrefix={idPrefix} done={done} saving={saving} onSave={onSave} />
     <div className="task-card-field">
       <label htmlFor={`${idPrefix}-assignees`}><UsersRound aria-hidden="true" />Assignees</label>
       <AssigneePicker boardId={card.board_id} userId={userId} inputId={`${idPrefix}-assignees`} assignees={cardAssignees(card)} disabled={saving}
         onCommit={(ids, names) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned")} />
+    </div>
+    {tags && <div className="task-card-field">
+      <label htmlFor={`${idPrefix}-tags`}><Tag aria-hidden="true" />Tags</label>
+      <TagPicker boardId={card.board_id} inputId={`${idPrefix}-tags`} tags={tags} tagIds={card.tag_ids ?? []} owner={owner} disabled={saving}
+        onTagsChange={onTagsChange ?? (() => undefined)}
+        onCommit={(ids, names) => onSave({ tagIds: ids }, ids.length ? `Tagged ${assigneeSentence(names)}` : "Tags removed")} />
+    </div>}
+    <div className="task-card-field task-card-field-wide">
+      <span id={`${idPrefix}-flags`} className="task-card-field-label"><Flag aria-hidden="true" />Flags</span>
+      <FlagPicker labelId={`${idPrefix}-flags`} flags={card.flags ?? []} disabled={saving}
+        onCommit={(flags, flag, on) => onSave({ flags }, `${FLAG_LABELS[flag]} flag ${on ? "added" : "removed"}`)} />
     </div>
   </div>;
 }

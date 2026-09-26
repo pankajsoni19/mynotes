@@ -103,6 +103,8 @@ test("lane cards show every assignee to screen readers and a timed due chip", ()
     owner={false} isFirst isLast draggingId={null} dropIndex={null}
     onDragStart={noop} onDragEnd={noop} onDragOverIndex={noop} onDropAt={noop} onKeyMove={noop} onCardMenu={noop} onOpenCard={noop} onColumnMenu={noop} onMoveColumn={noop} onAddCard={async () => undefined} />);
   expect(markup).toContain("Assigned to Ann and Bo");
-  expect(markup).toContain(">+1</span>");
+  // 13C: the face shows up to three avatars (initials) instead of the first name and "+1".
+  expect(markup).toContain("assigned to Ann and Bo");
+  expect(markup).toMatch(/class="task-avatar tone-\d">A<\/span><span class="task-avatar tone-\d">B<\/span>/);
   expect(markup).toContain(`at ${instantParts("2999-01-01T09:15:00.000Z", viewerTimeZone()).time}`);
 });

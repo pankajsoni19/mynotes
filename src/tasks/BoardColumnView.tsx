@@ -1,12 +1,15 @@
 import { useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Ellipsis, MessageSquare, Paperclip, Plus, AlignLeft, UserRound } from "lucide-react";
+import { ChevronLeft, ChevronRight, Ellipsis, Plus } from "lucide-react";
 import { CARD_DRAG_TYPE, isCardDrag, isMoveKey, type MoveKey } from "./boardOrder";
-import { assigneeSentence, attachmentCountLabel, cardAssignees, commentCountLabel, dueStatus, localDateString, validateCardTitle, wipCountLabel, wipState } from "./taskActions";
-import type { BoardColumn, CardSummary } from "./tasksApi";
+import { CardFace, cardFaceLabel } from "./CardFace";
+import { localDateString, validateCardTitle, wipCountLabel, wipState } from "./taskActions";
+import type { BoardColumn, BoardTag, CardSummary } from "./tasksApi";
 
 type BoardColumnViewProps = {
   column: BoardColumn;
   cards: CardSummary[];
+  /** The board's tags, to name and colour the cards' tag chips. */
+  tags?: BoardTag[];
   owner: boolean;
   isFirst: boolean;
   isLast: boolean;
@@ -118,6 +121,8 @@ export function BoardColumnView(props: BoardColumnViewProps) {
       {cards.map((card) => {
         // The dragged card stays rendered (removing it would cancel the drag); slots count the others.
         const slot = others.indexOf(card);
+        const face = { card, tags: props.tags ?? [], done: column.is_done === 1, today };
+        const excerptId = `task-card-excerpt-${card.id}`;
         return <li key={card.id} className="task-card-item">
         {slot >= 0 && indicator(slot)}
         <div
@@ -125,9 +130,11 @@ export function BoardColumnView(props: BoardColumnViewProps) {
           tabIndex={0}
           data-card-id={card.id}
           draggable
+          role="group"
+          aria-label={cardFaceLabel(face)}
           aria-roledescription="Draggable card"
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight"
-          aria-describedby="task-card-keys"
+          aria-describedby={card.description_excerpt?.trim() ? `${excerptId} task-card-keys` : "task-card-keys"}
           onDragStart={(event) => {
             event.dataTransfer.setData(CARD_DRAG_TYPE, card.id);
             event.dataTransfer.effectAllowed = "move";
@@ -144,22 +151,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
           }}
           onClick={(event) => { if (!(event.target as Element).closest("button")) props.onOpenCard(card); }}
         >
-          <span className="task-card-title">{card.title}</span>
-          {(() => {
-            const due = dueStatus(card.due_on, today, column.is_done === 1, { dueAt: card.due_at });
-            return due && <span className={`task-due-chip ${due.tone}`} title={due.description}><CalendarDays aria-hidden="true" /><span aria-hidden="true">{due.label}</span><span className="sr-only">{due.description}</span></span>;
-          })()}
-          {(() => {
-            const people = cardAssignees(card);
-            const names = people.map((person) => person.display_name);
-            const assigned = names.length ? `Assigned to ${assigneeSentence(names)}` : "";
-            return (card.has_description === 1 || card.comment_count > 0 || card.attachment_count > 0 || names.length > 0) && <span className="task-card-meta">
-            {names.length > 0 && <span title={assigned}><UserRound aria-hidden="true" /><span className="task-card-assignee" aria-hidden="true">{names[0]}</span>{names.length > 1 && <span className="task-card-more-people" aria-hidden="true">+{names.length - 1}</span>}<span className="sr-only">{assigned}</span></span>}
-            {card.has_description === 1 && <span title="Has a description"><AlignLeft aria-label="Has a description" /></span>}
-            {card.comment_count > 0 && <span title="Comments"><MessageSquare aria-hidden="true" /><span aria-hidden="true">{card.comment_count}</span><span className="sr-only">{commentCountLabel(card.comment_count)}</span></span>}
-            {card.attachment_count > 0 && <span title="Attachments"><Paperclip aria-hidden="true" /><span aria-hidden="true">{card.attachment_count}</span><span className="sr-only">{attachmentCountLabel(card.attachment_count)}</span></span>}
-          </span>;
-          })()}
+          <CardFace {...face} excerptId={excerptId} />
           <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…" draggable={false}><Ellipsis /></button>
         </div>
       </li>;

@@ -187,3 +187,40 @@ test("Back that closes a nested sheet at depth 1 keeps the URL and the forward e
   expect(entries).toHaveLength(2);
   expect(index).toBe(1);
 });
+
+test("Back that closes the inner of two stacked dialogs above depth 0 lets the undo land, with no sentinel", () => {
+  // Board (depth 0), then a card (depth 1) with Manage tags and a colour sheet open over it.
+  const entries: unknown[] = [{ route: "board", "mynotes.depth": 0 }, { route: "card", "mynotes.depth": 1 }];
+  let index = 1;
+  const history = {
+    get state() { return entries[index]; },
+    pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
+    back() { index -= 1; }
+  };
+  const env = { history: history as unknown as History, href: () => "https://nook.test/", phone: () => true };
+  const outer = acquireDialogSentinel(env);
+  const inner = acquireDialogSentinel(env);
+  expect(entries).toHaveLength(2);
+  let innerOpen = true;
+  let undo = 0;
+  const unregister = registerHistoryDialogGuard(() => {
+    if (!innerOpen) return false;
+    innerOpen = false;
+    undoDialogPop("back", (delta) => { undo = delta; });
+    return true;
+  });
+  // Back: the browser shows the board entry until the guard's history.go(1) lands.
+  history.back();
+  expect(popStateClosedDialog({ state: history.state })).toBe(true);
+  expect(undo).toBe(1);
+  // The inner sheet unmounts meanwhile: no sentinel may be pushed over the board entry.
+  inner();
+  expect(entries).toEqual([{ route: "board", "mynotes.depth": 0 }, { route: "card", "mynotes.depth": 1 }]);
+  // The undo lands (ignored) on the card, which needs no sentinel at depth 1.
+  index += 1;
+  expect(popStateClosedDialog({ state: history.state })).toBe(true);
+  expect(entries).toHaveLength(2);
+  expect(history.state).toEqual({ route: "card", "mynotes.depth": 1 });
+  unregister();
+  outer();
+});

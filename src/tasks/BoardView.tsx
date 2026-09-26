@@ -15,6 +15,7 @@ import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
 import { canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
+import { applyCardDetail, applyTagChange } from "./cardTags";
 import {
   createCard,
   createColumn,
@@ -413,6 +414,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         key={column.id}
         column={column}
         cards={columnCards(cards, column.id)}
+        tags={detail.tags}
         owner={owner}
         isFirst={index === 0}
         isLast={index === columns.length - 1}
@@ -447,23 +449,9 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       notify={notify}
       onMove={(card) => openDialog({ kind: "moveCard", cardId: card.id })}
       onDelete={removeCard}
-      onChanged={(card) => setCards((items) => items.map((item) => item.id === card.id ? {
-        ...item,
-        title: card.title,
-        revision: card.revision,
-        has_description: card.description.trim() ? 1 : 0,
-        comment_count: card.comment_count,
-        attachment_count: card.attachment_count,
-        due_on: card.due_on,
-        due_time: card.due_time,
-        due_tz: card.due_tz,
-        due_at: card.due_at,
-        assignees: card.assignees,
-        assignee_id: card.assignee_id,
-        assignee_name: card.assignee_name,
-        column_id: item.column_id,
-        updated_at: card.updated_at
-      } : item))}
+      onChanged={(card) => setDetail((current) => current ? applyCardDetail(current, card) : current)}
+      tags={detail.tags ?? []}
+      onTagsChange={(change) => setDetail((current) => current ? applyTagChange(current, change) : current)}
     />}
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
     {dialog?.kind === "share" && board && <BoardSharePanel board={board} onClose={closeDialog} onChanged={() => {
