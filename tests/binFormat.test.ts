@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { attachmentLabel, binFolderLabel, binItemLabel, binKindLabel, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage, restoreResultMessage } from "../src/bin/binFormat";
+import { attachmentLabel, binFolderLabel, binItemLabel, binKindLabel, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage, restoreResultMessage, subitemLabel } from "../src/bin/binFormat";
 import type { BinItem } from "../src/types";
 
 const DAY = 86_400_000;
@@ -84,6 +84,11 @@ describe("Tasks items in the Bin", () => {
     expect(binItemLabel({ type: "board", title: "" })).toBe("Untitled board");
     expect([card, board, note, attachment].map((item) => binKindLabel(item))).toEqual(["Card", "Board", "Note", "Card attachment"]);
     expect(restoreResultMessage(card, { ok: true, boardName: "Launch", columnName: "To do" })).toBe("Restored to To do on Launch");
+    // A card tree (task hierarchy D129, D130).
+    expect(restoreResultMessage(card, { ok: true, boardName: "Launch", columnName: "To do", descendantCount: 7 })).toBe("Restored to To do on Launch with 7 subitems");
+    expect(restoreResultMessage(card, { ok: true, boardName: "Launch", columnName: "To do", descendantCount: 1, detached: true }))
+      .toBe("Restored to To do on Launch with 1 subitem, without its parent (it is in the Bin)");
+    expect([subitemLabel(1), subitemLabel(7)]).toEqual(["+ 1 subitem", "+ 7 subitems"]);
     expect(restoreResultMessage(board, { ok: true, boardName: "Launch" })).toBe("Restored the board “Launch”");
     expect(restoreResultMessage(board, { ok: true, boardName: "Launch", alreadyRestored: true })).toBe("The board “Launch” is already restored");
     expect(restoreResultMessage(note, { ok: true, folderName: "Projects", visibility: "private" })).toBe("Restored to Projects");

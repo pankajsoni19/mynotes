@@ -159,6 +159,91 @@ describe("card parent and level", () => {
   });
 });
 
+describe("Bin subtrees (D129, D130, T114)", () => {
+  async function tree(label: string) {
+    const context = await setup(label);
+    const { member, boardId, columns } = context;
+    const [todo, doing, done] = [columns[0].id, columns[1].id, columns[2].id];
+    const epic = await addCard(member, boardId, todo, "Epic", { level: 0 });
+    const storyA = await addCard(member, boardId, doing, "Story A", { parentId: epic.id });
+    const storyB = await addCard(member, boardId, todo, "Story B", { parentId: epic.id });
+    const subA1 = await addCard(member, boardId, done, "Sub A1", { parentId: storyA.id });
+    const subA2 = await addCard(member, boardId, todo, "Sub A2", { parentId: storyA.id });
+    const subB1 = await addCard(member, boardId, doing, "Sub B1", { parentId: storyB.id });
+    return { ...context, epic, storyA, storyB, subA1, subA2, subB1 };
+  }
+  const binItems = async (session: Session) => (await call(session, "GET", "/bin?type=card")).body.items as Array<{ id: string; title: string; descendant_count?: number }>;
+
+  test("binning a card bins its live descendants; the Bin lists the root with its count, and one restore brings the tree back", async () => {
+    const t = await tree("Bin tree");
+    const deleted = await call(t.member, "DELETE", `/cards/${t.epic.id}`);
+    expect(deleted).toMatchObject({ status: 200, body: { ok: true, descendantCount: 5 } });
+    expect(JSON.parse(lastAudit("task.card_delete")!.metadata_json)).toMatchObject({ cardId: t.epic.id, descendantCount: 5 });
+    expect(await boardCards(t.owner, t.boardId)).toHaveLength(0);
+    for (const session of [t.member, t.owner]) {
+      const items = await binItems(session);
+      expect(items.filter((item) => [t.epic.id, t.storyA.id, t.subA1.id].includes(item.id)).map((item) => [item.title, item.descendant_count])).toEqual([["Epic", 5]]);
+    }
+    // A descendant is not a Bin item of its own: it cannot be restored or purged alone.
+    expect((await call(t.owner, "POST", `/bin/card/${t.subA1.id}/restore`)).status).toBe(404);
+    expect((await call(t.owner, "DELETE", `/bin/card/${t.subA1.id}`)).status).toBe(404);
+    // Someone who did not delete it and does not own the board sees nothing (D41).
+    expect(await binItems(t.stranger)).toEqual([]);
+    const restored = await call(t.member, "POST", `/bin/card/${t.epic.id}/restore`, {});
+    expect(restored).toMatchObject({ status: 200, body: { ok: true, descendantCount: 5 } });
+    expect(restored.body.detached).toBeUndefined();
+    const cards = await boardCards(t.owner, t.boardId);
+    expect(cards).toHaveLength(6);
+    const byId = new Map(cards.map((card) => [card.id, card]));
+    expect(byId.get(t.subA1.id)).toMatchObject({ parent_card_id: t.storyA.id, column_id: t.columns[2].id, level: 2 });
+    expect(byId.get(t.storyA.id)).toMatchObject({ parent_card_id: t.epic.id, child_count: 2, done_child_count: 1 });
+    expect(byId.get(t.epic.id)).toMatchObject({ child_count: 2 });
+    expect(db.query("SELECT COUNT(*) AS count FROM cards WHERE bin_root_id IS NOT NULL").get()).toEqual({ count: 0 });
+  });
+
+  test("a descendant binned on its own keeps its entry; restored while its parent is binned, it comes back detached", async () => {
+    const t = await tree("Bin separate");
+    expect((await call(t.member, "DELETE", `/cards/${t.subA2.id}`)).body.descendantCount).toBe(0);
+    expect((await call(t.member, "DELETE", `/cards/${t.storyA.id}`)).body.descendantCount).toBe(1);
+    expect((await call(t.member, "DELETE", `/cards/${t.epic.id}`)).body.descendantCount).toBe(2);
+    const items = await binItems(t.member);
+    expect(new Map(items.map((item) => [item.id, item.descendant_count]))).toEqual(new Map([[t.subA2.id, undefined], [t.storyA.id, 1], [t.epic.id, 2]]));
+    // Restoring the epic brings back Story B and Sub B1 only.
+    expect((await call(t.member, "POST", `/bin/card/${t.epic.id}/restore`, {})).body.descendantCount).toBe(2);
+    expect((await boardCards(t.owner, t.boardId)).map((card) => card.title).sort()).toEqual(["Epic", "Story B", "Sub B1"]);
+    // Story A still has its parent (the epic is live again); Sub A2's parent is binned, so it comes back detached.
+    const alone = await call(t.member, "POST", `/bin/card/${t.subA2.id}/restore`, {});
+    expect(alone).toMatchObject({ status: 200, body: { detached: true } });
+    expect((await boardCards(t.owner, t.boardId)).find((card) => card.id === t.subA2.id)).toMatchObject({ parent_card_id: null, level: 2 });
+    const story = await call(t.member, "POST", `/bin/card/${t.storyA.id}/restore`, {});
+    expect(story.body).toMatchObject({ ok: true, descendantCount: 1 });
+    expect(story.body.detached).toBeUndefined();
+    expect((await boardCards(t.owner, t.boardId)).find((card) => card.id === t.storyA.id)).toMatchObject({ parent_card_id: t.epic.id, child_count: 1 });
+  });
+
+  test("purging a root purges its group, by hand and by the sweeper; a separately binned child whose parent is purged restores detached", async () => {
+    const t = await tree("Bin purge");
+    expect((await call(t.member, "DELETE", `/cards/${t.subB1.id}`)).status).toBe(200);
+    expect((await call(t.member, "DELETE", `/cards/${t.storyB.id}`)).status).toBe(200);
+    expect((await call(t.member, "DELETE", `/cards/${t.storyA.id}`)).status).toBe(200);
+    // Only the owner deletes forever.
+    expect((await call(t.member, "DELETE", `/bin/card/${t.storyA.id}`)).status).toBe(403);
+    expect((await call(t.owner, "DELETE", `/bin/card/${t.storyA.id}`)).status).toBe(200);
+    expect(db.query("SELECT id FROM cards WHERE id IN (?, ?, ?)").all(t.storyA.id, t.subA1.id, t.subA2.id)).toEqual([]);
+    expect(JSON.parse(lastAudit("task.card_purge")!.metadata_json)).toMatchObject({ cardId: t.storyA.id, descendantCount: 2 });
+    // The sweeper purges Story B (a root) but not Sub B1, which is its own root and not due yet.
+    db.query("UPDATE cards SET purge_after = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(t.storyB.id);
+    const { sweepTaskBin } = await import("../server/tasks/bin");
+    expect(await sweepTaskBin(new Date().toISOString(), 50)).toBeGreaterThanOrEqual(1);
+    expect(db.query("SELECT id FROM cards WHERE id = ?").get(t.storyB.id)).toBeNull();
+    // Its parent is gone, so Sub B1 was detached by the FK and restores as a loose subtask.
+    const restored = await call(t.member, "POST", `/bin/card/${t.subB1.id}/restore`, {});
+    expect(restored.status).toBe(200);
+    expect(restored.body.detached).toBeUndefined();
+    expect((await boardCards(t.owner, t.boardId)).find((card) => card.id === t.subB1.id)).toMatchObject({ parent_card_id: null, level: 2 });
+  });
+});
+
 describe("roll-ups", () => {
   test("the board payload counts live direct children and those in a done column, with one grouped query (D134)", async () => {
     const { owner, member, boardId, columns } = await setup("Rollup");

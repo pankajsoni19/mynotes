@@ -781,12 +781,21 @@ export async function deleteCard(userId: string, cardId: string) {
     requireReadableCard(cardId, userId);
     const deletedAt = new Date();
     const purgeAfter = purgeAfterFrom(deletedAt);
-    db.transaction(() => {
+    const descendantCount = db.transaction(() => {
       db.query("UPDATE cards SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND deleted_at IS NULL")
         .run(deletedAt.toISOString(), userId, purgeAfter, cardId);
+      // Its live children and grandchildren go with it, tagged with the root, so the Bin lists one
+      // item and one restore brings the tree back (D129). Depth is at most 2, so no recursion.
+      const descendants = db.query(`UPDATE cards SET deleted_at = $deletedAt, deleted_by = $userId, purge_after = $purgeAfter, bin_root_id = $cardId
+        WHERE deleted_at IS NULL AND board_id = $boardId AND (parent_card_id = $cardId
+          OR parent_card_id IN (SELECT c.id FROM cards c WHERE c.parent_card_id = $cardId AND c.bin_root_id = $cardId))`);
+      // Children first (they then carry the root), then their children.
+      let count = descendants.run({ deletedAt: deletedAt.toISOString(), userId, purgeAfter, cardId, boardId: board.id }).changes;
+      count += descendants.run({ deletedAt: deletedAt.toISOString(), userId, purgeAfter, cardId, boardId: board.id }).changes;
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(deletedAt.toISOString(), board.id);
-      audit(userId, null, "task.card_delete", { boardId: board.id, cardId });
+      audit(userId, null, "task.card_delete", { boardId: board.id, cardId, ...(count ? { descendantCount: count } : {}) });
+      return count;
     })();
-    return { ok: true as const, purgeAfter };
+    return { ok: true as const, purgeAfter, descendantCount };
   });
 }

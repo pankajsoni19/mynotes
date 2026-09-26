@@ -33,7 +33,10 @@ export function registerBinRoutes(app: Hono<AppEnv>) {
       switch (task.status) {
         case "restored":
         case "already_restored":
-          return c.json({ ok: true, ...(task.status === "already_restored" ? { alreadyRestored: true } : {}), boardId: task.boardId, boardName: task.boardName, columnId: task.columnId, columnName: task.columnName });
+          return c.json({
+            ok: true, ...(task.status === "already_restored" ? { alreadyRestored: true } : {}), boardId: task.boardId, boardName: task.boardName, columnId: task.columnId, columnName: task.columnName,
+            ...(task.descendantCount ? { descendantCount: task.descendantCount } : {}), ...(task.detached ? { detached: true } : {})
+          });
         case "board_in_bin":
           return c.json({ error: "Restore the board first", code: "BOARD_IN_BIN" }, 409);
         case "limit":
