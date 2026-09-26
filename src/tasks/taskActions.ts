@@ -202,3 +202,46 @@ export function committableDueDate(value: string, saved: string | null) {
   const date = new Date(Date.UTC(year, month - 1, day));
   return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? value : null;
 }
+
+/** WIP limits (D108): at most 1–1000 cards in a column, or no limit. */
+export const WIP_LIMIT_MAX = 1000;
+export type WipState = "under" | "full" | "over";
+
+/** Where a column stands against its limit, or null without one. */
+export function wipState(count: number, limit: number | null | undefined): WipState | null {
+  if (!limit) return null;
+  return count > limit ? "over" : count === limit ? "full" : "under";
+}
+
+/** The column's card count for screen readers: "4 of 3 cards, over the limit". */
+export function wipCountLabel(count: number, limit: number | null | undefined) {
+  const state = wipState(count, limit);
+  if (!state) return cardCountLabel(count);
+  const base = `${count} of ${limit} ${limit === 1 ? "card" : "cards"}`;
+  return state === "over" ? `${base}, over the limit` : state === "full" ? `${base}, at the limit` : base;
+}
+
+/**
+ * Whether a card may come into a column: always within its own column (reordering) and without a
+ * limit; otherwise only while the column holds fewer cards than its limit. The server decides (409
+ * COLUMN_FULL); this only refuses a drop or a key move early.
+ */
+export function canEnterColumn(cards: readonly { id: string; column_id: string }[], column: { id: string; wip_limit?: number | null }, cardId: string | null) {
+  if (!column.wip_limit) return true;
+  if (cardId && cards.some((card) => card.id === cardId && card.column_id === column.id)) return true;
+  return cards.filter((card) => card.column_id === column.id).length < column.wip_limit;
+}
+
+/** The message for a card refused by a full column. */
+export const columnFullMessage = (name: string, limit: number | null | undefined) =>
+  `“${name}” is full${limit ? ` (limit ${limit})` : ""}. Move a card out of it first.`;
+
+/** The WIP limit dialog's field: empty means no limit, otherwise a whole number from 1 to 1000. */
+export function validateWipLimit(input: string): { ok: true; value: number | null } | { ok: false; error: string } {
+  const value = input.trim();
+  if (!value) return { ok: true, value: null };
+  if (!/^\d+$/.test(value)) return { ok: false, error: "Enter a whole number of cards." };
+  const limit = Number(value);
+  if (limit < 1 || limit > WIP_LIMIT_MAX) return { ok: false, error: `Use a limit from 1 to ${WIP_LIMIT_MAX}.` };
+  return { ok: true, value: limit };
+}

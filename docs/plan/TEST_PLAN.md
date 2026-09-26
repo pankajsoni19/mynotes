@@ -410,12 +410,14 @@ Plan of record: [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §4.3, §4.4 
 - [x] `tests/tasksCardFields.test.tsx` (due time): a timed chip uses the viewer's local day and time of `due_at` ("Today 17:00"), turns overdue exactly at the instant, and shows "Tomorrow" the day before; a card due 23:30 at UTC+14 is "Today 21:30" the day before for a UTC−12 viewer; date-only cards keep the date chip; the time field saves only a complete, changed `HH:MM` (a changed zone counts, `:00` seconds are dropped, `24:00` and `9:05` are not); the zone note appears only when the card's zone differs from the viewer's, with the day when it differs.
 - [x] `tests/tasksCardFields.test.tsx` (fields): `CardFields` shows no time control without a date, **Add time** after a date, and the time input with **Remove time** for a timed card; the assignee picker is a multiple `Combobox` bound to its label, with "Remove <name>" chips and "(no access)" for `can_read: 0`; no native select; lane cards read "Assigned to Ann and Bo" and show "+1", and a timed chip.
 - [x] `tests/noNativeSelect.test.ts`: the allowlist is empty now that the card dialog uses `Combobox`.
+- [x] `tests/tasksWip.test.tsx` (WIP, D108): under, at, and over the limit, with "2 of 3 cards", "…, at the limit", and "…, over the limit" labels; a full column refuses cards from other columns and new cards but not reordering within it; the limit field takes empty (no limit) or 1–1000 and refuses 0, 1001, fractions, negatives, and text; the header shows `n / limit` with the full and over styles and a refused drop shows the hint; **Move to…** disables a full column (labelled "Full (limit N)") and keeps the card's own column; the limit dialog offers **Remove limit** only when one is set and warns when the new limit is below the count.
 
 Manual QA (headless Chrome at 1280×800 and 390×844, two throwaway accounts sharing a board):
 
 - [ ] Both people are assigned through the picker (type to search), the chips save when the list closes, and a chip's ✕ saves at once; the lane card shows the first name and "+1".
 - [ ] A due date, then **Add time**, saves a time; the lane chip and the card show it; **Remove time** clears it.
 - [ ] The desktop popup opens right under the assignee field inside the card dialog (no transform offset); on the phone it is a bottom sheet, and Back closes only the sheet, then the card.
+- [ ] The owner sets a WIP limit of 1 from the column menu; the header shows "1 / 1"; the member sees it and has no column menu; adding a second card there, dragging one in, **Move to…**, and Alt+→ are all refused with the message, while reordering and moving out work; Back closes the limit dialog.
 
 ## Wave 13F: Modules
 

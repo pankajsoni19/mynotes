@@ -227,3 +227,10 @@
 .task-add-time svg { width: 14px; }
 .task-assignee-picker { display: grid; gap: 6px; min-width: 0; }
 .task-card-more-people { color: #a8a8ae; font-weight: 600; }
+
+/* WIP limits (D108): the header count reads "n / limit"; full is amber, over the limit red. */
+.task-column-header b.task-wip, .task-column-tabs b.task-wip { white-space: nowrap; }
+.task-column-header b.task-wip.full, .task-column-tabs b.task-wip.full { background: #332a17; color: #f0d591; }
+.task-column-header b.task-wip.over, .task-column-tabs b.task-wip.over { background: #3a1d1a; color: #ffb4a8; }
+.task-column.drop-refused { border-color: #6a3039; border-style: dashed; }
+.task-column-full-hint { flex: none; margin: 0 8px 6px; border-radius: 8px; padding: 6px 8px; background: #1f1416; color: #f3c2c9; font-size: .76rem; }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
@@ -13,7 +13,8 @@ import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute } from "../router";
 import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
-import { cardCountLabel, validateBoardName, validateColumnName } from "./taskActions";
+import { canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
+import { WipLimitDialog } from "./WipLimitDialog";
 import {
   createCard,
   createColumn,
@@ -49,7 +50,7 @@ type BoardViewProps = {
 
 type BoardDialog =
   | { kind: "rename" | "share" | "addColumn" | "deleteBoard" }
-  | { kind: "columnMenu" | "renameColumn" | "deleteColumn"; columnId: string }
+  | { kind: "columnMenu" | "renameColumn" | "deleteColumn" | "wipLimit"; columnId: string }
   | { kind: "moveCard"; cardId: string };
 
 export const MAX_COLUMNS = 20;
@@ -204,10 +205,30 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       setAnnouncement(`Moved to ${place}`);
     } catch (reason) {
       setCards(() => before);
-      if (taskErrorCode(reason) === "STALE_POSITION") notify("The board changed while you moved that card. Showing the latest order.");
+      const code = taskErrorCode(reason);
+      if (code === "STALE_POSITION") notify("The board changed while you moved that card. Showing the latest order.");
+      else if (code === "COLUMN_FULL") notify(fullMessage(reason, columnId));
       else notify(taskErrorMessage(reason, "Could not move the card"));
       void load();
     }
+  }
+
+  /** The 409 COLUMN_FULL copy, with the limit the server reported (D108). */
+  function fullMessage(reason: unknown, columnId: string) {
+    const column = detailRef.current?.columns.find((item) => item.id === columnId);
+    const payload = reason instanceof ApiError && reason.payload && typeof reason.payload === "object" ? reason.payload as { wipLimit?: unknown } : {};
+    return columnFullMessage(column?.name ?? "This column", typeof payload.wipLimit === "number" ? payload.wipLimit : column?.wip_limit);
+  }
+
+  /** Refuses a move into a full column before asking the server, which would say 409 COLUMN_FULL. */
+  function refuseFull(cardId: string, columnId: string) {
+    const current = detailRef.current;
+    const column = current?.columns.find((item) => item.id === columnId);
+    if (!current || !column || canEnterColumn(current.cards, column, cardId)) return false;
+    const message = columnFullMessage(column.name, column.wip_limit);
+    notify(message);
+    setAnnouncement(message);
+    return true;
   }
 
   function dropAt(columnId: string, payload: string | null, index: number) {
@@ -217,6 +238,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     const current = detailRef.current;
     // Only cards of this board; a foreign or malformed payload is ignored.
     if (!cardId || !current?.cards.some((card) => card.id === cardId)) return;
+    if (refuseFull(cardId, columnId)) return;
     void move(cardId, columnId, afterCardIdAt(columnCards(current.cards, columnId), index, cardId));
   }
 
@@ -224,12 +246,20 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     const current = detailRef.current;
     if (!current) return;
     const target = keyboardMoveTarget(current.cards, current.columns, card.id, key);
-    if (!target) return;
+    if (!target || refuseFull(card.id, target.columnId)) return;
     void move(card.id, target.columnId, target.afterCardId, { focus: true });
   }
 
   async function addCard(columnId: string, title: string) {
-    const { card } = await createCard(boardId, columnId, title);
+    let card: CardSummary;
+    try {
+      ({ card } = await createCard(boardId, columnId, title));
+    } catch (reason) {
+      if (taskErrorCode(reason) !== "COLUMN_FULL") throw reason;
+      // Someone may have filled it meanwhile: show the latest counts.
+      void load();
+      throw new Error(fullMessage(reason, columnId));
+    }
     setDetail((current) => current ? { ...current, cards: [...current.cards, card], board: { ...current.board, card_count: current.board.card_count + 1 } } : current);
   }
 
@@ -263,6 +293,14 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     } catch (reason) {
       notify(taskErrorMessage(reason, "Could not change the column"));
     }
+  }
+
+  async function setWipLimit(columnId: string, wipLimit: number | null) {
+    const { columns: saved } = await updateColumn(columnId, { wipLimit });
+    setDetail((current) => current ? { ...current, columns: saved } : current);
+    closeDialog();
+    const name = saved.find((column) => column.id === columnId)?.name ?? "this column";
+    notify(wipLimit === null ? `Removed the limit on ${name}` : `${name} takes at most ${cardCountLabel(wipLimit)}`);
   }
 
   async function moveColumn(columnId: string, direction: -1 | 1) {
@@ -361,9 +399,13 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     </div>}
     {!loadError && !detail && <p className="bin-loading task-board-state" role="status">Loading the board…</p>}
     {detail && <nav className="task-column-tabs" aria-label="Columns">
-      {columns.map((column, index) => <button key={column.id} id={`task-tab-${column.id}`} className={index === shownColumn ? "active" : ""} aria-current={index === shownColumn ? "true" : undefined} onClick={() => showColumn(index)}>
-        <span>{column.name}</span><b>{columnCards(cards, column.id).length}</b>
-      </button>)}
+      {columns.map((column, index) => {
+        const count = columnCards(cards, column.id).length;
+        const wip = wipState(count, column.wip_limit);
+        return <button key={column.id} id={`task-tab-${column.id}`} className={index === shownColumn ? "active" : ""} aria-current={index === shownColumn ? "true" : undefined} onClick={() => showColumn(index)}>
+          <span>{column.name}</span><b className={wip ? `task-wip ${wip}` : undefined} aria-label={wipCountLabel(count, column.wip_limit)}>{wip ? `${count} / ${column.wip_limit}` : count}</b>
+        </button>;
+      })}
       {owner && columns.length < MAX_COLUMNS && <button className="task-tab-add" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Add column"><Plus /></button>}
     </nav>}
     {detail && <div className="task-columns" ref={trackRef} onScroll={onTrackScroll}>
@@ -376,6 +418,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         isLast={index === columns.length - 1}
         draggingId={draggingId}
         dropIndex={dropTarget?.columnId === column.id ? dropTarget.index : null}
+        refuseDrop={draggingId !== null && !canEnterColumn(cards, column, draggingId)}
         onDragStart={(card) => setDraggingId(card.id)}
         onDragEnd={() => { setDraggingId(null); setDropTarget(null); }}
         onDragOverIndex={(slot) => setDropTarget((current) => slot === null
@@ -434,11 +477,14 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       <div className="move-list task-menu">
         <button className="move-option" autoFocus onClick={() => setDialog({ kind: "renameColumn", columnId: dialogColumn.id })}><Pencil aria-hidden="true" /><span>Rename</span></button>
         <button className="move-option" aria-pressed={dialogColumn.is_done === 1} onClick={() => { void setColumnDone(dialogColumn.id, dialogColumn.is_done !== 1); }}><CircleCheck aria-hidden="true" /><span>{dialogColumn.is_done === 1 ? "Done column (on)" : "Mark as a done column"}<small>Cards here are left out of Today and show no due date</small></span></button>
+        <button className="move-option" onClick={() => setDialog({ kind: "wipLimit", columnId: dialogColumn.id })}><Gauge aria-hidden="true" /><span>{dialogColumn.wip_limit ? `WIP limit: ${dialogColumn.wip_limit}` : "Set WIP limit…"}<small>{dialogColumn.wip_limit ? "Change or remove the most cards it holds" : "Stop cards coming in once it holds this many"}</small></span></button>
         <button className="move-option" disabled={columns[0]?.id === dialogColumn.id} onClick={() => { closeDialog(); void moveColumn(dialogColumn.id, -1); }}><ArrowLeft aria-hidden="true" /><span>Move left</span></button>
         <button className="move-option" disabled={columns[columns.length - 1]?.id === dialogColumn.id} onClick={() => { closeDialog(); void moveColumn(dialogColumn.id, 1); }}><ArrowRight aria-hidden="true" /><span>Move right</span></button>
         <button className="move-option danger" disabled={columns.length <= 1} onClick={() => setDialog({ kind: "deleteColumn", columnId: dialogColumn.id })}><Trash2 aria-hidden="true" /><span>Delete column{columns.length <= 1 && <small>A board needs at least one column</small>}</span></button>
       </div>
     </ModalDialog>}
+    {dialog?.kind === "wipLimit" && dialogColumn && <WipLimitDialog columnName={dialogColumn.name} limit={dialogColumn.wip_limit ?? null} count={columnCards(cards, dialogColumn.id).length}
+      onSubmit={(limit) => setWipLimit(dialogColumn.id, limit)} onCancel={closeDialog} />}
     {dialog?.kind === "renameColumn" && dialogColumn && <NameDialog title="Rename column" eyebrow="Column" label="Column name" initialValue={dialogColumn.name} submitLabel="Rename" hint="Up to 60 characters." validate={(value) => validateColumnName(value, dialogColumn.name)} onSubmit={(name) => renameColumn(dialogColumn.id, name)} onCancel={closeDialog} />}
     {dialog?.kind === "deleteColumn" && dialogColumn && <ConfirmDialog
       title="Delete this column?"
@@ -452,7 +498,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}
-    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} onCancel={closeDialog} onMove={async (columnId, place) => {
+    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} onMove={async (columnId, place) => {
       const current = detailRef.current;
       setDialog(null);
       returnFocusRef.current = null;
