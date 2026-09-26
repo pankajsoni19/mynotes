@@ -446,6 +446,14 @@ Manual QA (headless Chrome over CDP at 1280×800 and 390×844 with touch, a scra
 - [x] As the member with the browser zone overridden to Europe/Berlin: a card set to 17:30 in Asia/Calcutta shows "5 Mar 2027 13:00" on the lane and "Set as 17:30 Asia/Calcutta (13:00 your time). Changing the time uses your zone (Europe/Berlin)." in the card; **Remove time** keeps the date, clears the time and zone, and offers **Add time** again.
 - [ ] Not checked in the browser: a "(no access)" chip after unsharing (covered by the render test), and a real pointer drag (synthetic drag events only).
 
+## Wave 13C: tag and flag pickers and the lane card face (UI)
+
+Plan of record: [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §4.3, §4.4, §7. Rendered with `react-dom/server`, as 13A and 13B.
+
+- [x] `tests/tasksTagPicker.test.tsx` (helpers): flags toggle in the fixed order; a card's tags resolve in tagging order and skip ids the board no longer has; tag names are 1–40 characters without controls or bidi overrides; the board keeps tags in name order on create and rename; a deleted tag leaves the board and every lane card; a saved card updates its lane card (title, excerpt, tags, flags, revision) but keeps the board's column, and moves each tag's `card_count`; an older payload without the Wave 13 fields keeps the lane card's.
+- [x] `tests/tasksTagPicker.test.tsx` (pickers): the tag picker is a multiple `Combobox` bound to its label, with coloured "Remove <name>" chips in tagging order and no stale ids; only the owner sees **Manage tags…**; the 10-tag cap says so; flags are four `aria-pressed` toggles in a labelled group; the manage dialog lists each tag's colour `Select`, name field (40 characters), card count, and Delete, and says when there are none; `CardFields` adds Tags only with the board's tags; no native select.
+- [x] `tests/tasksTagPicker.test.tsx` (history, D69): with the card's guard, Manage tags, and a colour sheet registered, Back closes the sheet, then Manage tags, and only then reaches the card.
+
 
 ## Wave 13F: Modules
 

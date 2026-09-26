@@ -8,6 +8,7 @@ import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import { CardFields } from "./CardFields";
+import type { TagChange } from "./cardTags";
 import {
   createCommentWithFiles,
   deleteComment,
@@ -23,6 +24,7 @@ import {
   updateCard,
   updateComment,
   type BoardColumn,
+  type BoardTag,
   type CardChange,
   type CardComment,
   type CardDetail
@@ -44,6 +46,9 @@ type CardDialogProps = {
   /** Moves the card to the Bin (the dialog confirms first) and closes it. */
   onDelete: (cardId: string) => Promise<void>;
   notify: (message: string) => void;
+  /** The board's tags for the Tags field, and how the board hears of a tag change (13C). */
+  tags?: BoardTag[];
+  onTagsChange?: (change: TagChange) => void;
 };
 
 const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -56,7 +61,7 @@ const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.pa
  * The description is Markdown shown through the notes renderer read-only (D44) and edited with
  * an explicit Save; a revision conflict offers Reload or Copy my text.
  */
-export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify }: CardDialogProps) {
+export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify, tags, onTagsChange }: CardDialogProps) {
   const [card, setCard] = useState<CardDetail | null>(null);
   const [comments, setComments] = useState<CardComment[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -176,7 +181,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
   // The fields (due date and time, assignees) save when committed. On CARD_CHANGED the card
   // reloads to the current version and says so, as the title does, instead of overwriting someone
   // else's change.
-  async function saveDetails(change: Pick<CardChange, "dueOn" | "dueTime" | "dueTz" | "assigneeIds">, success: string) {
+  async function saveDetails(change: Omit<CardChange, "title" | "description">, success: string) {
     const current = cardRef.current;
     if (!current) return false;
     setSavingDetails(true);
@@ -461,7 +466,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
         {card && <>
           <p className="task-card-byline">{card.creator_name ? `Added by ${card.creator_name}` : "Added"} · <time dateTime={card.created_at}>{relativeTime(card.created_at)}</time>{card.updated_at !== card.created_at && <> · Updated <time dateTime={card.updated_at}>{relativeTime(card.updated_at)}</time></>}</p>
 
-          <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} />
+          <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} tags={tags} owner={boardOwner} onTagsChange={onTagsChange} />
           {detailsConflict && <p className="file-dialog-error" role="alert">{detailsConflict}</p>}
 
           <section className="task-card-section" aria-labelledby={`${titleId}-description`}>

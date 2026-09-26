@@ -1,5 +1,6 @@
 import { api, ApiError, getCsrfToken } from "../api";
 import { uploadErrorMessage } from "../files/filesApi";
+import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -25,6 +26,15 @@ export type BoardColumn = { id: string; board_id: string; name: string; position
 /** An assignee (D102). `can_read` 0: they lost access to the board ("Former member"); they can only be removed. */
 export type CardAssignee = { id: string; display_name: string; can_read: 0 | 1 };
 
+/** The Collections option palette (D109); `gray` is the default. */
+export const TAG_COLORS = ["gray", "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"] as const;
+export type TagColor = typeof TAG_COLORS[number];
+/** A board's tag (D109). `card_count`: live cards carrying it. */
+export type BoardTag = { id: string; board_id: string; name: string; color: TagColor; card_count: number };
+/** The fixed flag set, in display order (D110). */
+export const CARD_FLAGS = TASK_FLAGS;
+export type CardFlag = TaskFlag;
+
 export type CardSummary = {
   id: string;
   board_id: string;
@@ -47,13 +57,23 @@ export type CardSummary = {
   /** Deprecated (D103): the first assignee. */
   assignee_id: string | null;
   assignee_name: string | null;
+  /** Plain text of the description, at most 160 characters, '' without one (D111). */
+  description_excerpt?: string;
+  /** Tags of this board in tagging order, at most 10; resolve against the board's `tags` (D109). */
+  tag_ids?: string[];
+  /** In the fixed order of `CARD_FLAGS` (D110). */
+  flags?: CardFlag[];
+  /** Relations this viewer sees, and readable open `depends_on` cards (13D; the board payload only). */
+  relation_count?: number;
+  open_blockers?: number;
   comment_count: number;
   attachment_count: number;
   created_at: string;
   updated_at: string;
 };
 
-export type BoardDetail = { board: BoardSummary; columns: BoardColumn[]; cards: CardSummary[] };
+/** `tags` (Wave 13) are by name. */
+export type BoardDetail = { board: BoardSummary; columns: BoardColumn[]; cards: CardSummary[]; tags?: BoardTag[] };
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 
@@ -111,9 +131,16 @@ export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}
  * A card edit. `dueTime` comes with `dueTz` (the setter's browser zone, D101); `dueTime: null` clears
  * the time, and `dueOn: null` clears both. `assigneeIds` replaces the whole set (`[]` clears it).
  */
-export type CardChange = { title?: string; description?: string; dueOn?: string | null; dueTime?: string | null; dueTz?: string; assigneeIds?: string[] };
+export type CardChange = { title?: string; description?: string; dueOn?: string | null; dueTime?: string | null; dueTz?: string; assigneeIds?: string[]; tagIds?: string[]; flags?: CardFlag[] };
 export const updateCard = (cardId: string, change: CardChange & { revision: number }) =>
   api<{ card: CardDetail }>(`/tasks/cards/${cardId}`, json("PATCH", change));
+/** Any reader creates a tag; 409 `TAG_EXISTS` carries the existing one (D109). */
+export const createTag = (boardId: string, name: string, color?: TagColor) =>
+  api<{ tag: BoardTag }>(`/tasks/boards/${boardId}/tags`, json("POST", color ? { name, color } : { name }));
+/** Owner only: rename or recolour. */
+export const updateTag = (tagId: string, change: { name?: string; color?: TagColor }) => api<{ tag: BoardTag }>(`/tasks/tags/${tagId}`, json("PATCH", change));
+/** Owner only: deletes the tag and unlinks it from every card, with no Bin. */
+export const deleteTag = (tagId: string) => api<{ ok: true; removedFrom: number }>(`/tasks/tags/${tagId}`, json("DELETE", {}));
 export const listComments = (cardId: string, before: string) =>
   api<{ comments: CardComment[]; hasMore: boolean }>(`/tasks/cards/${cardId}/comments?before=${encodeURIComponent(before)}`);
 export const createComment = (cardId: string, body: string) => api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", { body }));
