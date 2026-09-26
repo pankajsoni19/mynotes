@@ -5,6 +5,8 @@ import { parseJson, uuid } from "../validation";
 import { MAX_ASSIGNEES } from "./assignees";
 import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
+import { getBoardWithRelationCounts, listRelations } from "./cardRelations";
+import { registerCardRelationRoutes } from "./relationRoutes";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
   createBoard,
@@ -16,7 +18,6 @@ import {
   patchCard,
   deleteBoard,
   deleteColumn,
-  getBoard,
   getSharing,
   listBoardReaders,
   listBoards,
@@ -142,6 +143,9 @@ async function respond(c: Context<AppEnv>, operation: () => unknown, status: 200
 
 /** docs/plan/API_CONTRACTS.md § Tasks. JSON only; the global session, Origin, CSRF, and TOTP middleware apply. */
 export function registerTaskRoutes(app: Hono<AppEnv>) {
+  // First, so GET /cards/search is not taken for a card id.
+  registerCardRelationRoutes(app);
+
   app.get("/api/tasks/boards", (c) => c.json({ boards: listBoards(c.get("user").id) }));
 
   app.post("/api/tasks/boards", async (c) => {
@@ -151,7 +155,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
 
   app.get("/api/tasks/boards/:boardId", (c) => {
     const boardId = id(c, "boardId");
-    return respond(c, () => getBoard(c.get("user").id, boardId));
+    return respond(c, () => getBoardWithRelationCounts(c.get("user").id, boardId));
   });
 
   app.patch("/api/tasks/boards/:boardId", async (c) => {
@@ -223,7 +227,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     return respond(c, () => {
       const { card } = getCard(userId, cardId);
       const page = listComments(userId, cardId);
-      return { card, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId) };
+      return { card, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
     });
   });
 
