@@ -123,6 +123,8 @@ export type BoardTemplate = {
   structure: BoardStructure;
   /** Board tags the template adds (name, palette colour). */
   tags?: Array<{ name: string; color: "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "gray" }>;
+  /** A planned first sprint of two weeks from today, by this name (17B, the Scrum template). */
+  firstSprint?: string;
 };
 
 const col = (name: string, state: TemplateColumn["state"]): TemplateColumn => ({ name, state });
@@ -134,7 +136,8 @@ export const TEMPLATES: Record<BoardTemplateId, BoardTemplate> = {
   scrum: {
     id: "scrum", label: "Scrum sprint board", description: "Backlog to Done, with tasks and subtasks planned in sprints.",
     columns: [col("Backlog", "todo"), col("To do", "todo"), col("In progress", "doing"), col("Review", "doing"), col("Done", "done")],
-    structure: PRESETS.sprint_task_subtask.structure
+    structure: PRESETS.sprint_task_subtask.structure,
+    firstSprint: "Sprint 1"
   },
   epics: { id: "epics", label: "Epic › Story › Subtask", description: "Stories on the board, grouped under epics.", columns: [col("To do", "todo"), col("In progress", "doing"), col("Done", "done")], structure: PRESETS.epic_story_subtask.structure },
   triage: {

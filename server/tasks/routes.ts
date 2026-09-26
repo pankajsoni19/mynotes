@@ -112,6 +112,8 @@ export const cardCreateSchema = z.object({
   /** A live card of this board one level up (D121). */
   parentId: uuid.nullable().optional(),
   level: levelSchema.optional(),
+  /** A planned or active sprint of this board (17B); work-level cards only. */
+  sprintId: uuid.nullable().optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
 export const cardPatchSchema = z.object({
@@ -129,13 +131,15 @@ export const cardPatchSchema = z.object({
   parentId: uuid.nullable().optional(),
   /** Change level (D128); 409 HAS_CHILDREN while the card has live children. */
   level: levelSchema.optional(),
+  /** Plan the card in a sprint of its board, or null for the backlog (17B); work-level cards only. */
+  sprintId: uuid.nullable().optional(),
   revision: z.number().int().positive()
 }).strict()
   .refine((value) => value.assigneeId === undefined || value.assigneeIds === undefined, "Send assigneeIds or the legacy assigneeId, not both")
   .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.dueTime !== undefined
     || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined
-    || value.parentId !== undefined || value.level !== undefined,
-  "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, flags, parentId, or level");
+    || value.parentId !== undefined || value.level !== undefined || value.sprintId !== undefined,
+  "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, flags, parentId, level, or sprintId");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
 export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();

@@ -542,6 +542,38 @@ type BoardStructure = {
 
 Audit: `task.board_structure { boardId, levels, workLevel, sprints }` (counts only, no names).
 
+### Sprints (sub-wave 17B, D124, D131, D132, D135, T118)
+
+A sprint is its own entity (`board_sprints`, migration 019), never a card level. A board with `structure.sprints` has any number of sprints; **at most one is active** (a partial unique index). Only **work-level** cards store a sprint; a card below the work level has its parent's sprint (derived on every read, never stored), and a card above it has none. Sprint management is **owner-only** (D132); any reader plans cards into sprints, since that is a card field.
+
+```ts
+type SprintSummary = {
+  id; board_id; name: string /* 1–60 */; goal: string /* ≤ 500 */;
+  start_on: string | null; end_on: string | null;            // YYYY-MM-DD, start ≤ end
+  state: "planned" | "active" | "completed";                  // stored as planned/active/closed
+  is_active: boolean; position: number; completed_at: string | null;
+  card_count: number; done_count: number;                     // live cards stored in it (work level), and those in a done column
+  created_at; updated_at;
+};
+type CardSummary = /* … */ & { sprint_id: string | null };   // stored (work level) or inherited (below), null above and in the backlog
+```
+
+`GET /boards/:b` adds `sprints: SprintSummary[]`: every open sprint (the active one first, then planned by position) plus the five latest completed ones (`[]` on a board that never had sprints).
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /boards/:b/sprints?state=&cursor=&limit=` | reader | 200 `{ sprints, nextCursor }`. Without `state`: every open sprint, then completed ones newest first, paged (`limit` 1–100, default 20). `state=planned\|active\|completed` narrows it; `cursor` continues the completed pages. | 400 (`state`, `limit`, `CURSOR_INVALID`), 404 |
+| `POST /boards/:b/sprints { name, goal?, startOn?, endOn? }` | owner | 201 `{ sprint }`, planned, at the end | 400, 403, 404, 409 `SPRINTS_OFF` (the board plans no sprints), 409 `LIMIT_REACHED` (50 planned or active) |
+| `PATCH /sprints/:s { name?, goal?, startOn?, endOn?, afterSprintId?, state?: "active" }` | owner | 200 `{ sprint }`. `afterSprintId` (null = first) reorders an open sprint; `state: "active"` starts a planned sprint | 400 (end before start, anything but `active`), 403, 404, 409 `SPRINT_ACTIVE { activeSprintId }`, 409 `SPRINT_COMPLETED` |
+| `DELETE /sprints/:s` | owner | 200 `{ ok }`; only a planned sprint no live card is planned in (binned cards in it fall back to no sprint) | 403, 404, 409 `SPRINT_NOT_PLANNED`, 409 `SPRINT_NOT_EMPTY { cardCount }` |
+| `POST /boards/:b/cards` | reader | adds `sprintId?: uuid \| null` | 400 `SPRINTS_OFF`, 400 `SPRINT_LEVEL` (below or above the work level), 404 (a sprint of another board or unknown), 409 `SPRINT_COMPLETED` |
+| `PATCH /cards/:k` | reader | adds `sprintId?: uuid \| null` under the revision CAS (`revision + 1`); `null` puts the card in the backlog. A "Change level" away from the work level clears the stored sprint. | as above, plus 409 `CARD_CHANGED` |
+
+- A sprint id is joined to its board: a sprint of a board the caller cannot read is 404, whatever the action.
+- `PATCH /boards/:b` refuses `sprints: false` while sprints are open, and a work-level change while cards carry a sprint (409 `SPRINTS_IN_USE`, § Board structure).
+- The **Scrum sprint board** template (`POST /boards { template: "scrum" }`) also creates a planned "Sprint 1" from today (UTC) for two weeks.
+- **Audit** (ids only): `task.sprint_create { boardId, sprintId }`, `task.sprint_update { boardId, sprintId, fields }`, `task.sprint_start`, `task.sprint_delete`; `task.card_create` and `task.card_update` add `sprintId` when it is set or changes.
+
 ### Filter grammar (sub-wave 17C, D137, D140–D145)
 
 One grammar for the board filter bar (13E), cross-board queries, saved views, URLs, and MCP. It lives in `shared/taskQuery.ts`, a pure module that the server and the client both import (research 2026-09-26 §10.3, Q10). A query is terms separated by spaces: **terms AND together**, the **values of one term OR together**, and a leading `-` negates a term.

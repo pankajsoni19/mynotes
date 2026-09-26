@@ -11,6 +11,8 @@ import { descriptionExcerpt } from "./excerpt";
 import type { RelationType } from "./relations";
 import { boardStructure, liveChildCount, parentRow, rollupFor, rollupsForBoard, type Rollup } from "./hierarchy";
 import { HIERARCHY_LIMITS, parseStructure, TEMPLATES, type BoardStructure, type BoardTemplateId } from "../../shared/boardStructure";
+import { boardSprints, EFFECTIVE_SPRINT_SQL, sprintOfBoard } from "./sprintData";
+import { addSprintDays, SPRINT_DEFAULT_DAYS } from "../../shared/sprintPlan";
 import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
 
 /**
@@ -129,6 +131,11 @@ export type CardSummary = {
   /** Live direct children, and those in a done column (D125, D134). */
   child_count: number;
   done_child_count: number;
+  /**
+   * The card's sprint (17B, D124): stored on work-level cards, inherited from the parent below the
+   * work level, null above it and in the backlog.
+   */
+  sprint_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -140,7 +147,7 @@ const cardSelect = (extraColumns = "") => `
          k.due_on, k.due_time, k.due_tz,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
-         k.parent_card_id, k.level,
+         k.parent_card_id, k.level, ${EFFECTIVE_SPRINT_SQL} AS sprint_id,
          k.created_at, k.updated_at${extraColumns}
   FROM cards k LEFT JOIN users cu ON cu.id = k.created_by
 `;
@@ -185,7 +192,8 @@ export function listCards(boardId: string): CardSummary[] {
 
 export function getBoard(userId: string, boardId: string) {
   requireReadableBoard(boardId, userId);
-  return { board: boardSummary(boardId, userId)!, columns: listColumns(boardId), cards: listCards(boardId), tags: listBoardTags(boardId) };
+  // Open sprints and the latest completed ones (17B, §6.1); empty on a board that never had sprints.
+  return { board: boardSummary(boardId, userId)!, columns: listColumns(boardId), cards: listCards(boardId), tags: listBoardTags(boardId), sprints: boardSprints(boardId) };
 }
 
 /** The board if the caller can read it, else 404. */
@@ -219,6 +227,12 @@ export function createBoard(userId: string, name: string, templateId: BoardTempl
     });
     const insertTag = db.query("INSERT INTO board_tags (id, board_id, name, color, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
     for (const tag of template.tags ?? []) insertTag.run(crypto.randomUUID(), id, tag.name, tag.color, userId, timestamp, timestamp);
+    // The Scrum template starts with a planned first sprint of two weeks from today (UTC, §7.4).
+    if (template.firstSprint) {
+      const startOn = timestamp.slice(0, 10);
+      db.query("INSERT INTO board_sprints (id, board_id, name, start_on, end_on, state, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'planned', 1024, ?, ?, ?)")
+        .run(crypto.randomUUID(), id, template.firstSprint, startOn, addSprintDays(startOn, SPRINT_DEFAULT_DAYS - 1), userId, timestamp, timestamp);
+    }
     audit(userId, null, "task.board_create", { boardId: id, ...(templateId !== "kanban" ? { template: templateId } : {}) });
     return { board: boardSummary(id, userId)!, columns: listColumns(id) };
   })();
@@ -319,7 +333,7 @@ export async function putSharing(userId: string, boardId: string, visibility: Bo
   });
 }
 
-export function applyRenumber(table: "board_columns" | "cards" | "task_views", renumbered: Positioned[] | null) {
+export function applyRenumber(table: "board_columns" | "cards" | "task_views" | "board_sprints", renumbered: Positioned[] | null) {
   if (!renumbered) return false;
   const statement = db.query(`UPDATE ${table} SET position = ? WHERE id = ?`);
   for (const item of renumbered) statement.run(item.position, item.id);
@@ -502,7 +516,28 @@ export type CardCreateInput = {
   parentId?: string | null;
   /** 0–2 and below the board's level count; defaults to the parent's level plus one, else the work level (D122). */
   level?: number;
+  /** A planned or active sprint of this board (17B, D124); only on a work-level card of a board with sprints on. */
+  sprintId?: string | null;
 };
+
+/**
+ * The sprint a card will store (17B, D124, D132): null, or a planned or active sprint of this board
+ * for a work-level card on a board with sprints on. Below the work level a card inherits its
+ * parent's sprint, so it stores none: 400 SPRINT_LEVEL. A sprint of another board is 404 like a
+ * missing one; a completed sprint is 409 SPRINT_COMPLETED.
+ */
+function resolveSprint(boardId: string, structure: BoardStructure, level: number, sprintId: string | null) {
+  if (sprintId === null) return null;
+  if (!structure.sprints) throw new TaskError(400, "Turn sprints on in Board settings first", "SPRINTS_OFF");
+  if (level !== structure.workLevel) {
+    const work = structure.levels[structure.workLevel]?.plural ?? "Cards";
+    throw new TaskError(400, `Only ${work.toLowerCase()} are planned in sprints; the others follow their parent`, "SPRINT_LEVEL");
+  }
+  const sprint = sprintOfBoard(sprintId.toLowerCase(), boardId);
+  if (!sprint) throw new TaskError(404, "Sprint not found");
+  if (sprint.state === "closed") throw new TaskError(409, "This sprint is completed", "SPRINT_COMPLETED", { sprintId: sprint.id });
+  return sprint.id;
+}
 
 /**
  * Every invalid parent gets the same 400 PARENT_INVALID, whether it is unknown, on another board,
@@ -556,6 +591,7 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     const attachmentIds = input.attachmentIds === undefined ? [] : [...new Set(input.attachmentIds.map((documentId) => documentId.toLowerCase()))];
     const placement = resolvePlacement(boardId, { parentId: input.parentId ? input.parentId.toLowerCase() : null, level: input.level });
     if (placement.parentId) requireChildRoom(placement.parentId);
+    const sprintId = resolveSprint(boardId, placement.structure, placement.level, input.sprintId ?? null);
     const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
     if (!plan) throw stalePosition(input.columnId);
     const id = crypto.randomUUID();
@@ -563,10 +599,10 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
       applyRenumber("cards", plan.renumbered);
       const timestamp = now();
       const description = input.description ?? "";
-      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, description_excerpt, due_on, due_time, due_tz, parent_card_id, level, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, description_excerpt, due_on, due_time, due_tz, parent_card_id, level, sprint_id, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(id, boardId, input.columnId, plan.position, input.title, description, descriptionExcerpt(description), due.due_on, due.due_time, due.due_tz,
-          placement.parentId, placement.level, userId, timestamp, timestamp);
+          placement.parentId, placement.level, sprintId, userId, timestamp, timestamp);
       if (assignees?.length) replaceAssignees(id, assignees, userId, timestamp);
       if (tagIds?.length) replaceCardTags(id, tagIds, timestamp);
       if (input.flags?.length) replaceCardFlags(id, input.flags, timestamp);
@@ -577,7 +613,8 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
         ...(tagIds?.length ? { tagsAdded: tagIds.length } : {}),
         ...(input.flags?.length ? { flags: input.flags } : {}),
         ...(placement.parentId ? { parentId: placement.parentId } : {}),
-        ...(placement.level !== 0 ? { level: placement.level } : {})
+        ...(placement.level !== 0 ? { level: placement.level } : {}),
+        ...(sprintId ? { sprintId } : {})
       });
       // Same checks as POST /cards/:k/relations: the target must be readable (404 like a missing id), one per pair, 50 per card.
       for (const relation of input.relations ?? []) {
@@ -623,6 +660,8 @@ export type CardPatchInput = {
   parentId?: string | null;
   /** "Change level" (D128): refused with 409 HAS_CHILDREN while the card has live children. */
   level?: number;
+  /** Plan the card in a sprint of its board, or null for the backlog (17B); work-level cards only. */
+  sprintId?: string | null;
   revision: number;
 };
 
@@ -706,7 +745,7 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
     const tagIds = input.tagIds === undefined ? undefined : requireCardTags(board.id, input.tagIds);
     const setDue = input.dueOn !== undefined || input.dueTime !== undefined || input.dueTz !== undefined;
     const due = setDue ? requireDue(card, input) : null;
-    const current = db.query("SELECT parent_card_id, level FROM cards WHERE id = ?").get(cardId) as { parent_card_id: string | null; level: number };
+    const current = db.query("SELECT parent_card_id, level, sprint_id FROM cards WHERE id = ?").get(cardId) as { parent_card_id: string | null; level: number; sprint_id: string | null };
     const hierarchyChange = input.parentId !== undefined || input.level !== undefined;
     // A card with children keeps its level, whatever else the change says (D128).
     if (input.level !== undefined && input.level !== current.level) {
@@ -731,6 +770,13 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
       }
     }
     if (reparented && placement.parentId) requireChildRoom(placement.parentId);
+    // The stored sprint (17B): set when asked (work level only), and cleared when the card leaves the work level.
+    const structure = placement?.structure ?? boardStructure(board.id);
+    const finalLevel = placement?.level ?? current.level;
+    const sprint = input.sprintId !== undefined
+      ? { set: true, id: resolveSprint(board.id, structure, finalLevel, input.sprintId) }
+      : releveled && current.sprint_id && finalLevel !== structure.workLevel ? { set: true, id: null } : { set: false, id: null };
+    const sprintChanged = sprint.set && sprint.id !== current.sprint_id;
     db.transaction(() => {
       const timestamp = now();
       if (releveled) {
@@ -744,6 +790,7 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
           due_tz = CASE WHEN $setDue THEN $dueTz ELSE due_tz END,
           parent_card_id = CASE WHEN $setPlacement THEN $parentId ELSE parent_card_id END,
           level = CASE WHEN $setPlacement THEN $level ELSE level END,
+          sprint_id = CASE WHEN $setSprint THEN $sprintId ELSE sprint_id END,
           revision = revision + 1, updated_at = $timestamp
         WHERE id = $cardId AND revision = $revision AND deleted_at IS NULL`).run({
         title: input.title ?? null,
@@ -757,6 +804,8 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
         setPlacement: placement ? 1 : 0,
         parentId: placement?.parentId ?? null,
         level: placement?.level ?? 0,
+        setSprint: sprint.set ? 1 : 0,
+        sprintId: sprint.id,
         timestamp,
         cardId,
         revision: input.revision
@@ -773,7 +822,8 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
         ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
         ...(changed ? { assigneesAdded: changed.added.length, assigneesRemoved: changed.removed.length } : {}),
         ...(tagsChanged ? { tagsAdded: tagsChanged.added.length, tagsRemoved: tagsChanged.removed.length } : {}),
-        ...(input.flags ? { flags: input.flags } : {})
+        ...(input.flags ? { flags: input.flags } : {}),
+        ...(sprintChanged ? { sprintId: sprint.id } : {})
       });
       if (reparented) audit(userId, null, "task.card_reparent", { boardId: board.id, cardId, parentId: placement.parentId });
       if (releveled) audit(userId, null, "task.card_level", { boardId: board.id, cardId, level: placement.level });

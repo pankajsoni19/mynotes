@@ -217,6 +217,15 @@ Rows T110–T114, T119, and T120 of [research/2026-09-26-task-hierarchy-workflow
 | T119 | **MCP bulk restructuring** (reparent storms through `update_card`) | Reparent and level changes are `update_card` fields under the per-card revision CAS, in the `task_write` daily buckets, audited with `{ via: "mcp", keyId }` as `task.card_reparent`/`task.card_level`; the same service rules as REST (`PARENT_INVALID`, `HAS_CHILDREN`, 100 children). There are no structure, sprint lifecycle, or delete tools. | Done (17A) |
 | T113 | **Reparenting as an existence oracle** (probing card ids on other boards) | Every invalid parent (unknown, another board, binned, the card itself, wrong level) is the same 400 `PARENT_INVALID` with the same message, and the parent is looked up by `id AND board_id`. | Done (17A) |
 
+### Board sprints (Wave 17B)
+
+Row T118 of [research/2026-09-26-task-hierarchy-workflows.md](research/2026-09-26-task-hierarchy-workflows.md) §11.1, the sprint side of T113, and T122 (new with 17B).
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T113 (sprints) | **A sprint id as an existence oracle or a cross-board write** (planning a card into another board's sprint, or probing sprint ids) | A card's sprint is looked up by `id AND board_id`: an unknown sprint and one of another board are the same 404. Every `/sprints/:s` action joins the sprint to its board and checks the caller can read that board, so a sprint on a board they cannot read is 404 whatever the action. Only work-level cards store a sprint (400 `SPRINT_LEVEL` otherwise); subtasks derive theirs from the parent on the same board, so a sprint never reaches a card of another board. | Done (17B) |
+| T122 | **Members reshape the plan** (a reader starts, completes, or deletes sprints) | Sprint create, edit, start, complete, and delete are owner-only (D132, 403 `OWNER_ONLY` for other readers); readers only plan cards, a card field under the revision CAS. At most 50 open sprints per board, one active (a partial unique index backs the service check), and completed sprints are paged. | Done (17B) |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.
