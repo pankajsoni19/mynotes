@@ -1,7 +1,7 @@
-import { useRef, useState, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useRef, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Ellipsis, MessageSquare, Paperclip, Plus, AlignLeft, UserRound } from "lucide-react";
 import { CARD_DRAG_TYPE, isCardDrag, isMoveKey, type MoveKey } from "./boardOrder";
-import { assigneeSentence, attachmentCountLabel, cardAssignees, commentCountLabel, dueStatus, localDateString, validateCardTitle, wipCountLabel, wipState } from "./taskActions";
+import { assigneeSentence, attachmentCountLabel, cardAssignees, commentCountLabel, dueStatus, localDateString, wipCountLabel, wipState } from "./taskActions";
 import type { BoardColumn, CardSummary } from "./tasksApi";
 
 type BoardColumnViewProps = {
@@ -24,7 +24,8 @@ type BoardColumnViewProps = {
   onOpenCard: (card: CardSummary) => void;
   onColumnMenu: (trigger: HTMLElement) => void;
   onMoveColumn: (direction: -1 | 1) => void;
-  onAddCard: (title: string) => Promise<void>;
+  /** Opens the card composer on this column (§4.3; it replaced the inline quick add, §11 Q4). */
+  onAddCard: () => void;
 };
 
 /** Which slot a pointer at `clientY` points to among the column's card elements (the dragged one excluded). */
@@ -39,12 +40,7 @@ function dropIndexFor(list: HTMLElement, clientY: number, draggingId: string | n
 
 export function BoardColumnView(props: BoardColumnViewProps) {
   const { column, cards, owner, isFirst, isLast, draggingId, dropIndex } = props;
-  const [adding, setAdding] = useState(false);
-  const [title, setTitle] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const others = cards.filter((card) => card.id !== draggingId);
   const today = localDateString();
 
@@ -65,28 +61,6 @@ export function BoardColumnView(props: BoardColumnViewProps) {
     event.preventDefault();
     const index = dropIndexFor(listRef.current, event.clientY, draggingId);
     props.onDropAt(event.dataTransfer.getData(CARD_DRAG_TYPE), index);
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy) return;
-    const check = validateCardTitle(title);
-    if (!check.ok) {
-      setError(check.error);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await props.onAddCard(check.name);
-      setTitle("");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not add the card");
-    } finally {
-      setBusy(false);
-      // Stay in the field so several cards can be added in a row.
-      inputRef.current?.focus();
-    }
   }
 
   function cardKeyDown(event: ReactKeyboardEvent<HTMLElement>, card: CardSummary) {
@@ -168,26 +142,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
       {!cards.length && dropIndex === null && <li className="task-column-empty">No cards yet</li>}
     </ul>
     <footer className="task-column-footer">
-      {adding
-        ? <form className="task-quick-add" onSubmit={submit}>
-          <input
-            ref={inputRef}
-            autoFocus
-            value={title}
-            onChange={(event) => { setTitle(event.target.value); setError(null); }}
-            onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setAdding(false); setTitle(""); setError(null); } }}
-            placeholder="Card title"
-            aria-label={`New card title in ${column.name}`}
-            aria-invalid={error ? true : undefined}
-            maxLength={200}
-          />
-          {error && <p className="file-dialog-error" role="alert">{error}</p>}
-          <span className="task-quick-add-actions">
-            <button type="submit" className="primary-button" aria-busy={busy || undefined} disabled={!title.trim()}>{busy ? "Adding…" : "Add card"}</button>
-            <button type="button" className="secondary-button" onClick={() => { setAdding(false); setTitle(""); setError(null); }}>Done</button>
-          </span>
-        </form>
-        : <button className="task-add-card" onClick={() => setAdding(true)}><Plus />Add a card</button>}
+      <button className="task-add-card" onClick={props.onAddCard} aria-haspopup="dialog" aria-label={`Add a card to ${column.name}`}><Plus />Add a card</button>
     </footer>
   </section>;
 }

@@ -6,6 +6,7 @@ import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
 import { BoardColumnView } from "./BoardColumnView";
 import { BoardSharePanel } from "./BoardSharePanel";
+import { CardComposer, type ComposerMode } from "./CardComposer";
 import { CardDialog } from "./CardDialog";
 import { MoveCardSheet } from "./MoveCardSheet";
 import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
@@ -16,7 +17,6 @@ import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
 import { canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
 import {
-  createCard,
   createColumn,
   deleteBoard,
   deleteCard,
@@ -29,6 +29,7 @@ import {
   taskErrorMessage,
   updateColumn,
   type BoardDetail,
+  type CardDetail,
   type CardSummary
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
@@ -66,6 +67,8 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ columnId: string; index: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  // The card composer (a guarded dialog, no history entry): the column it was opened from, or null.
+  const [composer, setComposer] = useState<{ columnId: string | null } | null>(null);
   const detailRef = useRef(detail);
   detailRef.current = detail;
   // The control that opened the current dialog, so focus can return to it.
@@ -252,17 +255,21 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     void move(card.id, target.columnId, target.afterCardId, { focus: true });
   }
 
-  async function addCard(columnId: string, title: string) {
-    let card: CardSummary;
-    try {
-      ({ card } = await createCard(boardId, { columnId, title }));
-    } catch (reason) {
-      if (taskErrorCode(reason) !== "COLUMN_FULL") throw reason;
-      // Someone may have filled it meanwhile: show the latest counts.
-      void load();
-      throw new Error(fullMessage(reason, columnId));
-    }
+  /** The composer created a card: it joins the board, then closes, opens, or starts another (§4.3). */
+  function cardCreated(card: CardDetail, mode: ComposerMode, options: { hadRelations: boolean }) {
     setDetail((current) => current ? { ...current, cards: [...current.cards, card], board: { ...current.board, card_count: current.board.card_count + 1 } } : current);
+    // Relation counts for the lane come with the board.
+    if (options.hadRelations) void load();
+    if (mode === "another") return;
+    setComposer(null);
+    if (mode === "open") {
+      onOpenCard(card.id);
+      return;
+    }
+    notify(`Added “${card.title}”`);
+    const index = [...(detailRef.current?.columns ?? [])].sort(byPosition).findIndex((column) => column.id === card.column_id);
+    if (isMobileViewport() && index >= 0 && index !== activeColumnRef.current) showColumn(index);
+    focusCard(card.id);
   }
 
   async function rename(name: string) {
@@ -384,6 +391,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         <h1 id="task-board-title" title={board?.name}>{board?.name ?? "Loading…"}</h1>
       </div>
       {board && <span className="task-board-count">{cardCountLabel(board.card_count)}</span>}
+      {detail && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
       {owner && <span className="task-board-actions">
         <button className="icon-button" onClick={(event) => openDialog({ kind: "rename" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Rename board" title="Rename board"><Pencil /></button>
         <button className="icon-button" onClick={(event) => openDialog({ kind: "share" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Share board" title="Share board"><Share2 /></button>
@@ -432,7 +440,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         onOpenCard={(card) => onOpenCard(card.id)}
         onColumnMenu={(trigger) => openDialog({ kind: "columnMenu", columnId: column.id }, trigger)}
         onMoveColumn={(direction) => { void moveColumn(column.id, direction); }}
-        onAddCard={(title) => addCard(column.id, title)}
+        onAddCard={() => setComposer({ columnId: column.id })}
       />)}
       {owner && columns.length < MAX_COLUMNS && <button className="task-add-column" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog"><Plus />Add column</button>}
     </div>}
@@ -468,6 +476,17 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         column_id: item.column_id,
         updated_at: card.updated_at
       } : item))}
+    />}
+    {composer && detail && board && <CardComposer
+      boardId={boardId}
+      boardName={board.name}
+      userId={userId}
+      columns={columns}
+      cards={cards}
+      initialColumnId={composer.columnId}
+      onClose={() => setComposer(null)}
+      onCreated={cardCreated}
+      notify={notify}
     />}
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
     {dialog?.kind === "share" && board && <BoardSharePanel board={board} onClose={closeDialog} onChanged={() => {
