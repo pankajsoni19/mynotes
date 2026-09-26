@@ -4,11 +4,12 @@ import { createUser, db, origin, request, type Session } from "./support/harness
 const { createMcpApiKey } = await import("../server/mcp");
 const { invokeMcpToolForTests } = await import("../server/mcpTools");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
+const { resetTaskQueryRateLimit, TASK_QUERY_RATE_LIMIT } = await import("../server/tasks/queryRoutes");
 type McpScope = import("../server/mcpScopes").McpScope;
 
 /** MCP `list_views` and `query_cards` (research 2026-09-26 §10.5, D145, T115, T116). */
 
-beforeEach(() => resetMcpLimits());
+beforeEach(() => { resetMcpLimits(); resetTaskQueryRateLimit(); });
 
 type Key = { id: string; token: string; userId: string };
 const makeKey = (session: Session, scopes: McpScope[]): Key => {
@@ -144,5 +145,23 @@ describe("MCP list_views and query_cards", () => {
     expect((db.query("SELECT COUNT(*) AS count FROM audit_log WHERE actor_id = ? AND event_type LIKE 'task.view%'").get(w.bob.userId) as { count: number }).count).toBe(0);
     const writerTools = ((await rpc(bobKey, "tools/list")).result!.tools!).map((tool) => tool.name);
     expect(writerTools.some((name) => /view/.test(name) && name !== "list_views")).toBe(false);
+  });
+
+  test("query_cards shares the per-user query limit with the REST routes, for views and filters (T117)", async () => {
+    const w = await world("Query limit");
+    const key = makeKey(w.alice, ["tasks:read"]);
+    const call = async (args: Record<string, unknown>, keyId = key.id) => JSON.parse((await invokeMcpToolForTests("query_cards", args, keyId)).content[0]!.text) as Record<string, any>;
+    for (let index = 0; index < TASK_QUERY_RATE_LIMIT; index += 1) {
+      expect((await call(index % 2 ? { viewId: w.viewId } : { filter: "state:todo" })).code).toBeUndefined();
+    }
+    for (const args of [{ filter: "" }, { viewId: w.viewId }]) {
+      const limited = await call(args);
+      expect(limited.code).toBe("RATE_LIMITED");
+      expect(limited.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    }
+    // The same budget as POST /api/tasks/query.
+    expect((await api(w.alice, "POST", "/query", { q: "" })).status).toBe(429);
+    // Another user is not affected.
+    expect((await call({ filter: "" }, makeKey(w.bob, ["tasks:read"]).id)).code).toBeUndefined();
   });
 });

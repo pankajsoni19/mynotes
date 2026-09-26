@@ -490,6 +490,11 @@ describe("database migrations", () => {
     column.run("c4", "b1", "Shipped", 4096, 1, old, old);
     column.run("c5", "b2", "Done", 512, 1, old, old);
     column.run("c6", "b2", "Later", 1024, 0, old, old);
+    // Two columns tied at the lowest position (only a hand-edited or pre-rebalance board has this).
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b3', 'u1', 'Tied', ?, ?)").run(old, old);
+    column.run("t1", "b3", "Inbox", 1024, 0, old, old);
+    column.run("t2", "b3", "Triage", 1024, 0, old, old);
+    column.run("t3", "b3", "Next", 2048, 0, old, old);
 
     runMigrations(db);
 
@@ -500,7 +505,11 @@ describe("database migrations", () => {
     // Done columns are done; otherwise the first column is todo and the rest doing. A board whose first column is done has no todo.
     expect(db.query("SELECT id, state FROM board_columns ORDER BY id").all()).toEqual([
       { id: "c1", state: "todo" }, { id: "c2", state: "doing" }, { id: "c3", state: "doing" }, { id: "c4", state: "done" },
-      { id: "c5", state: "done" }, { id: "c6", state: "doing" }
+      { id: "c5", state: "done" }, { id: "c6", state: "doing" },
+      // Ties at the lowest position all become todo. Harmless by design (not reconciled at boot or in a new
+      // migration): state only labels the column for filters and views, is_done is untouched so Today and the
+      // done counts stay right (T121), and the board owner fixes it with PATCH /api/tasks/columns/:c { state }.
+      { id: "t1", state: "todo" }, { id: "t2", state: "todo" }, { id: "t3", state: "doing" }
     ]);
     expect((db.query("SELECT COUNT(*) AS count FROM board_columns WHERE (state = 'done') <> (is_done = 1)").get() as { count: number }).count).toBe(0);
     expect(() => db.query("UPDATE board_columns SET state = 'later' WHERE id = 'c1'").run()).toThrow();

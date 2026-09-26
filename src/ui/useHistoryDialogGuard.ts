@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
-import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
+import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel, whenHistorySettled } from "../historyDialogs";
 
 type Guard = (poppedState: unknown) => boolean;
 
@@ -44,6 +44,9 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
   if (open && !wasOpenRef.current) depthRef.current = typeof window === "undefined" ? 0 : readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
   useDialogSentinel(open);
+  // Opened while another guard's undo is in flight (a composer handing Back over to its discard
+  // prompt): the entry is the one the undo lands on, so read the depth once it has.
+  useEffect(() => open ? whenHistorySettled(() => { depthRef.current = readHistoryDepth(window.history.state); }) : undefined, [open]);
   useEffect(() => {
     if (!open) return undefined;
     return registerHistoryDialogGuard(createDialogGuard({

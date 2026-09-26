@@ -48,6 +48,7 @@ export function popStateClosedDialog(event: { state?: unknown }) {
     ignoring -= 1;
     consumed.add(event);
     if (pendingSentinelPop) resolveSentinelPop();
+    if (ignoring === 0) flushSettled();
     return true;
   }
   if (sentinelActive && !isDialogSentinelState(event.state)) {
@@ -82,7 +83,27 @@ function ignoreNextPop() {
   ignoring += 1;
   // A move that never fires popstate must not swallow a later, real one.
   if (ignoreTimer) clearTimeout(ignoreTimer);
-  ignoreTimer = setTimeout(() => { ignoring = 0; ignoreTimer = null; pendingSentinelPop = null; }, 1000);
+  ignoreTimer = setTimeout(() => { ignoring = 0; ignoreTimer = null; pendingSentinelPop = null; flushSettled(); }, 1000);
+}
+
+// Callbacks waiting for an ignored move (an undo's history.go or the sentinel's history.back) to land.
+const settleWaiters = new Set<() => void>();
+
+function flushSettled() {
+  const waiting = [...settleWaiters];
+  settleWaiters.clear();
+  for (const callback of waiting) callback();
+}
+
+/**
+ * Runs `callback` once no ignored move is in flight: now, or when its popstate lands. A dialog that
+ * opens while an undo is on its way (one guard handing over to a prompt in the same tick) reads
+ * history.state then, not while it still names the entry Back landed on. Returns the cancel function.
+ */
+export function whenHistorySettled(callback: () => void) {
+  if (ignoring === 0) { callback(); return () => undefined; }
+  settleWaiters.add(callback);
+  return () => { settleWaiters.delete(callback); };
 }
 
 /** Moves back to the dialog's entry and ignores the popstate that move causes. */
@@ -157,8 +178,13 @@ export function acquireDialogSentinel(env: SentinelEnv = {
 }) {
   openDialogs += 1;
   if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
-  // history.state still reads the old sentinel until its pop lands; resolveSentinelPop pushes then.
-  if (openDialogs === 1 && !pendingSentinelPop) pushSentinelIfNeeded(env);
+  // history.state still reads the old sentinel (or, while a guard's undo is in flight, the entry Back
+  // landed on) until that pop lands; resolveSentinelPop pushes then. Pushing now would drop the
+  // dialog's own entry from the forward stack and leave the undo nowhere to go.
+  if (openDialogs === 1 && !pendingSentinelPop) {
+    if (ignoring === 0) pushSentinelIfNeeded(env);
+    else pendingSentinelPop = { env };
+  }
   let released = false;
   return () => {
     if (released) return;
