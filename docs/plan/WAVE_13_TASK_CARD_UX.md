@@ -892,3 +892,5 @@ Accepted as the plan of record with these rulings:
 - **Releases:** v0.8.0 = 13A + 13F + collections list actions (+ Wave 14 if ready and reviewed); v0.8.1 = 13B; v0.8.2 = 13C + 13D; v0.8.3 = 13E. Each with an independent review and delegated QA; backups before 015/016/017.
 - **The description-orphan fix** ("Don't attach" leaves uploads behind) may ship in 13B's server half if cheap, otherwise stays in 13D as planned.
 - **SQLite feature checks** (expression index with multi-arg `min()/max()`, sibling-column CHECK) are the first commit of 13B; use the documented fallbacks if they fail on Bun's SQLite.
+
+- **D113 payload ruling (2026-09-26, after 13C measurement):** the 1000-card worst-case board JSON is 1.25–1.39 MB, above the 1 MB target. Accepted for v0.8.x under the 1.5 MB test ceiling. 13E trims it: assignees as ids plus one board-level `users` map, drop per-card `board_id`, and remove the deprecated `assignee_id`/`assignee_name` fields in the release after v0.8.x (Q2). gzip is not enabled (no compression middleware today); revisit only if the trims are not enough.
