@@ -40,6 +40,9 @@ import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
 import { TodayHome } from "./today/TodayHome";
 import { BinApp } from "./bin/BinApp";
+import { TeamApp } from "./team/TeamApp";
+import { TeamNavContext } from "./AppShell";
+import { canManageTeam } from "./team/teamRoles";
 import { FilesApp } from "./files/FilesApp";
 import { TasksApp } from "./tasks/TasksApp";
 import { CollectionsApp } from "./collections/CollectionsApp";
@@ -58,7 +61,7 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
-import { DEFAULT_KEY_SCOPES, lockedScopes, OFFERED_MCP_PERMISSIONS, scopeLabel, toggleScope, type McpScope } from "./mcpPermissions";
+import { DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, scopeLabel, toggleScope, type McpScope } from "./mcpPermissions";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -124,6 +127,12 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
       if (!registering && reason instanceof ApiError && (reason.payload as { requiresTotp?: boolean } | undefined)?.requiresTotp) {
         setNeedsTotp(true);
       }
+      // Only sent after the right password (T85); the reason for the block is never shown (O11).
+      if (!registering && reason instanceof ApiError && (reason.payload as { code?: string } | undefined)?.code === "ACCOUNT_BLOCKED") {
+        setNeedsTotp(false);
+        setError("This account has been blocked. Contact your Nook administrator.");
+        return;
+      }
       setError(reason instanceof Error ? reason.message : "Could not sign in");
     } finally {
       setBusy(false);
@@ -173,7 +182,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   );
 }
 
-function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pending: boolean) => void; totpEnabled: boolean }) {
+function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: (pending: boolean) => void; totpEnabled: boolean; role: User["role"] }) {
   const [keys, setKeys] = useState<McpApiKey[]>([]);
   const [newToken, setNewToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -251,7 +260,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
     <div className="mcp-card">
       <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
-      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{OFFERED_MCP_PERMISSIONS.map((permission) => {
+      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
         const isLocked = locked.includes(permission.scope);
         return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
       })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
@@ -262,7 +271,7 @@ function McpSettings({ onPendingChange, totpEnabled }: { onPendingChange: (pendi
   </section>;
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void }) {
+function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void }) {
   const [section, setSection] = useState<"security" | "mcp" | "notifications" | "about">("security");
   const [appInfo, setAppInfo] = useState({ version: "0.7.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
@@ -400,7 +409,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button></>}</nav>
+        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -425,7 +434,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged }: { session: Sess
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} role={session.user.role} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );
@@ -781,7 +790,7 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session]);
@@ -1204,6 +1213,7 @@ export function App() {
     if (section === "tasks") return { app: "tasks", boardId: null, cardId: null };
     if (section === "collections") return { app: "collections", collectionId: null, viewId: null, rowId: null };
     if (section === "calendar") return calendarHomeRoute(isMobileViewport(), localDate(new Date()));
+    if (section === "team") return { app: "team", userId: null };
     return { app: section };
   }
 
@@ -1492,25 +1502,28 @@ export function App() {
     setChecking(false);
   }} />;
 
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} onManageTeam={() => { setSettingsOpen(false); void openApp("team"); }} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) setSettingsOpen(false);
   }} />;
   const toastStatus = toast && <div className="toast" role="status">{toast}</div>;
   const account = { displayName: session.user.displayName, onSettings: openSettings, onSignOut: signOut };
 
-  if (activeApp !== "notes" && !session.totp.setupRequired) return <NotificationsContext.Provider value={{ openList: () => { void openApp("notifications"); }, openPath: openNotificationPath }}>
+  const teamNav = { role: session.user.role, openTeam: () => { void openApp("team"); }, onTeam: activeApp === "team" };
+
+  if (activeApp !== "notes" && !session.totp.setupRequired) return <NotificationsContext.Provider value={{ openList: () => { void openApp("notifications"); }, openPath: openNotificationPath }}><TeamNavContext.Provider value={teamNav}>
     {activeApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : activeApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : activeApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : activeApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : activeApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
       : activeApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
+      : activeApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} totpEnabled={session.totp.enabled} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={() => { void openApp("bin"); }} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}
-  </NotificationsContext.Provider>;
+  </TeamNavContext.Provider></NotificationsContext.Provider>;
 
   return (
     <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>

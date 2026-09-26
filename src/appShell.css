@@ -18,3 +18,16 @@
 .sidebar-home-button { border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; }
 .sidebar-home-button:hover strong { color: #f5cf79; }
 @media (max-width: 760px) { .app-home-header, .app-page-header { height: 68px; padding: 0 18px; } .app-page-header { gap: 8px; } .app-home-user { display: none; } .app-account-button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; justify-content: center; padding: 0; } .app-account-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .app-account-badge { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; font-size: .62rem; } .app-home ~ .settings-dialog, .app-page ~ .settings-dialog { bottom: 0; } .app-home ~ .toast, .app-page ~ .toast { bottom: calc(24px + env(safe-area-inset-bottom)); } }
+/*
+ * The Team button made the phone header one 44 px button wider than 390 px allows. On phones the
+ * Home button shows only its icon and the app name next to the brand mark is visually hidden (each
+ * app's page heading names it); both texts stay in the accessibility tree.
+ */
+@media (max-width: 760px) {
+  .app-page-header .app-home-button { flex: none; width: 44px; min-width: 44px; height: 44px; justify-content: center; padding: 0; font-size: 0; }
+  .app-page-header .app-home-button svg { width: 20px; height: 20px; }
+  .app-page-header .app-home-brand { flex: 1 1 auto; min-width: 0; }
+  .app-page-header .brand-dot { flex: none; }
+  .app-page-header .brand-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .app-page-header .app-account, .app-page-header .app-notification-bell { flex: none; }
+}
