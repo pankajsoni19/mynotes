@@ -3,10 +3,11 @@ import { Eye, Lock, Pencil, Share2, Users, X } from "lucide-react";
 import { api } from "../api";
 import { trapTabKey } from "../files/Dialog";
 import type { User } from "../types";
-import { getSharing, saveSharing, type CollectionDetail, type ShareRole, type Visibility } from "./collectionsApi";
+import { getSharing, saveSharing, type CollectionSummary, type ShareRole, type Visibility } from "./collectionsApi";
 
 type CollectionSharePanelProps = {
-  collection: CollectionDetail;
+  /** The list passes a summary, the collection view its detail; only these fields are read. */
+  collection: Pick<CollectionSummary, "id" | "name" | "visibility" | "share_role">;
   onClose: () => void;
   onChanged: () => void;
 };
