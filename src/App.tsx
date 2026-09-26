@@ -56,7 +56,7 @@ import { NotificationSettings } from "./notifications/NotificationSettings";
 import { forgetThisDevice } from "./notifications/pushClient";
 import { carriedCalendarState } from "./calendarNavigation";
 import { calendarHomeRoute, localDate } from "./calendarRoute";
-import { popStateClosedDialog, takeDialogSentinelEntry } from "./historyDialogs";
+import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undoDialogPop } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
@@ -72,7 +72,7 @@ import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type Se
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { ModulesSettings } from "./ModulesSettings";
-import { hiddenModuleForApp, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
+import { hiddenEntryStep, hiddenModuleForApp, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
 import { useHistoryDialogGuard } from "./tasks/useHistoryDialogGuard";
 
@@ -704,6 +704,8 @@ export function App() {
   const [moduleHint, setModuleHint] = useState<ModuleId | null>(null);
   const leavingHiddenModuleRef = useRef(false);
   const hiddenLeaveFailedRef = useRef<string | null>(null);
+  // The depth of the entry on screen, so a popstate can tell Back from Forward (route gate, D92).
+  const historyDepthRef = useRef(0);
   const [selectionOwner, setSelectionOwner] = useState<string | null>(null);
   const [leavingNotes, setLeavingNotes] = useState(false);
   // Set while a note/folder switch finalizes the open note, so late keystrokes cannot be dropped.
@@ -933,6 +935,7 @@ export function App() {
   function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
     if (!session) return;
     writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel, route.app === "notes" ? searchHintRef.current : null);
+    historyDepthRef.current = readHistoryDepth(window.history.state);
     // While the first load is in flight, the newest URL is the one to apply once it lands.
     if (pendingRouteRef.current) pendingRouteRef.current = route;
     if (startupRouteState(session.user.id, routeAppliedUserRef.current, startupFailedUserRef.current) === "retry") retryStartup(route);
@@ -1347,6 +1350,7 @@ export function App() {
     if (sameSearchHint(current, next)) return;
     if (current === null && next && isMobileViewport()) {
       window.history.pushState(withHistoryDepth(withSearchHint(userId, next, state), readHistoryDepth(state) + 1), "", window.location.pathname);
+      historyDepthRef.current = readHistoryDepth(window.history.state);
     } else {
       window.history.replaceState(withSearchHint(userId, next, state), "", window.location.pathname);
     }
@@ -1429,11 +1433,29 @@ export function App() {
   // Re-registered every render so the handler never finalizes a note from a stale editor snapshot.
   useEffect(() => {
     if (!session) return;
+    historyDepthRef.current = readHistoryDepth(window.history.state);
     const onPopState = (event: PopStateEvent) => {
       // Back/Forward while a Files dialog is open only closes the dialog (D18).
       if (popStateClosedDialog(event)) return;
       const route = parseRoute(window.location.pathname);
+      const previousDepth = historyDepthRef.current;
+      const poppedDepth = readHistoryDepth(event.state);
+      historyDepthRef.current = poppedDepth;
       if (session.totp.setupRequired) return;
+      // D92: Back or Forward onto a module that is off skips that entry instead of replacing it
+      // with a second Home entry. Depth 0 still falls through to the gate below, which replaces it.
+      const hiddenRoute = route.app === "team" && teamGateOpen ? null : hiddenModuleForApp(disabledModules, route.app);
+      const step = hiddenRoute ? hiddenEntryStep(dialogPopDirection(previousDepth, poppedDepth), poppedDepth) : "replace";
+      if (hiddenRoute && step !== "replace") {
+        setModuleHint(hiddenRoute);
+        if (step === "undo") {
+          historyDepthRef.current = previousDepth;
+          undoDialogPop("forward");
+        } else {
+          window.history.back();
+        }
+        return;
+      }
       const startup = startupRouteState(session.user.id, routeAppliedUserRef.current, startupFailedUserRef.current);
       if (startup === "retry") {
         retryStartup(route);
@@ -1466,7 +1488,8 @@ export function App() {
 
   // D92: a route of a module that is turned off (a launcher link, a deep link, Back or Forward, a
   // notification, or turning it off while it is open) is replaced with Home and a hint. The entry is
-  // replaced, not pushed, so Back never bounces into it again. The server is not involved: the
+  // replaced, not pushed, so Back never bounces into it again (Back and Forward onto such an entry
+  // above depth 0 skip it in onPopState instead, see hiddenEntryStep). The server is not involved: the
   // module's API still works and keeps its own access rules (T97).
   useEffect(() => {
     const hidden = teamGateOpen ? null : hiddenModuleForApp(disabledModules, activeApp);

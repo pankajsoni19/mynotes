@@ -97,6 +97,20 @@ export function hiddenModuleForApp(disabled: readonly ModuleId[], app: AppSectio
   return owner && !isModuleEnabled(disabled, owner.id) ? owner.id : null;
 }
 
+export type HiddenEntryStep = "undo" | "back" | "replace";
+
+/**
+ * Back or Forward landed on the entry of a module that is off (D92). Replacing that entry with Home
+ * would leave two Home entries side by side, so the entry is skipped instead: Forward is undone
+ * (back to the entry it came from, the gated entry stays ahead), and Back steps on past it while
+ * there is an entry below. Only at depth 0, or when the direction is unknown, is it replaced.
+ */
+export function hiddenEntryStep(direction: "back" | "forward" | null, poppedDepth: number): HiddenEntryStep {
+  if (direction === "forward") return "undo";
+  if (direction === "back" && poppedDepth > 0) return "back";
+  return "replace";
+}
+
 /** The Today sections of modules that are off. */
 export function hiddenTodaySections(disabled: readonly ModuleId[]): string[] {
   return MODULES.filter((module) => disabled.includes(module.id)).flatMap((module) => module.todaySections);
