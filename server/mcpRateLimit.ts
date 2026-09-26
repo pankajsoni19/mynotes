@@ -19,7 +19,7 @@ export const MCP_LIMITS: Record<McpLimitBucket, Limit> = {
   call: { limit: 120, windowMs: MINUTE },
   write: { limit: 30, windowMs: MINUTE },
   create_note: { limit: 200, windowMs: DAY },
-  // create_card, move_card, and comment_on_card (tasks:write).
+  // create_card, update_card, move_card, comment_on_card, and link_cards (tasks:write).
   task_write: { limit: 500, windowMs: DAY },
   // create_event and update_event (calendar:write), and create_reminder (WAVES_10-12.md §4.5).
   event_write: { limit: 200, windowMs: DAY },

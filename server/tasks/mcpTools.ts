@@ -4,6 +4,10 @@ import { withAuditContext } from "../db";
 import { defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { searchText } from "../search";
 import { listAttachments } from "./attachments";
+import { createRelation, getBoardWithRelationCounts, listRelations, type CardRelation, type RelationCounts } from "./cardRelations";
+import { searchCards } from "./cardSearch";
+import { parseCardSearchQuery, relationCreateSchema } from "./relationRoutes";
+import { RELATION_TYPES, type RelationType } from "./relations";
 import { createComment, listComments } from "./comments";
 import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema } from "./routes";
 import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchCard, TaskError, type CardSummary } from "./service";
@@ -15,9 +19,9 @@ import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchC
  * key's owner, so board membership, owner-only rules, IDOR joins, ordering,
  * and caps are enforced in one place. A board the user cannot read is
  * NOT_FOUND whether it is missing, private, or binned. There are no delete,
- * edit-description, column, WIP, or sharing tools: writes are create, update
- * (fields other than the description, with a revision compare-and-swap,
- * WAVE_13 §5.5, T99), move, and comment. Writes are audited through the usual task.* events with
+ * unlink, edit-description, column, WIP, or sharing tools: writes are create,
+ * update (fields other than the description, with a revision compare-and-swap,
+ * WAVE_13 §5.5, T99), move, comment, and link_cards. Writes are audited through the usual task.* events with
  * `{via: "mcp", keyId}` merged in, and count against the per-key and per-user
  * `task_write` daily buckets.
  */
@@ -37,12 +41,17 @@ export function taskErrorToMcp(error: TaskError) {
     LIMIT_REACHED: "LIMIT_REACHED",
     CARD_CHANGED: "CARD_CHANGED",
     OWNER_ONLY: "OWNER_ONLY",
-    COLUMN_FULL: "COLUMN_FULL"
+    COLUMN_FULL: "COLUMN_FULL",
+    RELATION_EXISTS: "RELATION_EXISTS"
   };
   const code = (error.code ? known[error.code] : undefined) ?? (error.status === 404 ? "NOT_FOUND" : error.status === 400 ? "INVALID" : "INTERNAL");
   if (code === "CARD_CHANGED") {
     const current = error.extra.card as { revision?: unknown } | undefined;
     return new McpToolError(code, error.message, typeof current?.revision === "number" ? { currentRevision: current.revision } : undefined);
+  }
+  if (code === "RELATION_EXISTS") {
+    const existing = error.extra.relation as CardRelation | undefined;
+    return new McpToolError(code, error.message, existing ? { relation: mcpRelation(existing) } : undefined);
   }
   if (code === "INVALID" && error.code) return new McpToolError(code, error.message, { reason: error.code, ...error.extra });
   return new McpToolError(code, error.message, error.extra);
@@ -72,6 +81,15 @@ function preview(markdown: string) {
   return text.length > DESCRIPTION_PREVIEW_CHARS ? `${text.slice(0, DESCRIPTION_PREVIEW_CHARS - 1)}…` : text;
 }
 
+/**
+ * A relation as agents see it, from the card they asked about (WAVE_13 §5.5): the other card's id,
+ * title, and board name, or only `{ type, restricted: true }` when the user cannot read it (T90).
+ */
+export function mcpRelation(relation: CardRelation) {
+  if (relation.restricted) return { type: relation.type, restricted: true as const };
+  return { type: relation.type, cardId: relation.card.id, title: relation.card.title, boardName: relation.card.board_name, columnName: relation.card.column_name, isDone: relation.card.is_done === 1 };
+}
+
 const attachmentNames = (cardId: string) => listAttachments(cardId).map((attachment) => attachment.name);
 
 type CardWithDescription = CardSummary & { description?: string };
@@ -86,7 +104,7 @@ const cardFields = (card: CardSummary) => ({
   assignee_name: card.assignee_name
 });
 
-function listedCard(card: CardWithDescription, columnName: string | undefined) {
+function listedCard(card: CardWithDescription, columnName: string | undefined, counts: RelationCounts) {
   return {
     id: card.id,
     column_id: card.column_id,
@@ -98,6 +116,8 @@ function listedCard(card: CardWithDescription, columnName: string | undefined) {
     creator_name: card.creator_name,
     ...cardFields(card),
     comment_count: card.comment_count,
+    relation_count: counts.relation_count,
+    open_blockers: counts.open_blockers,
     attachments: attachmentNames(card.id),
     updated_at: card.updated_at
   };
@@ -132,7 +152,7 @@ export const taskTools: McpToolSpec[] = [
     write: false,
     inputSchema: z.object({ boardId: uuid, columnId: uuid.optional().describe("Only cards in this column") }),
     handler: async ({ boardId, columnId }, key) => service(key, () => {
-      const { board, columns, cards } = getBoard(key.userId, boardId);
+      const { board, columns, cards } = getBoardWithRelationCounts(key.userId, boardId);
       if (columnId && !columns.some((column) => column.id === columnId)) throw new McpToolError("NOT_FOUND", "Column not found");
       const names = new Map(columns.map((column) => [column.id, column.name]));
       const selected = columnId ? cards.filter((card) => card.column_id === columnId) : cards;
@@ -140,14 +160,14 @@ export const taskTools: McpToolSpec[] = [
         board: { id: board.id, name: board.name, owner_name: board.owner_name, is_owner: board.is_owner },
         columns: columns.map((column) => ({ id: column.id, name: column.name, position: column.position, wip_limit: column.wip_limit })),
         // Cards come from the board just authorized above.
-        cards: selected.map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id)))
+        cards: selected.map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id), card))
       };
     })
   }),
   defineTool({
     name: "get_card",
     title: "Get a card",
-    description: "Read one card: title, plain-text description, column, the latest comments, and attachment names.",
+    description: "Read one card: title, plain-text description, column, the latest comments, attachment names, and its relations to other cards (a card the user cannot open shows only as restricted).",
     scopes: ["tasks:read"],
     write: false,
     inputSchema: z.object({ cardId: uuid }),
@@ -172,9 +192,28 @@ export const taskTools: McpToolSpec[] = [
         },
         comments: page.comments.map((comment) => ({ id: comment.id, author_name: comment.author_name, body: comment.body, created_at: comment.created_at, edited_at: comment.edited_at })),
         hasMoreComments: page.hasMore,
-        attachments: attachmentNames(cardId)
+        attachments: attachmentNames(cardId),
+        relations: listRelations(key.userId, cardId).map(mcpRelation)
       };
     })
+  }),
+  defineTool({
+    name: "search_cards",
+    title: "Search cards by title",
+    description: "Find cards by title across every board the user can open (case-insensitive substring match on titles only, not descriptions), for example to pick a card for link_cards. Cards on boardId come first. At most 20 results.",
+    scopes: ["tasks:read"],
+    write: false,
+    inputSchema: z.object({
+      query: z.string().min(1).max(100),
+      boardId: uuid.optional().describe("List this board's cards first"),
+      limit: z.number().int().min(1).max(20).optional()
+    }),
+    handler: ({ query, boardId, limit }, key) => {
+      const parsed = parseCardSearchQuery({ q: query, boardId, limit: limit === undefined ? undefined : String(limit) });
+      if ("error" in parsed) throw new McpToolError("INVALID", "Invalid arguments", { details: [parsed.error] });
+      const { q, ...options } = parsed.value!;
+      return searchCards(key.userId, q, options);
+    }
   }),
   defineTool({
     name: "create_card",
@@ -239,6 +278,26 @@ export const taskTools: McpToolSpec[] = [
       return service(key, async () => {
         const { card } = await moveCard(key.userId, cardId, input);
         return { card: { id: card.id, column_id: card.column_id, position: card.position } };
+      });
+    }
+  }),
+  defineTool({
+    name: "link_cards",
+    title: "Link two cards",
+    description: "Relate a card to another card the user can open, on the same or another board. type is seen from cardId toward targetCardId: relates_to, depends_on (the target must be done first), needed_by (this card must be done first), duplicates, or duplicated_by. Two cards have at most one relation (RELATION_EXISTS returns it); a card has at most 50. Links cannot be removed here. Linking never changes either card's revision.",
+    scopes: ["tasks:write"],
+    write: true,
+    dailyBucket: "task_write",
+    inputSchema: z.object({
+      cardId: uuid,
+      targetCardId: uuid,
+      type: z.enum(RELATION_TYPES as [RelationType, ...RelationType[]])
+    }).strict(),
+    handler: async ({ cardId, targetCardId, type }, key) => {
+      const input = routeInput(relationCreateSchema, { type, cardId: targetCardId });
+      return service(key, async () => {
+        const { relation } = await createRelation(key.userId, cardId, input);
+        return { relation: mcpRelation(relation) };
       });
     }
   }),

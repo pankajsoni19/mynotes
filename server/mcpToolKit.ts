@@ -24,6 +24,7 @@ export type McpErrorCode =
   | "CARD_CHANGED"
   | "OWNER_ONLY"
   | "COLUMN_FULL"
+  | "RELATION_EXISTS"
   | "READ_ONLY"
   | "EVENT_CHANGED"
   | "REMINDER_EXISTS"
