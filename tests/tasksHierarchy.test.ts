@@ -158,3 +158,33 @@ describe("card parent and level", () => {
     expect((await call(stranger, "GET", `/cards/${story.id}/children`)).status).toBe(404);
   });
 });
+
+describe("roll-ups", () => {
+  test("the board payload counts live direct children and those in a done column, with one grouped query (D134)", async () => {
+    const { owner, member, boardId, columns } = await setup("Rollup");
+    const [todo, doing, done] = [columns[0].id, columns[1].id, columns[2].id];
+    const epic = await addCard(member, boardId, todo, "Epic", { level: 0 });
+    const story = await addCard(member, boardId, doing, "Story", { parentId: epic.id });
+    const subtasks = [];
+    for (const title of ["One", "Two", "Three"]) subtasks.push(await addCard(member, boardId, todo, title, { parentId: story.id }));
+    const find = async (id: string) => (await boardCards(owner, boardId)).find((card) => card.id === id)!;
+    expect(await find(epic.id)).toMatchObject({ child_count: 1, done_child_count: 0 });
+    expect(await find(story.id)).toMatchObject({ child_count: 3, done_child_count: 0 });
+    // Checking a subtask is a move to the done column; the parent's count follows.
+    expect((await call(member, "POST", `/cards/${subtasks[0]!.id}/move`, { columnId: done, afterCardId: null })).status).toBe(200);
+    expect((await call(member, "POST", `/cards/${subtasks[1]!.id}/move`, { columnId: done, afterCardId: null })).status).toBe(200);
+    expect(await find(story.id)).toMatchObject({ child_count: 3, done_child_count: 2 });
+    // Unchecking moves it back; binning a child drops it from the counts; direct children only.
+    expect((await call(member, "POST", `/cards/${subtasks[1]!.id}/move`, { columnId: todo, afterCardId: null })).status).toBe(200);
+    expect((await call(member, "DELETE", `/cards/${subtasks[2]!.id}`)).status).toBe(200);
+    expect(await find(story.id)).toMatchObject({ child_count: 2, done_child_count: 1 });
+    expect(await find(epic.id)).toMatchObject({ child_count: 1, done_child_count: 0 });
+    // A done column turned off counts as open again.
+    expect((await call(owner, "PATCH", `/columns/${done}`, { isDone: false })).status).toBe(200);
+    expect(await find(story.id)).toMatchObject({ child_count: 2, done_child_count: 0 });
+    // The board carries its structure.
+    const board = (await call(member, "GET", `/boards/${boardId}`)).body.board;
+    expect(board.structure).toEqual(EPICS);
+    expect((await call(member, "GET", "/boards")).body.boards.find((item: { id: string }) => item.id === boardId).structure).toEqual(EPICS);
+  });
+});

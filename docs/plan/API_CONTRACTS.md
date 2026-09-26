@@ -517,6 +517,7 @@ type CardHierarchy = {
 | `PATCH /cards/:k` | reader | adds `parentId?: uuid \| null` (reparent, D128) and `level?: 0–2` ("Change level"), under the revision CAS like every field (`revision + 1`). Without `level` the card keeps its level, so a new parent must be one level up; send both to move a card to another level. A card with live children cannot change level; children that were binned on their own are detached, so they restore without a parent (D130). | as above, plus 409 `HAS_CHILDREN { childCount }` and 409 `CARD_CHANGED` |
 | `GET /cards/:k/children` | reader | `{ children: ChildCard[] }` | 404 |
 
+- **Roll-ups (D125, D134).** `child_count` and `done_child_count` count a card's live direct children and those in an `is_done` column. `GET /boards/:b` and MCP `list_cards` compute them with one grouped query per board, never a per-card subquery; the board payload has every live card at every level, so a client can also derive them locally. A parent never moves on its own when its children do.
 - **Audit** (ids only): `task.card_create` adds `parentId` and `level` when set; `task.card_reparent { boardId, cardId, parentId }`; `task.card_level { boardId, cardId, level }`.
 - **WIP limits** count every card in a column, whatever its level (§8, Q7).
 - There is no endpoint that changes a card's board, so a parent never ends up on another board (T112).
