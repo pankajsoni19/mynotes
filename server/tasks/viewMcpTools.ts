@@ -3,6 +3,7 @@ import { defineTool, McpToolError, type McpToolSpec } from "../mcpToolKit";
 import { validTimeZone } from "../today/registry";
 import { TASK_QUERY_LIMITS } from "../../shared/taskQuery";
 import { QUERY_GROUPS, QUERY_SORTS, queryCards, type QueriedCard, type QueryResult } from "./query";
+import { taskQueryRateLimited } from "./queryRoutes";
 import { TaskError } from "./service";
 import { listViews, viewCards } from "./views";
 
@@ -13,6 +14,7 @@ import { listViews, viewCards } from "./views";
  * `GET /api/tasks/views` and `POST /api/tasks/query`, as the key's owner, so a
  * view or filter never reaches a board the owner cannot read (T115) and ids
  * of such boards resolve as `restricted` (T116). There are no view write tools.
+ * `query_cards` shares the per-user query limit with the REST routes (T117).
  */
 
 export const MCP_QUERY_PAGE_MAX = 50;
@@ -108,6 +110,9 @@ export const taskViewTools: McpToolSpec[] = [
       const zone = validTimeZone(tz ?? "UTC");
       if (!zone) throw new McpToolError("INVALID", "tz must be an IANA time zone");
       const page = { cursor, limit: limit ?? MCP_QUERY_PAGE_MAX, tz: zone };
+      // Views and filters alike: a cross-board query is the expensive read (T117).
+      const retryAfter = taskQueryRateLimited(key.userId);
+      if (retryAfter) throw new McpToolError("RATE_LIMITED", "Too many queries. Try again in a moment.", { retryAfterSeconds: retryAfter });
       return run(() => {
         if (viewId !== undefined) {
           const { view, ...result } = viewCards(key.userId, viewId, page);
