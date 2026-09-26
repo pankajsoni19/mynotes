@@ -10,6 +10,7 @@ import { revokeUserPushSubscriptions } from "../calendar/push";
 import { isEmailAllowed } from "../config";
 import { audit, db, now, type UserRow } from "../db";
 import { can, isSelectableRole, roleChangeNeedsReauth, type Role } from "./roles";
+import { userRole } from "./userRole";
 
 export type TeamVia = "web" | "cli" | "mcp";
 /** Who is acting: a signed-in admin (web or MCP), or the host CLI (no actor). */
@@ -126,9 +127,7 @@ function present(row: MemberRow, viewer: { id: string; role: Role }): TeamMember
 }
 
 /** The current role of an account, or null when it does not exist. */
-export function userRole(userId: string): Role | null {
-  return (db.query("SELECT role FROM users WHERE id = ?").get(userId) as { role: Role } | null)?.role ?? null;
-}
+export { userRole };
 
 /** The Team list: active before blocked, then by role, then by name (§6.3). */
 export function listTeam(viewer: { id: string; role: Role }) {

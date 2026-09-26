@@ -29,7 +29,8 @@ import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes }
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { registerTeamRoutes } from "./team/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
-import { mcpScopesForRole } from "./team/roles";
+import { can, mcpScopesForRole } from "./team/roles";
+import { ROLE_READ_ONLY_BODY, roleWriteGate } from "./team/writeGate";
 import {
   draftSchema,
   folderSharingSchema,
@@ -295,6 +296,9 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
+// Viewers and guests read; every other write is refused unless allowlisted (D75, T87).
+app.use("/api/*", roleWriteGate);
+
 app.get("/api/mcp/keys", (c) => c.json({ keys: listMcpApiKeys(c.get("user").id) }));
 
 app.post("/api/mcp/keys", async (c) => {
@@ -440,9 +444,12 @@ app.delete("/api/auth/totp", async (c) => {
 
 app.get("/api/users", (c) => {
   const currentUser = c.get("user");
-  const users = db.query("SELECT id, display_name FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
-    .all(currentUser.id) as Array<{ id: string; display_name: string }>;
-  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name })) });
+  // The share picker: read-only roles cannot share, so they get no directory either (§2.2).
+  if (!can(currentUser.role, "sharing.write")) return c.json(ROLE_READ_ONLY_BODY, 403);
+  const users = db.query("SELECT id, display_name, role FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
+    .all(currentUser.id) as Array<{ id: string; display_name: string; role: UserRow["role"] }>;
+  // `role` lets the picker hint that a viewer or guest will only read (§2.2 notes).
+  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role })) });
 });
 
 app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user").id) }));

@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
+import { canWriteContent } from "../team/userRole";
 
 export type CalendarVisibility = "private" | "selected" | "all_users";
 export type ShareRole = "viewer" | "editor";
@@ -75,8 +76,10 @@ export function editableCalendar(calendarId: string, userId: string) {
   return db.query(`SELECT k.* FROM calendars k WHERE k.id = $calendarId AND ${editableCalendarPredicate}`).get({ calendarId, userId }) as CalendarRow | null;
 }
 
+/** min(platform ceiling, item grant) (§2.4): a viewer or guest shared with as `editor` acts as a `viewer`. */
 export function calendarRole(calendar: Pick<CalendarRow, "owner_id" | "share_role">, userId: string): CalendarRole {
-  return calendar.owner_id === userId ? "owner" : calendar.share_role;
+  if (calendar.owner_id === userId) return "owner";
+  return calendar.share_role === "editor" && !canWriteContent(userId) ? "viewer" : calendar.share_role;
 }
 
 /** A live event on a calendar the caller can read, with that calendar. */
