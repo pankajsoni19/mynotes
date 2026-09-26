@@ -20,6 +20,15 @@ After sign-in, **Home** opens the apps. Every app, folder, note, and file has it
 | **Search** | Full-text search across note titles and bodies, accent- and case-insensitive, with prefix and phrase matching. Results respect sharing exactly. |
 | **MCP server** | An authenticated Streamable HTTP endpoint that lets trusted AI clients list and read your published notes with revocable API keys. Read-only today. |
 
+### What's new in v0.8.1
+
+- **Task board views:** columns, a sortable table, a grouped list, and a calendar with drag-to-reschedule and an Unscheduled tray, plus a Linear-style filter bar whose filters live in the URL, so links are shareable.
+- **Cards:** a full-screen composer that sets every detail in one go, including attachments and relations; expand any card to a full page; tag and flag pickers with Manage tags; relations with restricted rows; and richer lane cards.
+- **Cross-board queries:** a card query API and saved task views (private, selected accounts, or everyone; always evaluated as the viewer), with the MCP tools `list_views` and `query_cards`. The Tasks home UI for saved views arrives in a later release.
+- Custom dropdowns on task cards, review fixes (phone Back with unsaved composer text, an MCP query rate limit, signed pagination cursors, view revisions on sharing changes), and test-reliability fixes.
+
+**Upgrade note:** migration 020 (board column states and saved task views) runs on the first boot, so back up first (`./scripts/backup.sh --force`). See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
 ### What's new in v0.8.0
 
 - **Team:** admin and member roles (the first account on a new Nook is the admin), block and unblock, sign out everywhere, `/team`, a `team:read` MCP scope, and the host CLI `server/team-admin.ts`.
@@ -38,7 +47,7 @@ You need Git, Docker Engine, and Docker Compose.
 1. Clone the repository: `git clone https://github.com/pankajsoni19/nook.git && cd nook`.
 2. Copy `.env.example` to `.env` and adjust it if needed (for example `ALLOWED_EMAILS`, `TOTP_POLICY`, `APP_ORIGINS`).
 3. Create `/srv/mynotes` writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-4. Build and start: `APP_VERSION=0.8.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+4. Build and start: `APP_VERSION=0.8.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 5. Open `http://localhost:2026` and create the first account; later registrations stay disabled unless you enable them.
 
 Internal identifiers such as the `mynotes.sqlite` database, the `mynotes_session` cookie, the `mynotes` container, `MYNOTES_DATA_DIR`, and the `mynotes-*` backup archives keep the original `mynotes` prefix for compatibility with existing installs.
