@@ -436,6 +436,12 @@ Manual QA (headless Chrome at 1280×800 and 390×844 with touch):
 - [x] Collections: sort field, direction, filter field, condition, and option value by keyboard, and the filter applies; the option colour picker with swatches and type-ahead; a number field's type stays disabled; a table cell opens with Enter, starts with Clear, closes with Escape keeping focus on the cell, and saves a choice.
 - [x] Phones: dropdowns open as bottom sheets with rows of at least 44 px and no horizontal scrolling; Back closes only the sheet (over the event sheet, the sort and filter sheet, and the row panel), and the next Back closes the sheet under it without leaving the page.
 
+## Wave 17C: task filter grammar, cross-board query, and views (server)
+
+Plan of record: [research/2026-09-26-task-hierarchy-workflows.md](research/2026-09-26-task-hierarchy-workflows.md) §10–§11. Migration ids pin 1–16 and tolerate 017–019 (Team, hierarchy) being absent while 020 is present.
+
+- [x] `tests/taskQuery.test.ts` (pure): parse and format round-trips and idempotence; the canonical key order, positive-before-negated, value dedupe and sort; quoting and escapes; bare words and quoted phrases as text, NFC; tag names deduped case-insensitively; error codes and character positions; reserved `parent:`/`level:`/`sprint:`/`has:subtasks` as `FILTER_UNSUPPORTED`; the length, term, and value caps; the `column:` scope rule; lenient mode; due windows across a year end; the URL codec (`?q=` written, other parameters kept, Wave 13 per-key parameters and `rel=` read).
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.

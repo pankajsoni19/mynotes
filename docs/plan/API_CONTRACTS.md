@@ -428,6 +428,34 @@ type CardAttachment = {
 - Inline images in a description use the same content URL, `/api/files/:id/content?disposition=inline`.
 
 **Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.column_wip { wipLimit }`, `task.card_create { assigneesAdded? }`, `task.card_update { dueOn?, dueTime?: "set" | "cleared", assigneeId?, assigneesAdded?, assigneesRemoved? }` (counts, not ids), `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
+### Filter grammar (sub-wave 17C, D137, D140–D145)
+
+One grammar for the board filter bar (13E), cross-board queries, saved views, URLs, and MCP. It lives in `shared/taskQuery.ts`, a pure module that the server and the client both import (research 2026-09-26 §10.3, Q10). A query is terms separated by spaces: **terms AND together**, the **values of one term OR together**, and a leading `-` negates a term.
+
+```text
+assignee:me state:todo,doing due:overdue,week
+board:<uuid> column:<uuid> -tag:"Needs design",none flag:blocked "invoice"
+```
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `board` | uuid | the card's board. A board the caller cannot read matches nothing (never an error) |
+| `state` | `todo`, `doing`, `done` | the column's normalized state (migration 020) |
+| `column` | uuid | only with exactly one positive `board:` value (or on a board page), else 400 `FILTER_SCOPE` |
+| `assignee` | `me`, `none`, uuid | any assignee matches; `none` = no assignees |
+| `creator` | `me`, uuid | who created the card |
+| `tag` | `none`, uuid, or a name (1–40) | names match board tags case-insensitively, so one name works across boards |
+| `flag` | `urgent`, `blocked`, `needs_review`, `on_hold`, `none` | the manual card flags |
+| `due` | `overdue`, `today`, `week`, `next-week`, `none`, `YYYY-MM-DD`, `<YYYY-MM-DD`, `>YYYY-MM-DD` | relative values use the caller's `tz`; `week` is today plus six days, `next-week` the seven after; `overdue` is a date before today, or a timed card due today whose wall time has passed. `before:D`/`after:D` are accepted as `<D`/`>D` |
+| `has` | `relation`, `blocked` | any visible relation; an open `depends_on` blocker |
+| text | `"quoted phrase"` or a bare word | the title or the description excerpt contains it (case-insensitive `instr`, no wildcards) |
+
+- **Reserved keys.** `parent:`, `level:`, `sprint:`, and `has:subtasks` arrive with 17A/17B (D137) and are refused with `FILTER_UNSUPPORTED` until then.
+- **Canonical form.** `format` orders terms by key (`board state column assignee creator tag flag due has text`, positive before negated), dedupes and sorts values, lowercases ids and keywords, and always quotes text. URLs (`?q=`), `task_views.query`, and MCP carry the canonical form.
+- **Limits.** At most 2000 characters, 20 terms, 20 values per term, 100 characters per text term. No control or bidi characters.
+- **Errors.** `{ code: "FILTER_INVALID" | "FILTER_UNSUPPORTED" | "FILTER_SCOPE", message, position }`, where `position` is the character offset.
+- **URL codec.** `?q=` carries the canonical grammar and is the only filter parameter written. Decoding is lenient (bad terms and values are dropped) and still reads the Wave 13 per-key parameters (`assignee`, `tag`, `flag`, `due`, `column`, `rel=any|blocked|none`, plus `board` and `state`), so older links keep working. Other parameters (`view`, `layout`, `group`, `sort`) are left alone.
+
 ## Today (Wave 10)
 
 `GET /api/today?tz=<IANA>&sections=<a,b>?` returns 200 `{ generatedAt, date, sections }`. `date` is today in `tz`. `sections` maps each installed section, in order, to `{ items, more, href }` (at most ten items; `more` when there are more; `href` is the owning app's list). A section whose provider failed is `{ items: [], more: false, href, error }`; the others still load. Sections of modules that are not installed are absent. There are no counts, bodies, or caching. `sections=` limits the response to those names (the per-section Retry).

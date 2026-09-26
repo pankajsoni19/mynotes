@@ -169,6 +169,14 @@ Rows T90–T102 of [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §6. Each 
 | T97 | **The Modules toggle mistaken for access control** | Settings → Modules only hides UI: the launcher, header items, routes (redirected to Home with a hint), and Today sections. Routes, ACLs, MCP tools, calendar feeds, reminders, and push never read `user_preferences`, and MCP has no tool to change it. `PUT /api/preferences` accepts only known module ids (unique, at most one per module, far below the 512-byte CHECK in migration 016), a strict body, and a revision compare-and-swap (`PREFERENCES_CHANGED`); it needs a session, CSRF, and the TOTP gate, and each write is audited with module ids only. `tests/preferences.test.ts` shows that a disabled module's API still works for its owner and still returns 404 to a stranger. The docs say a hidden module is not a security boundary. | Done (Wave 13F) |
 | T99 | **MCP vandalism through `update_card`** | A compare-and-swap on `baseRevision` (`CARD_CHANGED` with `currentRevision` only, never the stored card), no description edits (the input schema is strict, so a `description` key is `INVALID`), no unlink, delete, column, or WIP tools; the same service and validation as `PATCH /api/tasks/cards/:k`, so new assignees must read the board and strangers get `NOT_FOUND`; the `task_write` daily buckets; and `task.card_update` audit entries with `{ via, keyId }` and counts only. `COLUMN_FULL` applies to MCP creates and moves as to REST. `link_cards` arrives with 13D. Extends T36 and T73. `tests/mcpTasks.test.ts` | Done (13B server) |
 
+### Task views and cross-board query (Wave 17C)
+
+Rows T110–T121 of [research/2026-09-26-task-hierarchy-workflows.md](research/2026-09-26-task-hierarchy-workflows.md) §11.1. 17C owns T115–T117 and T121; 17A and 17B add T110–T114 and T118–T120.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T117 | **Filter injection or DoS** (SQL through the grammar, pathological queries) | `shared/taskQuery.ts` is a pure parser with a fixed key and value table: ids must be UUIDs, keywords come from fixed lists, and C0/C1 controls and bidi overrides are refused. Caps: 2000 characters, 20 terms, 20 values per term, 100 characters per text term. Reserved keys (`parent`, `level`, `sprint`) fail as `FILTER_UNSUPPORTED` instead of being ignored, so a query is never silently widened. | Required |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.
