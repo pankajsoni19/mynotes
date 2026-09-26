@@ -248,6 +248,34 @@
 .task-relation-adder-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 1fr) auto; gap: 8px; align-items: start; }
 .task-blocked-chip { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin: 0; border-radius: 999px; padding: 4px 10px; background: #3a1d1a; color: #ffb4a8; font-size: .76rem; font-weight: 600; }
 .task-blocked-chip svg { width: 14px; }
+/* The card as a full page (Wave 13D, /card/:k/full): the dialog's frame in the board's place, not
+   modal. Above 1024 px the fields and relations sit in a right column beside the description and
+   comments. In the dialog the column wrappers do not box anything. */
+.task-card-dialog-host, .task-card-side, .task-card-main { display: contents; }
+.task-card-page-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.task-card-page-bar { flex: none; display: flex; align-items: center; padding: 10px clamp(16px, 3vw, 32px) 0; }
+.task-card-page-back { min-width: 0; max-width: 100%; min-height: 36px; display: inline-flex; align-items: center; gap: 4px; border: 0; border-radius: 9px; padding: 0 10px 0 4px; background: transparent; color: #b7b7bd; font: inherit; font-size: .84rem; font-weight: 600; cursor: pointer; }
+.task-card-page-back:hover { background: #1c1c20; color: #ededee; }
+.task-card-page-back svg { width: 17px; flex: none; }
+.task-card-page-back span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-card-dialog.task-card-page { position: relative; z-index: auto; inset: auto; flex: 1; min-height: 0; width: min(1240px, 100%); height: auto; max-height: none; margin: 0 auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.task-card-page .task-card-dialog-header { padding-left: clamp(16px, 3vw, 32px); padding-right: clamp(8px, 3vw, 28px); }
+.task-card-page .task-card-dialog-body { padding: 16px clamp(16px, 3vw, 32px) calc(32px + env(safe-area-inset-bottom)); }
+@media (min-width: 1025px) {
+  .task-card-page .task-card-dialog-body { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); align-items: start; column-gap: 32px; }
+  .task-card-page .task-card-side, .task-card-page .task-card-main { display: grid; align-content: start; gap: 18px; min-width: 0; grid-row: 1; }
+  .task-card-page .task-card-main { grid-column: 1; }
+  .task-card-page .task-card-side { grid-column: 2; }
+  .task-card-page .task-card-details { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .task-card-expand { display: none; }
+  .task-card-page-bar { padding: 4px 8px 0; }
+  .task-card-page-back { min-height: 44px; }
+  .task-card-page .task-card-dialog-header { padding: 4px 6px 8px 16px; }
+  .task-card-page .task-card-dialog-body { padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); }
+}
+
 /* Card composer (Wave 13D, §4.3): the dialog's frame, wider on desktop, full screen on phones. */
 .task-new-card { flex: none; min-height: 36px; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 14px; font-size: .82rem; font-weight: 650; }
 .task-new-card svg { width: 15px; }

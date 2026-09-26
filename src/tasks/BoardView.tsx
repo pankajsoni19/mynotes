@@ -8,6 +8,7 @@ import { BoardColumnView } from "./BoardColumnView";
 import { BoardSharePanel } from "./BoardSharePanel";
 import { CardComposer, type ComposerMode } from "./CardComposer";
 import { CardDialog } from "./CardDialog";
+import { CardPage } from "./CardPage";
 import { MoveCardSheet } from "./MoveCardSheet";
 import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
 import { isMobileViewport } from "../mobileNavigation";
@@ -39,6 +40,10 @@ type BoardViewProps = {
   boardId: string;
   /** The card the URL names; its dialog is open over the board. */
   openCardId: string | null;
+  /** The card is open as a full page (/card/:k/full) in the board's place. */
+  openCardFull?: boolean;
+  onExpandCard?: () => void;
+  onCollapseCard?: () => void;
   onOpenCard: (cardId: string) => void;
   onCloseCard: () => void;
   onBack: () => void;
@@ -58,7 +63,7 @@ type BoardDialog =
 
 export const MAX_COLUMNS = 20;
 
-export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard, onOpenCardRoute }: BoardViewProps) {
+export function BoardView({ userId, boardId, openCardId, openCardFull = false, onExpandCard, onCollapseCard, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard, onOpenCardRoute }: BoardViewProps) {
   const focusCardId = openCardId;
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -143,6 +148,12 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
 
   const board = detail?.board ?? null;
   const owner = board?.is_owner === 1;
+  const cardPage = Boolean(openCardId && openCardFull && board);
+  // Back on the board from the full page: the phone track shows the column this entry was on.
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!cardPage && track && isMobileViewport()) track.scrollTo({ left: activeColumnRef.current * track.clientWidth, behavior: "instant" as ScrollBehavior });
+  }, [cardPage]);
   const columns = [...(detail?.columns ?? [])].sort(byPosition);
   const cards = detail?.cards ?? [];
   const shownColumn = Math.max(0, Math.min(activeColumn, columns.length - 1));
@@ -383,7 +394,8 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     }
   }
 
-  return <section className="task-board" aria-labelledby="task-board-title">
+  return <section className="task-board" aria-labelledby={cardPage ? undefined : "task-board-title"}>
+    {!cardPage && <>
     <header className="task-board-header">
       <button className="icon-button task-back" onClick={onBack} aria-label="Back to boards" title="Back to boards"><ChevronLeft /></button>
       <div className="task-board-heading">
@@ -444,15 +456,19 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       />)}
       {owner && columns.length < MAX_COLUMNS && <button className="task-add-column" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog"><Plus />Add column</button>}
     </div>}
+    </>}
 
-    {openCardId && detail && <CardDialog
+    {openCardId && detail && <CardPage enabled={cardPage} boardName={board?.name ?? ""} onBackToBoard={onCloseCard}><CardDialog
       key={openCardId}
+      layout={cardPage ? "page" : "dialog"}
+      onExpand={onExpandCard}
+      onCollapse={onCollapseCard}
       userId={userId}
       cardId={openCardId}
       columns={columns}
       columnId={cards.find((card) => card.id === openCardId)?.column_id}
       boardOwner={owner}
-      onClose={onCloseCard}
+      onClose={cardPage && onCollapseCard ? onCollapseCard : onCloseCard}
       onMissing={onCardMissing}
       notify={notify}
       onMove={(card) => openDialog({ kind: "moveCard", cardId: card.id })}
@@ -476,7 +492,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         column_id: item.column_id,
         updated_at: card.updated_at
       } : item))}
-    />}
+    /></CardPage>}
     {composer && detail && board && <CardComposer
       boardId={boardId}
       boardName={board.name}
