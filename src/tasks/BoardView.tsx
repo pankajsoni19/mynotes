@@ -21,6 +21,7 @@ import { BoardViewSwitch } from "./BoardViewSwitch";
 import { applyBoardQuery, boardData, type BoardContext } from "./boardQuery";
 import { hasBoardFilter, withBoardQuery, type BoardQuery } from "./boardUrl";
 import { localDateString, viewerTimeZone } from "./taskActions";
+import { FilterBar } from "./FilterBar";
 import "./boardViews.css";
 import {
   createCard,
@@ -161,6 +162,10 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
   const result = data ? applyBoardQuery(data, query, viewContext) : null;
   const filtered = hasBoardFilter(query);
   const view = query.view;
+  // The lanes show the matching cards; drag and keyboard moves anchor on the cards in view.
+  const laneCards: CardSummary[] = filtered && result ? result.cards : cards;
+  const laneCardsRef = useRef(laneCards);
+  laneCardsRef.current = laneCards;
 
   const setCards = (change: (cards: CardSummary[]) => CardSummary[]) =>
     setDetail((current) => current ? { ...current, cards: change(current.cards) } : current);
@@ -260,13 +265,13 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
     // Only cards of this board; a foreign or malformed payload is ignored.
     if (!cardId || !current?.cards.some((card) => card.id === cardId)) return;
     if (refuseFull(cardId, columnId)) return;
-    void move(cardId, columnId, afterCardIdAt(columnCards(current.cards, columnId), index, cardId));
+    void move(cardId, columnId, afterCardIdAt(columnCards(laneCardsRef.current, columnId), index, cardId));
   }
 
   function keyMove(card: CardSummary, key: MoveKey) {
     const current = detailRef.current;
     if (!current) return;
-    const target = keyboardMoveTarget(current.cards, current.columns, card.id, key);
+    const target = keyboardMoveTarget(laneCardsRef.current, current.columns, card.id, key);
     if (!target || refuseFull(card.id, target.columnId)) return;
     void move(card.id, target.columnId, target.afterCardId, { focus: true });
   }
@@ -420,6 +425,8 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!loadError && !detail && <p className="bin-loading task-board-state" role="status">Loading the board…</p>}
+    {detail && data && result && <FilterBar board={data} context={viewContext} filter={query.filter} shown={result.cards.length} total={cards.length}
+      onChange={(filter) => onQueryChange(withBoardQuery(query, { filter }))} />}
     {detail && data && result && view === "table" && <div className="task-view-body">
       <BoardTable board={data} cards={result.cards} sort={query.sort} today={viewContext.today} filtered={filtered}
         onSort={(sort) => onQueryChange(withBoardQuery(query, { sort }))}
@@ -444,7 +451,8 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
       {columns.map((column, index) => <BoardColumnView
         key={column.id}
         column={column}
-        cards={columnCards(cards, column.id)}
+        cards={columnCards(laneCards, column.id)}
+        totalCount={filtered ? columnCards(cards, column.id).length : undefined}
         owner={owner}
         isFirst={index === 0}
         isLast={index === columns.length - 1}
