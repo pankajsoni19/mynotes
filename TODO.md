@@ -181,7 +181,7 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [ ] 17B Sprints: board_sprints entity, one active per board, close with carry-over, switcher + progress strip, MCP sprint tools. After 17A.
 - [ ] 17C Tasks home and views (migration 020): `/tasks` segments Boards / My work / Views, shared column state todo/doing/done, shared filter grammar (`shared/taskQuery.ts`), paged cross-board query, saved views private/selected/everyone (never widen access), MCP `list_views` / `query_cards`. Server half may start after 13B-server merges.
 
-### Wave 13 — Task card UX, board views, dropdowns, Modules — plan of record: `docs/plan/WAVE_13_TASK_CARD_UX.md` (§12 director review). Merged to main: 13A, 13B (server+UI), 13C server, 13D server, 13F. In progress: 13C UI, 13D UI, 13E. Wave 14 Team merged; v0.8.0 review in progress.
+### Wave 13 — Task card UX, board views, dropdowns, Modules — plan of record: `docs/plan/WAVE_13_TASK_CARD_UX.md` (§12 director review). v0.8.0 shipped 13A, 13B, 13C/13D server, 13F, Wave 14. Merged after: 13C UI `1e34a5d`, 13D UI `ba2a03b`, 17C server `ca53482` (905 tests). In progress: 13E; 17A; Wave 15. Next release v0.8.1 after 13E + review.
 - [ ] Column WIP limit: each board column/lane gets an optional max card count (default: no limit). Shown as `n / limit` in the column header, warns or blocks moves that would exceed it (kanban + agile).
 - [ ] Card tags and flags: cards get tags (free-form, board-scoped, coloured) and flags (fixed set, e.g. blocked, urgent, needs review) in create, edit, list, and MCP tools.
 - [ ] Lane card face shows title, description excerpt, assignees, due date + due time if present, tags, flags.
