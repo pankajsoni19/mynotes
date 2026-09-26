@@ -11,6 +11,7 @@ import { formatMyWorkSearch, formatViewSearch, isSelectiveQuery, myWorkDefault, 
 import { MyWork, statePreset } from "../src/tasks/home/MyWork";
 import { QueryResults } from "../src/tasks/home/QueryResults";
 import { TasksHome } from "../src/tasks/home/TasksHome";
+import { validateViewName, viewUndoBody } from "../src/tasks/views/viewActions";
 import { ViewsList } from "../src/tasks/views/ViewsList";
 
 const viewId = "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e";
@@ -178,4 +179,13 @@ test("results show Load more with a cursor and the loaded count", () => {
   expect(table).toContain('aria-label="Cards table"');
   expect(renderToStaticMarkup(<QueryResults cards={[]} layout="list" group="none" today="2026-09-27" userId={me} nextCursor={null} loadingMore={false}
     onLoadMore={noop} onOpenCard={noop} onMoveCard={noop} emptyText="Nothing here" />)).toContain("Nothing here");
+});
+
+test("view names follow the server rule, and Undo re-creates the same body", () => {
+  expect(validateViewName("  Urgent  ")).toEqual({ ok: true, name: "Urgent", changed: true });
+  expect(validateViewName("Urgent", "Urgent")).toEqual({ ok: true, name: "Urgent", changed: false });
+  expect(validateViewName(" ").ok).toBe(false);
+  expect(validateViewName("x".repeat(81)).ok).toBe(false);
+  expect(validateViewName("bad\u0007").ok).toBe(false);
+  expect(viewUndoBody({ name: "A", query: "flag:urgent", display: { layout: "table", group: "none", sort: "due" } })).toEqual({ name: "A", query: "flag:urgent", display: { layout: "table", group: "none", sort: "due" } });
 });
