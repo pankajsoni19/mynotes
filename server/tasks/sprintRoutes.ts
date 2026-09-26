@@ -6,6 +6,7 @@ import { SPRINT_GOAL_MAX, SPRINT_NAME_MAX, SPRINT_STATES } from "../../shared/sp
 import { dueOnSchema } from "./routes";
 import { TaskError } from "./service";
 import { createSprint, deleteSprint, listSprints, patchSprint } from "./sprints";
+import { completeSprint } from "./sprintComplete";
 
 // C0/C1 controls and bidi overrides never belong in a sprint name (as for board and column names).
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F‪-‮⁦-⁩]/;
@@ -24,6 +25,19 @@ export const sprintPatchSchema = z.object({
   afterSprintId: uuid.nullable().optional(),
   state: z.literal("active").optional()
 }).strict().refine((value) => Object.values(value).some((field) => field !== undefined), "Provide a name, goal, startOn, endOn, afterSprintId, or state");
+
+/**
+ * `POST /sprints/:s/complete` (owner): where the unfinished cards go (`next`, `backlog`, `new`, or a
+ * planned sprint's id), and for `new` an optional name and dates (default: the next number, as long
+ * as this sprint, starting the day after it ends).
+ */
+export const sprintCompleteSchema = z.object({
+  carryTo: z.union([z.enum(["next", "backlog", "new"]), uuid]),
+  name: sprintName.optional(),
+  startOn: sprintDate.optional(),
+  endOn: sprintDate.optional()
+}).strict().refine((value) => value.carryTo === "new" || (value.name === undefined && value.startOn === undefined && value.endOn === undefined),
+  "name, startOn, and endOn go with carryTo \"new\"");
 
 const SPRINTS_LIMIT_MAX = 100;
 
@@ -63,6 +77,12 @@ export function registerSprintRoutes(app: Hono<AppEnv>) {
     const sprintId = id(c, "sprintId");
     const body = await parseJson(c.req.raw, sprintPatchSchema);
     return respond(c, () => patchSprint(c.get("user").id, sprintId, body));
+  });
+
+  app.post("/api/tasks/sprints/:sprintId/complete", async (c) => {
+    const sprintId = id(c, "sprintId");
+    const body = await parseJson(c.req.raw, sprintCompleteSchema);
+    return respond(c, () => completeSprint(c.get("user").id, sprintId, body));
   });
 
   app.delete("/api/tasks/sprints/:sprintId", (c) => {

@@ -15,17 +15,30 @@ async function call(session: Session | undefined, method: string, path: string, 
 
 const SPRINT_TASKS = { levels: [{ name: "Task", plural: "Tasks" }, { name: "Subtask", plural: "Subtasks" }], workLevel: 0, sprints: true };
 
-/** A shared Sprint › Task › Subtask board with To do, Doing, Done. */
+// One owner, member, and stranger for the whole file (the suite shares a bounded pool of test accounts).
+let people: { owner: Session; member: Session; stranger: Session } | null = null;
+async function users() {
+  people ??= { owner: await createUser("Sprints owner"), member: await createUser("Sprints member"), stranger: await createUser("Sprints stranger") };
+  return people;
+}
+
+/** A Sprint › Task › Subtask board with To do, Doing, Done, shared with the member. */
 async function setup(label: string, structure: object = SPRINT_TASKS) {
-  const owner = await createUser(`${label} owner`);
-  const member = await createUser(`${label} member`);
-  const stranger = await createUser(`${label} stranger`);
+  const { owner, member, stranger } = await users();
   const created = await call(owner, "POST", "/boards", { name: `${label} board` });
   const boardId = created.body.board.id as string;
   const columns = created.body.columns as [Column, Column, Column];
   expect((await call(owner, "PATCH", `/boards/${boardId}`, { structure })).status).toBe(200);
   expect((await call(owner, "PUT", `/boards/${boardId}/sharing`, { visibility: "selected", userIds: [member.userId] })).status).toBe(200);
   return { owner, member, stranger, boardId, columns };
+}
+
+/** A planned sprint on the stranger's private board, which the owner and member cannot read. */
+async function foreignSprint() {
+  const { stranger } = await users();
+  const created = await call(stranger, "POST", "/boards", { name: "Stranger board" });
+  expect((await call(stranger, "PATCH", `/boards/${created.body.board.id}`, { structure: SPRINT_TASKS })).status).toBe(200);
+  return addSprint(stranger, created.body.board.id, "Theirs");
 }
 
 async function addSprint(session: Session, boardId: string, name: string, extra: Record<string, unknown> = {}) {
@@ -114,7 +127,7 @@ describe("sprint lifecycle", () => {
   });
 
   test("the Scrum template starts with a planned Sprint 1 of two weeks", async () => {
-    const owner = await createUser("Scrum template owner");
+    const { owner } = await users();
     const created = await call(owner, "POST", "/boards", { name: "Web app", template: "scrum" });
     expect(created.status).toBe(201);
     const { sprints } = await boardOf(owner, created.body.board.id);
@@ -165,9 +178,7 @@ describe("planning cards in sprints", () => {
   test("a sprint of another board is 404, a completed one 409, and sprints off 400; changing level clears the stored sprint", async () => {
     const { owner, member, boardId, columns } = await setup("Refusals");
     const sprint = await addSprint(owner, boardId, "Sprint 1");
-    const foreign = await setup("Refusals other");
-    const foreignSprint = await addSprint(foreign.owner, foreign.boardId, "Theirs");
-    expect((await call(member, "POST", `/boards/${boardId}/cards`, { columnId: columns[0].id, title: "Nope", sprintId: foreignSprint.id })).status).toBe(404);
+    expect((await call(member, "POST", `/boards/${boardId}/cards`, { columnId: columns[0].id, title: "Nope", sprintId: (await foreignSprint()).id })).status).toBe(404);
     expect((await call(member, "POST", `/boards/${boardId}/cards`, { columnId: columns[0].id, title: "Nope", sprintId: crypto.randomUUID() })).status).toBe(404);
     db.query("UPDATE board_sprints SET state = 'closed', closed_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", sprint.id);
     expect(await call(member, "POST", `/boards/${boardId}/cards`, { columnId: columns[0].id, title: "Nope", sprintId: sprint.id })).toMatchObject({ status: 409, body: { code: "SPRINT_COMPLETED" } });
@@ -204,5 +215,106 @@ describe("planning cards in sprints", () => {
     expect((await call(member, "GET", `/boards/${boardId}/sprints?cursor=bad!`)).status).toBe(400);
     // The board payload carries the open sprints and the last five completed ones.
     expect((await boardOf(member, boardId)).sprints).toHaveLength(6);
+  });
+});
+
+describe("completing a sprint", () => {
+  async function running(label: string) {
+    const setupResult = await setup(label);
+    const { owner, member, boardId, columns } = setupResult;
+    const sprint = await addSprint(owner, boardId, "Sprint 12", { startOn: "2026-09-21", endOn: "2026-10-04" });
+    expect((await call(owner, "PATCH", `/sprints/${sprint.id}`, { state: "active" })).status).toBe(200);
+    const done = await addCard(member, boardId, columns[2].id, "Shipped", { sprintId: sprint.id });
+    const open = await addCard(member, boardId, columns[0].id, "Still open", { sprintId: sprint.id });
+    const doing = await addCard(member, boardId, columns[1].id, "Half done", { sprintId: sprint.id });
+    const subtask = await addCard(member, boardId, columns[0].id, "Its subtask", { parentId: open.id });
+    const backlog = await addCard(member, boardId, columns[0].id, "Backlog");
+    return { ...setupResult, sprint, done, open, doing, subtask, backlog };
+  }
+
+  test("carry to the next planned sprint: unfinished cards move with a revision bump, done cards stay, subtasks follow", async () => {
+    const { owner, member, stranger, boardId, columns, sprint, done, open, doing, subtask, backlog } = await running("Carry next");
+    const next = await addSprint(owner, boardId, "Sprint 13");
+    const later = await addSprint(owner, boardId, "Sprint 14");
+    const binned = await addCard(member, boardId, columns[0].id, "Binned", { sprintId: sprint.id });
+    expect((await call(member, "DELETE", `/cards/${binned.id}`)).status).toBe(200);
+    // Members cannot complete it; strangers see 404.
+    expect(await call(member, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" })).toMatchObject({ status: 403, body: { code: "OWNER_ONLY" } });
+    expect((await call(stranger, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" })).status).toBe(404);
+    const completed = await call(owner, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" });
+    expect(completed.status).toBe(200);
+    expect(completed.body).toMatchObject({ carried: 2, doneCount: 1, created: false, sprint: { id: sprint.id, state: "completed", is_active: false, card_count: 1, done_count: 1 }, target: { id: next.id, card_count: 2 } });
+    expect(completed.body.sprint.completed_at).toBeTruthy();
+    expect(lastAudit("task.sprint_complete")).toEqual({ boardId, sprintId: sprint.id, carried: 2, doneCount: 1, carryTo: "next", targetSprintId: next.id });
+    const cards = new Map((await boardOf(member, boardId)).cards.map((card) => [card.id, card]));
+    expect(cards.get(done.id)).toMatchObject({ sprint_id: sprint.id, revision: done.revision });
+    expect(cards.get(open.id)).toMatchObject({ sprint_id: next.id, revision: open.revision + 1 });
+    expect(cards.get(doing.id)!.sprint_id).toBe(next.id);
+    expect(cards.get(subtask.id)!.sprint_id).toBe(next.id);
+    expect(cards.get(backlog.id)!.sprint_id).toBeNull();
+    // The binned card keeps the completed sprint; the later sprint is untouched.
+    expect((db.query("SELECT sprint_id FROM cards WHERE id = ?").get(binned.id) as { sprint_id: string }).sprint_id).toBe(sprint.id);
+    expect((await boardOf(member, boardId)).sprints.find((item) => item.id === later.id)).toMatchObject({ card_count: 0, state: "planned" });
+    // A stale editor of a carried card gets CARD_CHANGED.
+    expect(await call(member, "PATCH", `/cards/${open.id}`, { title: "Stale", revision: open.revision })).toMatchObject({ status: 409, body: { code: "CARD_CHANGED" } });
+    // Only the active sprint completes, once.
+    expect(await call(owner, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "backlog" })).toMatchObject({ status: 409, body: { code: "SPRINT_NOT_ACTIVE" } });
+    expect(await call(owner, "POST", `/sprints/${next.id}/complete`, { carryTo: "backlog" })).toMatchObject({ status: 409, body: { code: "SPRINT_NOT_ACTIVE" } });
+    // A completed sprint cannot be started again or take new cards; the next one can start now.
+    expect(await call(owner, "PATCH", `/sprints/${sprint.id}`, { state: "active" })).toMatchObject({ status: 409, body: { code: "SPRINT_COMPLETED" } });
+    expect(await call(member, "PATCH", `/cards/${backlog.id}`, { sprintId: sprint.id, revision: backlog.revision })).toMatchObject({ status: 409, body: { code: "SPRINT_COMPLETED" } });
+    expect((await call(owner, "PATCH", `/sprints/${next.id}`, { state: "active" })).status).toBe(200);
+  });
+
+  test("carry to the backlog, to a chosen planned sprint, or to a new sprint named and dated after this one", async () => {
+    const toBacklog = await running("Carry backlog");
+    const result = await call(toBacklog.owner, "POST", `/sprints/${toBacklog.sprint.id}/complete`, { carryTo: "backlog" });
+    expect(result.body).toMatchObject({ carried: 2, doneCount: 1, target: null, created: false });
+    expect(lastAudit("task.sprint_complete")).toMatchObject({ carryTo: "backlog", carried: 2 });
+    expect(lastAudit("task.sprint_complete")!.targetSprintId).toBeUndefined();
+    const cards = new Map((await boardOf(toBacklog.member, toBacklog.boardId)).cards.map((card) => [card.id, card]));
+    expect(cards.get(toBacklog.open.id)!.sprint_id).toBeNull();
+    expect(cards.get(toBacklog.subtask.id)!.sprint_id).toBeNull();
+    expect(cards.get(toBacklog.done.id)!.sprint_id).toBe(toBacklog.sprint.id);
+
+    const chosen = await running("Carry chosen");
+    const first = await addSprint(chosen.owner, chosen.boardId, "Sprint 13");
+    const second = await addSprint(chosen.owner, chosen.boardId, "Sprint 14");
+    expect((await call(chosen.owner, "POST", `/sprints/${chosen.sprint.id}/complete`, { carryTo: second.id })).body).toMatchObject({ carried: 2, target: { id: second.id } });
+    expect(lastAudit("task.sprint_complete")).toMatchObject({ carryTo: "sprint", targetSprintId: second.id });
+    expect((await boardOf(chosen.member, chosen.boardId)).sprints.find((item) => item.id === first.id)!.card_count).toBe(0);
+
+    const fresh = await running("Carry new");
+    // No planned sprint: "next" is refused and nothing changes.
+    expect(await call(fresh.owner, "POST", `/sprints/${fresh.sprint.id}/complete`, { carryTo: "next" })).toMatchObject({ status: 409, body: { code: "NO_NEXT_SPRINT" } });
+    expect((await boardOf(fresh.member, fresh.boardId)).sprints[0]).toMatchObject({ id: fresh.sprint.id, state: "active" });
+    // A sprint of another board, the active sprint itself, or an unknown id is 404; a name without "new" is 400.
+    const theirs = await foreignSprint();
+    expect((await call(fresh.owner, "POST", `/sprints/${fresh.sprint.id}/complete`, { carryTo: theirs.id })).status).toBe(404);
+    expect((await call(fresh.owner, "POST", `/sprints/${fresh.sprint.id}/complete`, { carryTo: fresh.sprint.id })).status).toBe(404);
+    expect((await call(fresh.owner, "POST", `/sprints/${fresh.sprint.id}/complete`, { carryTo: "backlog", name: "X" })).status).toBe(400);
+    expect((await call(fresh.owner, "POST", `/sprints/${fresh.sprint.id}/complete`, { carryTo: "later" })).status).toBe(400);
+    const made = await call(fresh.owner, "POST", `/sprints/${fresh.sprint.id}/complete`, { carryTo: "new" });
+    expect(made.body).toMatchObject({ carried: 2, created: true, target: { name: "Sprint 13", state: "planned", start_on: "2026-10-05", end_on: "2026-10-18", card_count: 2 } });
+    expect(lastAudit("task.sprint_create")).toEqual({ boardId: fresh.boardId, sprintId: made.body.target.id });
+    const named = await running("Carry new named");
+    const custom = await call(named.owner, "POST", `/sprints/${named.sprint.id}/complete`, { carryTo: "new", name: "Hardening", startOn: "2026-11-01", endOn: null });
+    expect(custom.body.target).toMatchObject({ name: "Hardening", start_on: "2026-11-01", end_on: null });
+  });
+
+  test("a move racing the completion is serialized by the board lock: a card is either done and stays, or open and carried (T118)", async () => {
+    const { owner, member, boardId, columns, sprint, open } = await running("Race");
+    const next = await addSprint(owner, boardId, "Sprint 13");
+    const [moved, completed] = await Promise.all([
+      call(member, "POST", `/cards/${open.id}/move`, { columnId: columns[2].id, afterCardId: null }),
+      call(owner, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" })
+    ]);
+    expect(moved.status).toBe(200);
+    expect(completed.status).toBe(200);
+    const card = (await boardOf(member, boardId)).cards.find((item) => item.id === open.id)!;
+    expect(card.column_id).toBe(columns[2].id);
+    // Whichever ran first, the result is consistent with it.
+    if (card.sprint_id === sprint.id) expect(completed.body.doneCount).toBe(2);
+    else expect(card.sprint_id).toBe(next.id);
   });
 });
