@@ -561,11 +561,13 @@ board:<uuid> column:<uuid> -tag:"Needs design",none flag:blocked "invoice"
 | `tag` | `none`, uuid, or a name (1–40) | names match board tags case-insensitively, so one name works across boards |
 | `flag` | `urgent`, `blocked`, `needs_review`, `on_hold`, `none` | the manual card flags |
 | `due` | `overdue`, `today`, `week`, `next-week`, `none`, `YYYY-MM-DD`, `<YYYY-MM-DD`, `>YYYY-MM-DD` | relative values use the caller's `tz`; `week` is today plus six days, `next-week` the seven after; `overdue` is a date before today, or a timed card due today whose wall time has passed. `before:D`/`after:D` are accepted as `<D`/`>D` |
-| `has` | `relation`, `blocked` | any visible relation; an open `depends_on` blocker |
+| `parent` | `none`, uuid | the card's parent (17A); `none` = no parent. Parents are on the same board, so another board's card matches nothing |
+| `level` | `work`, `0`, `1`, `2` | the card's level (17A); `work` is each board's own work level |
+| `has` | `relation`, `blocked`, `subtasks` | any visible relation; an open `depends_on` blocker; at least one live child (17A) |
 | text | `"quoted phrase"` or a bare word | the title or the description excerpt contains it (case-insensitive `instr`, no wildcards) |
 
-- **Reserved keys.** `parent:`, `level:`, `sprint:`, and `has:subtasks` arrive with 17A/17B (D137) and are refused with `FILTER_UNSUPPORTED` until then.
-- **Canonical form.** `format` orders terms by key (`board state column assignee creator tag flag due has text`, positive before negated), dedupes and sorts values, lowercases ids and keywords, and always quotes text. URLs (`?q=`), `task_views.query`, and MCP carry the canonical form.
+- **Reserved keys.** `sprint:` arrives with 17B (D137) and is refused with `FILTER_UNSUPPORTED` until then. `parent:`, `level:`, and `has:subtasks` shipped with 17A, in the board's in-memory matcher (`matchesQuery`) and the cross-board compiler alike (`tests/taskQueryParity.test.ts`).
+- **Canonical form.** `format` orders terms by key (`board state column assignee creator tag flag due parent level has text`, positive before negated), dedupes and sorts values, lowercases ids and keywords, and always quotes text. URLs (`?q=`), `task_views.query`, and MCP carry the canonical form.
 - **Limits.** At most 2000 characters, 20 terms, 20 values per term, 100 characters per text term. No control or bidi characters.
 - **Errors.** `{ code: "FILTER_INVALID" | "FILTER_UNSUPPORTED" | "FILTER_SCOPE", message, position }`, where `position` is the character offset.
 - **One grammar with the Wave 13 structured filter.** The same module holds 13C's `CardFilter` and board pipeline (`queryCards`, `sortCards`, used by the client and mirrored by `list_cards` in `server/tasks/cardQuery.ts`). `queryFromCardFilter` gives a structured filter its canonical text, and `cardFilterFromQuery` turns a board-scoped query back into a `CardFilter`, or `null` when it uses what the board pipeline does not model (negation, `board:`, `state:`, `creator:`, `has:`, tag names, relative due windows, repeated keys); those run on the server. `tests/taskQueryParity.test.ts` checks that the three paths agree.
@@ -587,6 +589,7 @@ type QueriedCard = {
   assignees: CardAssignee[];                         // with can_read, as on the board
   tags: { id; name; color }[]; flags: Flag[];        // flags in the fixed order
   created_at; updated_at;
+  parent_card_id; level; parent_title: string | null;  // 17A: the parent on the same board (D138); null when none or binned
 };
 type QueryRefs = {                                   // first page only: what the query's ids mean to this caller (T116)
   boards:  ({ id; name } | { id; restricted: true })[];

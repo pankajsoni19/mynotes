@@ -53,6 +53,9 @@ const hasOpenBlocker = `EXISTS (SELECT 1 FROM card_relations r JOIN cards o ON o
     JOIN board_columns oc ON oc.id = o.column_id
   WHERE r.target_card_id = k.id AND r.kind = 'blocks' AND o.deleted_at IS NULL AND oc.is_done = 0 AND ${readableOtherBoardPredicate})`;
 
+/** A live direct child (17A); children are on the same board, so readability is the card's own. */
+const hasSubtasks = "EXISTS (SELECT 1 FROM cards ch WHERE ch.parent_card_id = k.id AND ch.deleted_at IS NULL)";
+
 class Compiler {
   readonly params: Record<string, Binding> = {};
   private next = 0;
@@ -140,8 +143,22 @@ function termSql(term: FilterTerm, compiler: Compiler): string {
         }
       }
       break;
+    case "parent": {
+      // Parents are on the card's own board (D133), so another board's card id simply matches nothing.
+      const ids = values.filter((value) => value !== "none");
+      if (ids.length) parts.push(`k.parent_card_id IN (${compiler.list(ids)})`);
+      if (values.includes("none")) parts.push("k.parent_card_id IS NULL");
+      break;
+    }
+    case "level": {
+      const levels = values.filter((value) => value !== "work").map(Number);
+      if (levels.length) parts.push(`k.level IN (${compiler.list(levels)})`);
+      // `work` is each board's own work level (D122).
+      if (values.includes("work")) parts.push("k.level = COALESCE(json_extract(b.structure_json, '$.workLevel'), 0)");
+      break;
+    }
     case "has":
-      for (const value of values) parts.push(value === "blocked" ? hasOpenBlocker : hasRelation);
+      for (const value of values) parts.push(value === "blocked" ? hasOpenBlocker : value === "subtasks" ? hasSubtasks : hasRelation);
       break;
     case "text": {
       const text = compiler.bind(values[0]!);
@@ -220,6 +237,10 @@ export type QueriedCard = {
   flags: string[];
   created_at: string;
   updated_at: string;
+  /** Hierarchy (17A): the parent on the same board and its title (null when it has none or it is binned, D138). */
+  parent_card_id: string | null;
+  level: number;
+  parent_title: string | null;
 };
 
 /** What a query's ids mean to this caller (T116): names only for what they can read. */
@@ -334,7 +355,8 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
     WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where})`;
   const rows = db.query(`SELECT k.id, k.board_id, b.name AS board_name, k.column_id, col.name AS column_name, ${COLUMN_STATE} AS column_state, col.is_done,
       k.position, k.title, k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
-      k.due_on, k.due_time, k.due_tz, k.created_at, k.updated_at,
+      k.due_on, k.due_time, k.due_tz, k.created_at, k.updated_at, k.parent_card_id, k.level,
+      (SELECT p.title FROM cards p WHERE p.id = k.parent_card_id AND p.board_id = k.board_id AND p.deleted_at IS NULL) AS parent_title,
       ${parts.map((part, index) => `${part.sql} AS sk${index}`).join(", ")}
     FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id LEFT JOIN users cu ON cu.id = k.created_by
     WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where}) AND ${after}

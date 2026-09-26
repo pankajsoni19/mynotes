@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
-import { cardFilterFromQuery, format, parse, queryCards, queryFromCardFilter, type CardFilter, type QueryCard } from "../shared/taskQuery";
+import { cardFilterFromQuery, format, matchesQuery, parse, queryCards, queryFromCardFilter, type CardFilter, type MemoryQueryCard, type QueryCard } from "../shared/taskQuery";
 
 const { filterBoardCardIds } = await import("../server/tasks/cardQuery");
 const { runQuery } = await import("../server/tasks/query");
@@ -149,6 +149,33 @@ describe("one grammar across the board pipeline, list_cards SQL, and the cross-b
       const parsed = parse(text, { boardScoped: true });
       expect(parsed.ok).toBe(true);
       expect(cardFilterFromQuery((parsed as { ok: true; query: never }).query)).toBeNull();
+    }
+  });
+});
+
+describe("hierarchy keys (17A): the board's in-memory matcher and the cross-board query agree", () => {
+  test("parent:, level:, and has:subtasks, positive and negated", async () => {
+    const user = await createUser("Parity hierarchy");
+    const created = await call(user, "POST", "/boards", { name: "Parity tree" });
+    const treeBoard = created.body.board.id as string;
+    const todo = created.body.columns[0].id as string;
+    const structure = { levels: [{ name: "Epic", plural: "Epics" }, { name: "Story", plural: "Stories" }, { name: "Subtask", plural: "Subtasks" }], workLevel: 1, sprints: false };
+    expect((await call(user, "PATCH", `/boards/${treeBoard}`, { structure })).status).toBe(200);
+    const add = async (title: string, extra: Record<string, unknown>) => (await call(user, "POST", `/boards/${treeBoard}/cards`, { columnId: todo, title, ...extra })).body.card.id as string;
+    const epic = await add("Epic", { level: 0 });
+    const story = await add("Story", { parentId: epic });
+    await add("Subtask", { parentId: story });
+    await add("Loose story", {});
+    await add("Loose subtask", { level: 2 });
+    const board = (await call(user, "GET", `/boards/${treeBoard}`)).body;
+    for (const text of ["parent:none", `parent:${epic}`, `parent:${story},none`, "level:work", "level:0,2", "-level:work", "has:subtasks", "-has:subtasks", `level:1 parent:${epic}`]) {
+      const parsed = parse(`board:${treeBoard} ${text}`);
+      if (!parsed.ok) throw new Error(`${text}: ${parsed.error.message}`);
+      const memory = (board.cards as MemoryQueryCard[]).filter((card) => matchesQuery({ ...card, board_id: treeBoard } as MemoryQueryCard, parsed.query, { userId: user.userId, today: "2026-09-26", workLevel: 1 }))
+        .map((card) => card.id).sort();
+      const server = runQuery(user.userId, parsed.query, { tz: "UTC", limit: 100 }).cards.map((card) => card.id).sort();
+      expect(server).toEqual(memory);
+      expect(server.length).toBeGreaterThan(0);
     }
   });
 });

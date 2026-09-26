@@ -46,24 +46,26 @@ export const TASK_QUERY_LIMITS = {
 } as const;
 
 /** Keys in canonical order. */
-export const FILTER_KEYS = ["board", "state", "column", "assignee", "creator", "tag", "flag", "due", "has", "text"] as const;
+export const FILTER_KEYS = ["board", "state", "column", "assignee", "creator", "tag", "flag", "due", "parent", "level", "has", "text"] as const;
 export type FilterKey = typeof FILTER_KEYS[number];
 
 /**
- * Keys that arrive with the hierarchy and sprint sub-waves (17A, 17B, D137).
+ * Keys that arrive with the sprint sub-wave (17B, D137); `parent:` and `level:` shipped with 17A.
  * They parse as `FILTER_UNSUPPORTED` until then, so a query that uses them is
  * refused rather than silently widened.
  */
-export const RESERVED_FILTER_KEYS = ["parent", "level", "sprint"] as const;
+export const RESERVED_FILTER_KEYS = ["sprint"] as const;
 
 export const TASK_STATES = ["todo", "doing", "done"] as const;
 export type TaskState = typeof TASK_STATES[number];
 /** The fixed card flag set (WAVE_13 D110), in display order. */
 export const TASK_FLAGS = ["urgent", "blocked", "needs_review", "on_hold"] as const;
 export type TaskFlag = typeof TASK_FLAGS[number];
-/** `has:` values. `relation`: any visible relation; `blocked`: an open `depends_on` blocker. `subtasks` is reserved (17A). */
-export const HAS_VALUES = ["relation", "blocked"] as const;
-const RESERVED_HAS_VALUES = ["subtasks"] as const;
+/** `has:` values. `relation`: any visible relation; `blocked`: an open `depends_on` blocker; `subtasks`: live children (17A). */
+export const HAS_VALUES = ["relation", "blocked", "subtasks"] as const;
+const RESERVED_HAS_VALUES: readonly string[] = [];
+/** `level:` values (17A, D137): a level number, or `work` for each board's work level. */
+export const LEVEL_VALUES = ["work", "0", "1", "2"] as const;
 /** Relative due keywords. `week` is today and the next six days; `next-week` the seven days after that. */
 export const DUE_KEYWORDS = ["overdue", "today", "week", "next-week", "none"] as const;
 
@@ -157,9 +159,16 @@ function normalizeValue(key: FilterKey, raw: string, position: number): string {
       if (!isQueryDate(date)) throw bad("due: takes overdue, today, week, next-week, none, or a date as YYYY-MM-DD, <YYYY-MM-DD, or >YYYY-MM-DD");
       return comparison;
     }
+    case "parent":
+      if (lower === "none") return lower;
+      if (!isUuid(raw)) throw bad("parent: takes none or a card id");
+      return lower;
+    case "level":
+      if ((LEVEL_VALUES as readonly string[]).includes(lower)) return lower;
+      throw bad("level: takes work, 0, 1, or 2");
     case "has":
       if ((HAS_VALUES as readonly string[]).includes(lower)) return lower;
-      if ((RESERVED_HAS_VALUES as readonly string[]).includes(lower)) throw new Fail("FILTER_UNSUPPORTED", `has:${lower} is not available yet`, position);
+      if (RESERVED_HAS_VALUES.includes(lower)) throw new Fail("FILTER_UNSUPPORTED", `has:${lower} is not available yet`, position);
       throw bad(`has: takes ${HAS_VALUES.join(" or ")}`);
     case "text": {
       const text = raw.normalize("NFC").trim();
@@ -178,6 +187,8 @@ const KEYWORD_ORDER: Partial<Record<FilterKey, readonly string[]>> = {
   flag: [...TASK_FLAGS, "none"],
   tag: ["none"],
   due: DUE_KEYWORDS,
+  parent: ["none"],
+  level: LEVEL_VALUES,
   has: HAS_VALUES
 };
 
@@ -744,9 +755,15 @@ export type MemoryQueryCard = QueryCard & {
   due_at?: string | null;
   relation_count?: number;
   open_blockers?: number;
+  /** Hierarchy (17A): the parent on the same board, the level, and live direct children. */
+  parent_card_id?: string | null;
+  level?: number;
+  child_count?: number;
 };
 
 export type MemoryQueryContext = {
+  /** The board's work level, for `level:work` (17A); 0 when unknown. */
+  workLevel?: number;
   userId: string;
   /** The viewer's local date, YYYY-MM-DD, for the relative due windows. */
   today: string;
@@ -795,7 +812,10 @@ function matchesTerm(card: MemoryQueryCard, term: FilterTerm, context: MemoryQue
     }
     case "flag": return (values.includes("none") && card.flags.length === 0) || card.flags.some((flag) => values.includes(flag));
     case "due": return values.some((value) => matchesDueValue(card, value, context));
-    case "has": return values.some((value) => value === "blocked" ? (card.open_blockers ?? 0) > 0 : (card.relation_count ?? 0) > 0);
+    case "parent": return (values.includes("none") && !card.parent_card_id) || (!!card.parent_card_id && values.includes(card.parent_card_id));
+    case "level": return values.some((value) => (value === "work" ? context.workLevel ?? 0 : Number(value)) === (card.level ?? 0));
+    case "has": return values.some((value) => value === "blocked" ? (card.open_blockers ?? 0) > 0
+      : value === "subtasks" ? (card.child_count ?? 0) > 0 : (card.relation_count ?? 0) > 0);
     case "text": return matchesText(card, foldText(values[0] ?? ""));
   }
 }
