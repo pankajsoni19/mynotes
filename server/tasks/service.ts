@@ -5,6 +5,8 @@ import { readableBoard, readableBoardPredicate, readableCard, readableColumn, ty
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
 import { dueAt, resolveDue, type DueInput } from "./dueTime";
+import { descriptionExcerpt } from "./excerpt";
+import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
 
 /**
  * Task Boards services (WAVES_7-9.md §3). Routes are thin adapters over these
@@ -75,7 +77,8 @@ export function listColumns(boardId: string) {
 
 /**
  * A card as shown on the board: no description (up to 64 KiB each), only
- * whether one exists, plus comment and attachment counts.
+ * whether one exists and a short plain-text excerpt, plus comment and
+ * attachment counts.
  */
 export type CardSummary = {
   id: string;
@@ -84,6 +87,8 @@ export type CardSummary = {
   position: number;
   title: string;
   has_description: 0 | 1;
+  /** Plain text of the description, at most 160 characters (D111); '' without one. */
+  description_excerpt: string;
   revision: number;
   created_by: string | null;
   creator_name: string | null;
@@ -101,6 +106,10 @@ export type CardSummary = {
   assignee_id: string | null;
   /** Deprecated (D103): the first assignee's display name. */
   assignee_name: string | null;
+  /** Tag ids of this board, at most 10, in tagging order; resolve against the board's `tags` (D109). */
+  tag_ids: string[];
+  /** Flags from the fixed set, in its order (D110). */
+  flags: CardFlag[];
   comment_count: number;
   attachment_count: number;
   created_at: string;
@@ -110,7 +119,7 @@ export type CardSummary = {
 const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
-         k.revision, k.created_by, cu.display_name AS creator_name,
+         k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
          k.due_on, k.due_time, k.due_tz,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
@@ -121,12 +130,13 @@ const cardSummarySelect = cardSelect();
 const cardDetailSelect = cardSelect(", k.description");
 
 /** A selected card row before its computed and grouped fields (due instant, assignees) are attached. */
-type SelectedCard = Omit<CardSummary, "due_at" | "assignees" | "assignee_id" | "assignee_name">;
+type SelectedCard = Omit<CardSummary, "due_at" | "assignees" | "assignee_id" | "assignee_name" | "tag_ids" | "flags">;
+type GroupedFields = { assignees: CardAssignee[]; tagIds: string[]; flags: CardFlag[] };
 
 /** Adds the computed and grouped fields; the deprecated `assignee_id`/`assignee_name` are the first assignee (D103). */
-function withCardFields<T extends SelectedCard>(card: T, assignees: CardAssignee[]) {
+function withCardFields<T extends SelectedCard>(card: T, { assignees, tagIds, flags }: GroupedFields, instant: typeof dueAt = dueAt) {
   const first = assignees[0];
-  return { ...card, due_at: dueAt(card), assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null };
+  return { ...card, due_at: instant(card), assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null, tag_ids: tagIds, flags };
 }
 
 /** The due fields after a change, or 400 with the rule that failed (D100). */
@@ -138,13 +148,24 @@ function requireDue(current: Parameters<typeof resolveDue>[0], input: DueInput) 
 
 export function listCards(boardId: string): CardSummary[] {
   const cards = db.query(`${cardSummarySelect} WHERE k.board_id = ? AND k.deleted_at IS NULL ORDER BY k.position, k.id`).all(boardId) as SelectedCard[];
+  // One grouped query per concern over the board's live cards, never a per-card subquery (§3.1).
   const assignees = assigneesForBoard(boardId);
-  return cards.map((card) => withCardFields(card, assignees.get(card.id) ?? []));
+  const tags = tagIdsForBoard(boardId);
+  const flags = flagsForBoard(boardId);
+  // Cards often share a due date, time, and zone; each instant costs a few Intl calls (measured in 13C, D113).
+  const instants = new Map<string, string | null>();
+  const instant = (card: Parameters<typeof dueAt>[0]) => {
+    if (!card.due_time) return null;
+    const key = `${card.due_on}T${card.due_time} ${card.due_tz}`;
+    if (!instants.has(key)) instants.set(key, dueAt(card));
+    return instants.get(key)!;
+  };
+  return cards.map((card) => withCardFields(card, { assignees: assignees.get(card.id) ?? [], tagIds: tags.get(card.id) ?? [], flags: flags.get(card.id) ?? [] }, instant));
 }
 
 export function getBoard(userId: string, boardId: string) {
   requireReadableBoard(boardId, userId);
-  return { board: boardSummary(boardId, userId)!, columns: listColumns(boardId), cards: listCards(boardId) };
+  return { board: boardSummary(boardId, userId)!, columns: listColumns(boardId), cards: listCards(boardId), tags: listBoardTags(boardId) };
 }
 
 /** The board if the caller can read it, else 404. */
@@ -341,7 +362,7 @@ export const cardNotFound = () => new TaskError(404, "Card not found");
 
 export function cardDetail(cardId: string): CardDetail | null {
   const card = db.query(`${cardDetailSelect} WHERE k.id = ? AND k.deleted_at IS NULL`).get(cardId) as (SelectedCard & { description: string }) | null;
-  return card ? withCardFields(card, assigneesForCard(cardId)) : null;
+  return card ? withCardFields(card, { assignees: assigneesForCard(cardId), tagIds: tagIdsForCard(cardId), flags: flagsForCard(cardId) }) : null;
 }
 
 export function liveCardsIn(columnId: string) {
@@ -387,6 +408,10 @@ export type CardCreateInput = {
   columnId: string; title: string; description?: string; dueOn?: string | null; afterCardId?: string | null;
   dueTime?: string | null; dueTz?: string | null;
   assigneeIds?: string[];
+  /** Tags of this board (D109), at most 10 after deduplication. */
+  tagIds?: string[];
+  /** Unique flags from the fixed set (D110). */
+  flags?: CardFlag[];
 };
 
 /** Creates a card. `afterCardId`: omitted = bottom of the column, null = top, an id = after that card. */
@@ -396,6 +421,7 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     const column = requireBoardColumn(boardId, input.columnId);
     const assignees = input.assigneeIds === undefined ? undefined : uniqueAssignees(input.assigneeIds);
     for (const assigneeId of assignees ?? []) requireAssignableUser(boardId, assigneeId);
+    const tagIds = input.tagIds === undefined ? undefined : requireCardTags(boardId, input.tagIds);
     const due = requireDue({ due_on: null, due_time: null, due_tz: null }, input).value;
     const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(boardId) as { count: number }).count;
     if (live >= LIMITS.liveCardsPerBoard) throw limitReached(`A board can have up to ${LIMITS.liveCardsPerBoard} cards`);
@@ -406,12 +432,20 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     db.transaction(() => {
       applyRenumber("cards", plan.renumbered);
       const timestamp = now();
-      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, due_on, due_time, due_tz, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", due.due_on, due.due_time, due.due_tz, userId, timestamp, timestamp);
+      const description = input.description ?? "";
+      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, description_excerpt, due_on, due_time, due_tz, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, boardId, input.columnId, plan.position, input.title, description, descriptionExcerpt(description), due.due_on, due.due_time, due.due_tz, userId, timestamp, timestamp);
       if (assignees?.length) replaceAssignees(id, assignees, userId, timestamp);
+      if (tagIds?.length) replaceCardTags(id, tagIds, timestamp);
+      if (input.flags?.length) replaceCardFlags(id, input.flags, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
-      audit(userId, null, "task.card_create", { boardId, cardId: id, ...(assignees?.length ? { assigneesAdded: assignees.length } : {}) });
+      audit(userId, null, "task.card_create", {
+        boardId, cardId: id,
+        ...(assignees?.length ? { assigneesAdded: assignees.length } : {}),
+        ...(tagIds?.length ? { tagsAdded: tagIds.length } : {}),
+        ...(input.flags?.length ? { flags: input.flags } : {})
+      });
     })();
     return { card: cardDetail(id)!, ...(plan.renumbered ? { renormalized: true } : {}) };
   });
@@ -432,6 +466,10 @@ export type CardPatchInput = {
   assigneeId?: string | null;
   /** Replaces the whole set; `[]` clears it. */
   assigneeIds?: string[];
+  /** Replaces the whole tag set with tags of the card's board; `[]` clears it (D109). */
+  tagIds?: string[];
+  /** Replaces the whole flag set; `[]` clears it (D110). */
+  flags?: CardFlag[];
   revision: number;
 };
 
@@ -488,7 +526,7 @@ function requireAssignableUser(boardId: string, assigneeId: string) {
 }
 
 /**
- * Edits title, description, due date, and/or assignees with a compare-and-swap
+ * Edits title, description, due date, assignees, tags, and/or flags with a compare-and-swap
  * on `revision` (409 CARD_CHANGED carries the current card). Every field
  * changes in one transaction and `revision` goes up by exactly 1 (D107).
  * `dueOn` accepts null to clear; `assigneeIds` replaces the whole set. Only
@@ -504,11 +542,13 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
     }
     const assignees = requestedAssignees(input);
     for (const assigneeId of assignees ? newAssignees(cardId, assignees) : []) requireAssignableUser(board.id, assigneeId);
+    const tagIds = input.tagIds === undefined ? undefined : requireCardTags(board.id, input.tagIds);
     const setDue = input.dueOn !== undefined || input.dueTime !== undefined || input.dueTz !== undefined;
     const due = setDue ? requireDue(card, input) : null;
     db.transaction(() => {
       const timestamp = now();
       const updated = db.query(`UPDATE cards SET title = COALESCE($title, title), description = COALESCE($description, description),
+          description_excerpt = COALESCE($excerpt, description_excerpt),
           due_on = CASE WHEN $setDue THEN $dueOn ELSE due_on END,
           due_time = CASE WHEN $setDue THEN $dueTime ELSE due_time END,
           due_tz = CASE WHEN $setDue THEN $dueTz ELSE due_tz END,
@@ -516,6 +556,8 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
         WHERE id = $cardId AND revision = $revision AND deleted_at IS NULL`).run({
         title: input.title ?? null,
         description: input.description ?? null,
+        // Every description write refreshes the excerpt (D111).
+        excerpt: input.description === undefined ? null : descriptionExcerpt(input.description),
         setDue: due ? 1 : 0,
         dueOn: due?.value.due_on ?? null,
         dueTime: due?.value.due_time ?? null,
@@ -526,13 +568,17 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
       });
       if (updated.changes !== 1) throw new Error("Concurrent card update detected");
       const changed = assignees ? replaceAssignees(cardId, assignees, userId, timestamp) : null;
+      const tagsChanged = tagIds ? replaceCardTags(cardId, tagIds, timestamp) : null;
+      if (input.flags) replaceCardFlags(cardId, input.flags, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
       audit(userId, null, "task.card_update", {
         boardId: board.id, cardId,
         ...(input.dueOn !== undefined ? { dueOn: input.dueOn } : {}),
         ...(due?.timeChange ? { dueTime: due.timeChange } : {}),
         ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
-        ...(changed ? { assigneesAdded: changed.added.length, assigneesRemoved: changed.removed.length } : {})
+        ...(changed ? { assigneesAdded: changed.added.length, assigneesRemoved: changed.removed.length } : {}),
+        ...(tagsChanged ? { tagsAdded: tagsChanged.added.length, tagsRemoved: tagsChanged.removed.length } : {}),
+        ...(input.flags ? { flags: input.flags } : {})
       });
     })();
     return { card: cardDetail(cardId)! };

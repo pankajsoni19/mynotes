@@ -9,8 +9,11 @@ import { searchCards } from "./cardSearch";
 import { parseCardSearchQuery, relationCreateSchema } from "./relationRoutes";
 import { RELATION_TYPES, type RelationType } from "./relations";
 import { createComment, listComments } from "./comments";
-import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema } from "./routes";
+import { QUERY_LIMITS, TASK_FLAGS, type CardFilter } from "../../shared/taskQuery";
+import { filterBoardCardIds } from "./cardQuery";
+import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema, isCalendarDate } from "./routes";
 import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchCard, TaskError, type CardSummary } from "./service";
+import { listBoardTags, type BoardTag } from "./tags";
 
 /**
  * MCP tools for Task Boards (docs/plan/WAVES_7-9.md §4.2, D38–D40, D70).
@@ -94,17 +97,44 @@ const attachmentNames = (cardId: string) => listAttachments(cardId).map((attachm
 
 type CardWithDescription = CardSummary & { description?: string };
 
-/** Due and assignee fields every card view shares (Wave 13): the zone and instant with a time, assignees as display names. */
-const cardFields = (card: CardSummary) => ({
+/** Tag names by id for one board; card tags are always tags of the card's own board. */
+const tagNames = (tags: readonly BoardTag[]) => new Map(tags.map((tag) => [tag.id, tag.name]));
+
+/**
+ * Fields every card view shares (Wave 13): the zone and instant with a time,
+ * assignees and tags as names, flags, and the plain-text excerpt.
+ */
+const cardFields = (card: CardSummary, tags: Map<string, string>) => ({
+  description_excerpt: card.description_excerpt,
   due_on: card.due_on,
   due_time: card.due_time,
   due_tz: card.due_tz,
   due_at: card.due_at,
   assignees: card.assignees.map((assignee) => assignee.display_name),
-  assignee_name: card.assignee_name
+  assignee_name: card.assignee_name,
+  tags: card.tag_ids.map((id) => tags.get(id)).filter((name): name is string => name !== undefined),
+  flags: card.flags
 });
 
-function listedCard(card: CardWithDescription, columnName: string | undefined, counts: RelationCounts) {
+/**
+ * Tag references (names, ignoring case, or ids) to ids of this board's tags.
+ * `none` is kept for filters only. Anything else is INVALID with the unknown
+ * values, so an agent can correct a typo; MCP never creates tags.
+ */
+function resolveTags(tags: readonly BoardTag[], refs: readonly string[], allowNone: boolean) {
+  const unknown: string[] = [];
+  const ids = refs.flatMap((ref) => {
+    if (allowNone && ref === "none") return ["none"];
+    const key = ref.trim().toLowerCase();
+    const tag = tags.find((candidate) => candidate.id === key) ?? tags.find((candidate) => candidate.name.toLowerCase() === key);
+    if (!tag) unknown.push(ref);
+    return tag ? [tag.id] : [];
+  });
+  if (unknown.length) throw new McpToolError("INVALID", "Unknown tag", { reason: "UNKNOWN_TAG", tags: unknown, known: tags.map((tag) => tag.name) });
+  return ids;
+}
+
+function listedCard(card: CardWithDescription, columnName: string | undefined, tags: Map<string, string>, counts: RelationCounts) {
   return {
     id: card.id,
     column_id: card.column_id,
@@ -114,7 +144,7 @@ function listedCard(card: CardWithDescription, columnName: string | undefined, c
     description_preview: card.description === undefined ? undefined : preview(card.description),
     revision: card.revision,
     creator_name: card.creator_name,
-    ...cardFields(card),
+    ...cardFields(card, tags),
     comment_count: card.comment_count,
     relation_count: counts.relation_count,
     open_blockers: counts.open_blockers,
@@ -127,12 +157,28 @@ const uuid = z.string().uuid();
 
 /** A card as create_card and update_card return it. */
 const writtenCard = (card: CardSummary) => ({
-  id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, revision: card.revision, ...cardFields(card)
+  id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, revision: card.revision, ...cardFields(card, tagNames(listBoardTags(card.board_id)))
 });
 
 const dueTimeInput = z.string().describe("Due time as HH:MM (24-hour), in dueTz; needs a due date");
 const dueTzInput = z.string().describe("IANA time zone of dueTime, for example Europe/Berlin");
 const assigneeIdsInput = z.array(uuid).max(20).describe("User ids who can open the board (see the board's readers); replaces the whole set");
+const tagsInput = z.array(z.string().min(1).max(64)).max(10).describe("Existing tags of the board, by name (any case) or id; replaces the whole set. Unknown tags are INVALID; tags are created in the app");
+const flagsInput = z.array(z.enum(TASK_FLAGS)).max(TASK_FLAGS.length).describe("Flags from the fixed set; replaces the whole set");
+const dateInput = z.string().refine(isCalendarDate, "Use a real date as YYYY-MM-DD");
+
+/** list_cards filters (D113, §5.5): values inside one filter are OR-ed, filters are AND-ed. */
+const listFilters = {
+  assigneeIds: z.array(z.union([uuid, z.literal("me"), z.literal("none")])).max(QUERY_LIMITS.values).optional()
+    .describe("Only cards assigned to any of these user ids; \"me\" is the key's user, \"none\" matches unassigned cards"),
+  tags: z.array(z.string().min(1).max(64)).max(QUERY_LIMITS.values).optional()
+    .describe("Only cards with any of these tags (names in any case, or ids); \"none\" matches untagged cards. Unknown tags are INVALID"),
+  flags: z.array(z.enum([...TASK_FLAGS, "none"])).max(TASK_FLAGS.length + 1).optional().describe("Only cards with any of these flags; \"none\" matches unflagged cards"),
+  dueBefore: dateInput.optional().describe("Only cards due strictly before this date (YYYY-MM-DD, the card's own calendar date)"),
+  dueAfter: dateInput.optional().describe("Only cards due strictly after this date; with dueBefore, a range"),
+  dueNone: z.boolean().optional().describe("true: also (or, alone, only) cards without a due date"),
+  text: z.string().min(1).max(QUERY_LIMITS.textMax).optional().describe("Only cards whose title or description excerpt contains this text, ignoring case and accents")
+};
 
 export const taskTools: McpToolSpec[] = [
   defineTool({
@@ -147,20 +193,31 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "list_cards",
     title: "List cards on a board",
-    description: "List a board's columns and its cards in order, optionally for one column. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
+    description: "List a board's columns, its tags, and its cards in order. Optional filters narrow the cards: columnId, assigneeIds, tags, flags, dueBefore/dueAfter/dueNone, and text; values inside one filter are alternatives, and different filters must all match. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
     scopes: ["tasks:read"],
     write: false,
-    inputSchema: z.object({ boardId: uuid, columnId: uuid.optional().describe("Only cards in this column") }),
-    handler: async ({ boardId, columnId }, key) => service(key, () => {
-      const { board, columns, cards } = getBoardWithRelationCounts(key.userId, boardId);
+    inputSchema: z.object({ boardId: uuid, columnId: uuid.optional().describe("Only cards in this column"), ...listFilters }),
+    handler: async ({ boardId, columnId, assigneeIds, tags, flags, dueBefore, dueAfter, dueNone, text }, key) => service(key, () => {
+      const { board, columns, cards, tags: boardTags } = getBoardWithRelationCounts(key.userId, boardId);
       if (columnId && !columns.some((column) => column.id === columnId)) throw new McpToolError("NOT_FOUND", "Column not found");
+      const filter: CardFilter = {
+        columns: columnId ? [columnId] : undefined,
+        assignees: assigneeIds,
+        tags: tags ? resolveTags(boardTags, tags, true) : undefined,
+        flags,
+        due: { before: dueBefore, after: dueAfter, none: dueNone },
+        text
+      };
+      // Filtered on the server with bound SQL (D113); the listing keeps the board's order.
+      const matching = new Set(filterBoardCardIds(board.id, filter, { userId: key.userId }));
       const names = new Map(columns.map((column) => [column.id, column.name]));
-      const selected = columnId ? cards.filter((card) => card.column_id === columnId) : cards;
+      const tagName = tagNames(boardTags);
       return {
         board: { id: board.id, name: board.name, owner_name: board.owner_name, is_owner: board.is_owner },
         columns: columns.map((column) => ({ id: column.id, name: column.name, position: column.position, wip_limit: column.wip_limit })),
+        tags: boardTags.map((tag) => ({ id: tag.id, name: tag.name, color: tag.color })),
         // Cards come from the board just authorized above.
-        cards: selected.map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id), card))
+        cards: cards.filter((card) => matching.has(card.id)).map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id), tagName, card))
       };
     })
   }),
@@ -173,7 +230,7 @@ export const taskTools: McpToolSpec[] = [
     inputSchema: z.object({ cardId: uuid }),
     handler: async ({ cardId }, key) => service(key, () => {
       const { card, board } = getCard(key.userId, cardId);
-      const { columns } = getBoard(key.userId, board.id);
+      const { columns, tags } = getBoard(key.userId, board.id);
       const page = listComments(key.userId, cardId);
       return {
         card: {
@@ -186,7 +243,7 @@ export const taskTools: McpToolSpec[] = [
           description: plainText(card.description),
           revision: card.revision,
           creator_name: card.creator_name,
-          ...cardFields(card),
+          ...cardFields(card, tagNames(tags)),
           created_at: card.created_at,
           updated_at: card.updated_at
         },
@@ -231,11 +288,15 @@ export const taskTools: McpToolSpec[] = [
       dueTime: dueTimeInput.optional(),
       dueTz: dueTzInput.optional(),
       assigneeIds: assigneeIdsInput.optional(),
+      tags: tagsInput.optional(),
+      flags: flagsInput.optional(),
       afterCardId: uuid.nullable().optional()
     }),
-    handler: async ({ boardId, ...fields }, key) => {
+    handler: async ({ boardId, tags, ...fields }, key) => {
       const input = routeInput(cardCreateSchema, fields);
       return service(key, async () => {
+        // Tags resolve against this board, after the board's own read check (NOT_FOUND first).
+        if (tags) input.tagIds = resolveTags(getBoard(key.userId, boardId).tags, tags, false);
         const { card } = await createCard(key.userId, boardId, input);
         return { card: writtenCard(card) };
       });
@@ -244,7 +305,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "update_card",
     title: "Update a card",
-    description: "Change a card's title, due date, due time, or assignees on a board the user can use. The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time; assigneeIds replaces the whole set ([] clears it).",
+    description: "Change a card's title, due date, due time, assignees, tags, or flags on a board the user can use. The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time; assigneeIds, tags, and flags each replace the whole set ([] clears it). Tags must already exist on the board (by name or id).",
     scopes: ["tasks:write"],
     write: true,
     dailyBucket: "task_write",
@@ -255,11 +316,15 @@ export const taskTools: McpToolSpec[] = [
       dueOn: z.string().nullable().optional().describe("Due date as YYYY-MM-DD, or null to clear"),
       dueTime: dueTimeInput.nullable().optional(),
       dueTz: dueTzInput.nullable().optional(),
-      assigneeIds: assigneeIdsInput.optional()
+      assigneeIds: assigneeIdsInput.optional(),
+      tags: tagsInput.optional(),
+      flags: flagsInput.optional()
     }).strict(),
-    handler: async ({ cardId, baseRevision, ...fields }, key) => {
-      const input = routeInput(cardPatchSchema, { ...fields, revision: baseRevision });
+    handler: async ({ cardId, baseRevision, tags, ...fields }, key) => {
       return service(key, async () => {
+        // Tags resolve against the card's own board, which the caller must be able to read.
+        const tagIds = tags ? resolveTags(listBoardTags(getCard(key.userId, cardId).board.id), tags, false) : undefined;
+        const input = routeInput(cardPatchSchema, { ...fields, ...(tagIds ? { tagIds } : {}), revision: baseRevision });
         const { card } = await patchCard(key.userId, cardId, input);
         return { card: writtenCard(card) };
       });

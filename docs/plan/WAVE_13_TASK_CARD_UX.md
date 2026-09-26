@@ -59,6 +59,19 @@ Plan-level facts:
 | D113 | **Client-side filtering, grouping, and sorting.** `GET /boards/:b` already returns every live card (at most 1000). **Switch to server-side filtering** if the card cap rises above 2000 or the board JSON exceeds 1 MB at p95; measure this in 13C. MCP `list_cards` filters on the server with bound SQL. A parity test checks both paths give the same answer. | One round trip, instant chip edits, and no new query endpoint for a bounded data set. |
 | D114 | **Shared components.** <br>• **Dropdowns (D91):** `Select` and `Combobox` in `src/ui/`, built in-house with no new dependency. At ≤760 px the popup is a bottom sheet guarded by the history dialog guard. <br>• **Modules (D92):** a `user_preferences.disabled_modules` JSON array (migration 016), so modules are on by default and new ones start on. It is read through `GET /api/auth/me` and written with a revision compare-and-swap. The server, MCP, and data are unaffected. <br>• **MCP (D70):** create and update only, audited, in the `task_write` bucket (`server/mcpRateLimit.ts:23`). | One accessible widget set; preferences that follow the account; one agent surface. |
 
+**D113 note: board payload measured in 13C (2026-09-26, Bun 1.4.2, loopback, `tests/tasksBoardPayload.test.ts`).** The plan's worst case: 1000 live cards, each with 3 assignees, 3 tags, 2 flags, a due time (dates spread over three months), and a 160-character excerpt, against the same 1000 cards with no Wave 13 data.
+
+| Fixture | `GET /boards/:b` JSON | gzip (not enabled on the server) | Median response (7 runs) |
+| --- | --- | --- | --- |
+| Every Wave 13 field, ~45-character display names | **1,392,677 B** | ~50 KB | 36–42 ms |
+| Every Wave 13 field, ~8-character display names | **1,249,640 B** | ~47 KB | 34–40 ms |
+| No Wave 13 data (the v0.7-like shape) | 612,616–649,653 B | | 8–12 ms |
+
+- **Result: over both thresholds in the worst case.** The JSON exceeds the 1 MB target by 25–39 %, and the response is about 4× the bare board, not within 1.5×. The gzip figure flatters, because the fixture repeats itself; real boards compress less.
+- **Where the bytes go, per card** (about 1,250–1,390 B): `assignees` 270–340 (three objects with id and display name), the deprecated `assignee_id` and `assignee_name` 80–117 (D103, kept through v0.8.x), `description_excerpt` 185, `tag_ids` 129, and four UUIDs (`id`, `board_id`, `column_id`, `created_by`) about 200.
+- **Where the time goes:** the card select about 4 ms, the grouped assignee, tag, and flag queries 3–7 ms each, and `due_at` about 15 µs per timed card (Intl offset lookups). 13C memoizes `due_at` per distinct date, time, and zone within one board load, which took the same-date fixture from about 50 ms to about 40 ms.
+- **Director decision needed** (not changed in 13C, because each option changes a contract that 13B's UI reads). The cheapest cuts are: drop the deprecated `assignee_id`/`assignee_name` early (§11 Q2); send assignees as ids plus one board-level `users` map; drop the per-card `board_id`; and enable gzip for JSON. By the per-card figures above, the first two together bring this fixture to about 1.03–1.07 MB, and dropping `board_id` as well to about 1 MB (estimates, not measured). The D113 fallback, server-side filtering, does not shrink an unfiltered board load. The test pins a 1.5 MB ceiling as a regression guard until this is decided.
+
 ## 2. Data model
 
 ### 2.1 `server/migrations/015_task_card_ux.ts` (assertion `[1..15]`)

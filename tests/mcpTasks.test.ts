@@ -401,3 +401,90 @@ describe("MCP card relations and search (WAVE_13 §5.5, T90, T91, T95, T99)", ()
     expect(mapped.details).toEqual({ relation: { type: "relates_to", restricted: true } });
   });
 });
+
+describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5.5)", () => {
+  test("reads carry tags, flags, and the excerpt; list_cards returns the board's tags", async () => {
+    const s = await setup("MCP tags read");
+    const key = makeKey(s.member, ["tasks:read"]);
+    const backend = (await api(s.owner, "POST", `/boards/${s.boardId}/tags`, { name: "Backend", color: "blue" })).body.tag as { id: string };
+    expect((await api(s.owner, "PATCH", `/cards/${s.cardId}`, { tagIds: [backend.id], flags: ["blocked", "urgent"], revision: 1 })).status).toBe(200);
+    const listed = await callTool(key, "list_cards", { boardId: s.boardId });
+    expect(listed.value.tags).toEqual([{ id: backend.id, name: "Backend", color: "blue" }]);
+    expect(listed.value.cards[0]).toMatchObject({ tags: ["Backend"], flags: ["urgent", "blocked"], description_excerpt: "Read the spec" });
+    expect((await callTool(key, "get_card", { cardId: s.cardId })).value.card).toMatchObject({ tags: ["Backend"], flags: ["urgent", "blocked"], description_excerpt: "Read the spec" });
+  });
+
+  test("create_card and update_card take tags by name or id and flags; unknown tags are INVALID and write nothing", async () => {
+    const s = await setup("MCP tags write");
+    const key = makeKey(s.member, ["tasks:write"]);
+    const ui = (await api(s.owner, "POST", `/boards/${s.boardId}/tags`, { name: "UI" })).body.tag as { id: string };
+    await api(s.owner, "POST", `/boards/${s.boardId}/tags`, { name: "Backend" });
+    const foreign = (await api(s.owner, "POST", `/boards/${s.privateBoardId}/tags`, { name: "Secret tag" })).body.tag as { id: string };
+
+    const created = await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "Tagged", tags: ["backend", ui.id], flags: ["needs_review"] });
+    expect(created.isError).toBe(false);
+    expect(created.value.card).toMatchObject({ tags: ["Backend", "UI"], flags: ["needs_review"], revision: 1 });
+    const cardCount = () => (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ?").get(s.boardId) as { count: number }).count;
+    const before = cardCount();
+    const unknown = await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "No", tags: ["Backend", "Nope"] });
+    expect(unknown.value).toMatchObject({ code: "INVALID", reason: "UNKNOWN_TAG", tags: ["Nope"] });
+    // A tag of another board, even one the owner can read, is unknown here.
+    const ownerKey = makeKey(s.owner, ["tasks:write"]);
+    expect((await callTool(ownerKey, "create_card", { boardId: s.boardId, columnId: s.todo, title: "No", tags: [foreign.id] })).value).toMatchObject({ code: "INVALID", reason: "UNKNOWN_TAG" });
+    // An unknown flag fails the tool's input schema.
+    expect((await callTool(key, "create_card", { boardId: s.boardId, columnId: s.todo, title: "No", flags: ["important"] })).isError).toBe(true);
+    expect(cardCount()).toBe(before);
+
+    const cardId = created.value.card.id as string;
+    const updated = await callTool(key, "update_card", { cardId, baseRevision: 1, tags: ["UI"], flags: ["on_hold", "urgent"] });
+    expect(updated.value.card).toMatchObject({ tags: ["UI"], flags: ["urgent", "on_hold"], revision: 2 });
+    expect(auditRows(s.member.userId, "task.card_update").at(-1)).toMatchObject({ cardId, via: "mcp", keyId: key.id, tagsAdded: 0, tagsRemoved: 1, flags: ["on_hold", "urgent"] });
+    expect((await callTool(key, "update_card", { cardId, baseRevision: 2, tags: ["Backend", "Gone"] })).value).toMatchObject({ code: "INVALID", reason: "UNKNOWN_TAG" });
+    expect((await callTool(key, "update_card", { cardId, baseRevision: 1, tags: [] })).value).toMatchObject({ code: "CARD_CHANGED", currentRevision: 2 });
+    const cleared = await callTool(key, "update_card", { cardId, baseRevision: 2, tags: [], flags: [] });
+    expect(cleared.value.card).toMatchObject({ tags: [], flags: [], revision: 3 });
+    expect((await api(s.owner, "GET", `/cards/${cardId}`)).body.card).toMatchObject({ tag_ids: [], flags: [], revision: 3 });
+    // A stranger's tag update looks like a missing card.
+    const strangerKey = makeKey(s.stranger, ["tasks:write"]);
+    expect((await callTool(strangerKey, "update_card", { cardId, baseRevision: 3, tags: ["UI"] })).value).toEqual(
+      (await callTool(strangerKey, "update_card", { cardId: crypto.randomUUID(), baseRevision: 3, tags: ["UI"] })).value);
+  });
+
+  test("list_cards filters on the server: each filter, me and none, and validation", async () => {
+    const s = await setup("MCP filters");
+    const key = makeKey(s.member, ["tasks:read"]);
+    const tag = (await api(s.owner, "POST", `/boards/${s.boardId}/tags`, { name: "Café" })).body.tag as { id: string };
+    const mine = (await api(s.owner, "POST", `/boards/${s.boardId}/cards`, {
+      columnId: s.doing, title: "Mine", description: "Résumé draft", assigneeIds: [s.member.userId], tagIds: [tag.id], flags: ["urgent"], dueOn: "2026-10-05"
+    })).body.card.id as string;
+    const ids = async (args: Record<string, unknown>) => {
+      const result = await callTool(key, "list_cards", { boardId: s.boardId, ...args });
+      expect(result.isError).toBe(false);
+      return (result.value.cards as Array<{ id: string }>).map((card) => card.id).sort();
+    };
+    expect(await ids({})).toEqual([s.cardId, mine].sort());
+    expect(await ids({ assigneeIds: ["me"] })).toEqual([mine]);
+    expect(await ids({ assigneeIds: ["none"] })).toEqual([s.cardId]);
+    expect(await ids({ tags: ["CAFÉ"] })).toEqual([mine]);
+    expect(await ids({ tags: ["none"] })).toEqual([s.cardId]);
+    expect(await ids({ flags: ["urgent", "blocked"] })).toEqual([mine]);
+    expect(await ids({ flags: ["none"] })).toEqual([s.cardId]);
+    expect(await ids({ dueBefore: "2026-10-05" })).toEqual([]);
+    expect(await ids({ dueBefore: "2026-10-06", dueAfter: "2026-10-04" })).toEqual([mine]);
+    expect(await ids({ dueNone: true })).toEqual([s.cardId]);
+    expect(await ids({ dueAfter: "2026-10-01", dueNone: true })).toEqual([s.cardId, mine].sort());
+    expect(await ids({ text: "resume" })).toEqual([mine]);
+    expect(await ids({ text: "SPEC" })).toEqual([s.cardId]);
+    expect(await ids({ columnId: s.doing, flags: ["urgent"], assigneeIds: ["me"] })).toEqual([mine]);
+    expect(await ids({ columnId: s.todo, flags: ["urgent"] })).toEqual([]);
+
+    expect((await callTool(key, "list_cards", { boardId: s.boardId, tags: ["Unknown"] })).value).toMatchObject({ code: "INVALID", reason: "UNKNOWN_TAG", known: ["Café"] });
+    for (const args of [{ dueBefore: "2026-02-30" }, { text: "" }, { text: "x".repeat(101) }, { flags: ["soon"] }, { assigneeIds: ["someone"] }]) {
+      const refused = await callTool(key, "list_cards", { boardId: s.boardId, ...args });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.value)).toMatch(/INVALID|Invalid arguments/);
+    }
+    // Filters never widen access: the member cannot list the private board at all.
+    expect((await callTool(key, "list_cards", { boardId: s.privateBoardId, assigneeIds: ["none"] })).value).toMatchObject({ code: "NOT_FOUND" });
+  });
+});

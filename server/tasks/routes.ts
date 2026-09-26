@@ -7,6 +7,7 @@ import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
 import { getBoardWithRelationCounts, listRelations } from "./cardRelations";
 import { registerCardRelationRoutes } from "./relationRoutes";
+import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NAME_MAX, updateTag } from "./tags";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
 import {
   createBoard,
@@ -66,6 +67,13 @@ export const DESCRIPTION_MAX_BYTES = 65_536;
 const description = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= DESCRIPTION_MAX_BYTES, `Descriptions can be at most ${DESCRIPTION_MAX_BYTES} bytes`);
 /** Assignee ids (D102): at most 20 after deduplication; the service dedupes and checks each can read the board. */
 const assigneeIdsSchema = z.array(uuid).max(MAX_ASSIGNEES * 2);
+/** Tag ids (D109): at most 10 after deduplication; the service dedupes and checks each is a tag of the card's board. */
+const tagIdsSchema = z.array(uuid).max(MAX_TAGS_PER_CARD * 2);
+/** Flags (D110): unique values from the fixed set. */
+const flagsSchema = z.array(z.enum(CARD_FLAGS)).max(CARD_FLAGS.length).refine((flags) => new Set(flags).size === flags.length, "Each flag can appear once");
+export const tagCreateSchema = z.object({ name: label(TAG_NAME_MAX), color: z.enum(TAG_COLORS).optional() }).strict();
+export const tagPatchSchema = z.object({ name: label(TAG_NAME_MAX).optional(), color: z.enum(TAG_COLORS).optional() }).strict()
+  .refine((value) => value.name !== undefined || value.color !== undefined, "Provide a name or a color");
 export const cardCreateSchema = z.object({
   columnId: uuid,
   title: label(200),
@@ -74,6 +82,8 @@ export const cardCreateSchema = z.object({
   dueTime: dueTimeSchema.nullable().optional(),
   dueTz: dueTzSchema.nullable().optional(),
   assigneeIds: assigneeIdsSchema.optional(),
+  tagIds: tagIdsSchema.optional(),
+  flags: flagsSchema.optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
 export const cardPatchSchema = z.object({
@@ -85,12 +95,14 @@ export const cardPatchSchema = z.object({
   /** Legacy (D103), kept for the Wave 10 client and MCP; 400 together with assigneeIds. */
   assigneeId: uuid.nullable().optional(),
   assigneeIds: assigneeIdsSchema.optional(),
+  tagIds: tagIdsSchema.optional(),
+  flags: flagsSchema.optional(),
   revision: z.number().int().positive()
 }).strict()
   .refine((value) => value.assigneeId === undefined || value.assigneeIds === undefined, "Send assigneeIds or the legacy assigneeId, not both")
   .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.dueTime !== undefined
-    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined,
-  "Provide a title, description, dueOn, dueTime, or assigneeIds");
+    || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined,
+  "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, or flags");
 const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
   .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
 export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();
@@ -196,6 +208,23 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     }
     if (limitParam !== undefined && q === undefined) return c.json(invalid("limit needs q"), 400);
     return respond(c, () => listBoardReaders(userId, boardId, { q, limit: limitParam === undefined ? undefined : Number(limitParam) }));
+  });
+
+  app.post("/api/tasks/boards/:boardId/tags", async (c) => {
+    const boardId = id(c, "boardId");
+    const body = await parseJson(c.req.raw, tagCreateSchema);
+    return respond(c, () => createTag(c.get("user").id, boardId, body), 201);
+  });
+
+  app.patch("/api/tasks/tags/:tagId", async (c) => {
+    const tagId = id(c, "tagId");
+    const body = await parseJson(c.req.raw, tagPatchSchema);
+    return respond(c, () => updateTag(c.get("user").id, tagId, body));
+  });
+
+  app.delete("/api/tasks/tags/:tagId", (c) => {
+    const tagId = id(c, "tagId");
+    return respond(c, () => deleteTag(c.get("user").id, tagId));
   });
 
   app.post("/api/tasks/boards/:boardId/columns", async (c) => {

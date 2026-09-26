@@ -12,6 +12,7 @@ import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
 import { initPush } from "./calendar/push";
 import { reconcileEventNextOccurrences } from "./calendar/service";
+import { reconcileCardExcerpts } from "./tasks/excerpt";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
@@ -860,6 +861,11 @@ try {
   await reconcileEventNextOccurrences();
 } catch (error) {
   console.error("Calendar range index reconcile failed", errorClass(error));
+}
+try {
+  reconcileCardExcerpts();
+} catch (error) {
+  console.error("Card excerpt reconcile failed", errorClass(error));
 }
 startSweeper();
 try {
