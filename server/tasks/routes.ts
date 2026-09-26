@@ -5,7 +5,8 @@ import { parseJson, uuid } from "../validation";
 import { MAX_ASSIGNEES } from "./assignees";
 import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
-import { getBoardWithRelationCounts, listRelations } from "./cardRelations";
+import { getBoardWithRelationCounts, listRelations, MAX_RELATIONS_PER_CARD } from "./cardRelations";
+import { RELATION_TYPES, type RelationType } from "./relations";
 import { registerCardRelationRoutes } from "./relationRoutes";
 import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NAME_MAX, updateTag } from "./tags";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
@@ -71,6 +72,9 @@ const assigneeIdsSchema = z.array(uuid).max(MAX_ASSIGNEES * 2);
 const tagIdsSchema = z.array(uuid).max(MAX_TAGS_PER_CARD * 2);
 /** Flags (D110): unique values from the fixed set. */
 const flagsSchema = z.array(z.enum(CARD_FLAGS)).max(CARD_FLAGS.length).refine((flags) => new Set(flags).size === flags.length, "Each flag can appear once");
+/** Relations to create with a new card (§5.1 composer): each target must be readable; same rules as POST /cards/:k/relations. */
+const createRelationsSchema = z.array(z.object({ targetCardId: uuid, type: z.enum(RELATION_TYPES as [RelationType, ...RelationType[]]) }).strict())
+  .max(MAX_RELATIONS_PER_CARD);
 export const tagCreateSchema = z.object({ name: label(TAG_NAME_MAX), color: z.enum(TAG_COLORS).optional() }).strict();
 export const tagPatchSchema = z.object({ name: label(TAG_NAME_MAX).optional(), color: z.enum(TAG_COLORS).optional() }).strict()
   .refine((value) => value.name !== undefined || value.color !== undefined, "Provide a name or a color");
@@ -84,6 +88,9 @@ export const cardCreateSchema = z.object({
   assigneeIds: assigneeIdsSchema.optional(),
   tagIds: tagIdsSchema.optional(),
   flags: flagsSchema.optional(),
+  relations: createRelationsSchema.optional(),
+  /** The caller's own unlinked task-attachment uploads (LIMITS.attachmentsPerCard). */
+  attachmentIds: z.array(uuid).max(50).optional(),
   afterCardId: uuid.nullable().optional()
 }).strict();
 export const cardPatchSchema = z.object({

@@ -5,7 +5,10 @@ import { readableBoard, readableBoardPredicate, readableCard, readableColumn, ty
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
 import { dueAt, resolveDue, type DueInput } from "./dueTime";
+import { linkAttachments } from "./attachments";
+import { insertRelation } from "./cardRelations";
 import { descriptionExcerpt } from "./excerpt";
+import type { RelationType } from "./relations";
 import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
 
 /**
@@ -412,20 +415,29 @@ export type CardCreateInput = {
   tagIds?: string[];
   /** Unique flags from the fixed set (D110). */
   flags?: CardFlag[];
+  /** Relations from the new card toward readable cards, as POST /cards/:k/relations creates them (D104–D107). */
+  relations?: Array<{ targetCardId: string; type: RelationType }>;
+  /** The caller's own task-attachment uploads that no card links yet. */
+  attachmentIds?: string[];
 };
 
-/** Creates a card. `afterCardId`: omitted = bottom of the column, null = top, an id = after that card. */
+/**
+ * Creates a card. `afterCardId`: omitted = bottom of the column, null = top, an id = after that card.
+ * Assignees, tags, flags, relations, and attachments are written in the same transaction, after
+ * the WIP check, so any refusal writes nothing.
+ */
 export function createCard(userId: string, boardId: string, input: CardCreateInput) {
   return withBoardLock(boardId, () => {
     requireReadableBoard(boardId, userId);
     const column = requireBoardColumn(boardId, input.columnId);
+    requireColumnRoom(column);
     const assignees = input.assigneeIds === undefined ? undefined : uniqueAssignees(input.assigneeIds);
     for (const assigneeId of assignees ?? []) requireAssignableUser(boardId, assigneeId);
     const tagIds = input.tagIds === undefined ? undefined : requireCardTags(boardId, input.tagIds);
     const due = requireDue({ due_on: null, due_time: null, due_tz: null }, input).value;
     const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(boardId) as { count: number }).count;
     if (live >= LIMITS.liveCardsPerBoard) throw limitReached(`A board can have up to ${LIMITS.liveCardsPerBoard} cards`);
-    requireColumnRoom(column);
+    const attachmentIds = input.attachmentIds === undefined ? [] : [...new Set(input.attachmentIds.map((documentId) => documentId.toLowerCase()))];
     const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
     if (!plan) throw stalePosition(input.columnId);
     const id = crypto.randomUUID();
@@ -446,6 +458,22 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
         ...(tagIds?.length ? { tagsAdded: tagIds.length } : {}),
         ...(input.flags?.length ? { flags: input.flags } : {})
       });
+      // Same checks as POST /cards/:k/relations: the target must be readable (404 like a missing id), one per pair, 50 per card.
+      for (const relation of input.relations ?? []) {
+        const inserted = insertRelation(userId, id, relation.targetCardId.toLowerCase(), relation.type);
+        audit(userId, null, "task.relation_create", { boardId, cardId: id, relationId: inserted.id, kind: inserted.kind });
+      }
+      if (attachmentIds.length) {
+        // Only the uploader's own files (404 like a missing id otherwise), and only ones no card links yet.
+        const owned = db.query("SELECT 1 FROM documents WHERE id = ? AND owner_id = ? AND purpose = 'task_attachment' AND deleted_at IS NULL");
+        const linked = db.query("SELECT 1 FROM card_attachments WHERE document_id = ?");
+        for (const documentId of attachmentIds) {
+          if (!owned.get(documentId, userId)) throw new TaskError(404, "File not found");
+          if (linked.get(documentId)) throw new TaskError(409, "This file is already attached to a card", "ATTACHMENT_LINKED", { documentId });
+        }
+        linkAttachments({ userId, cardId: id, documentIds: attachmentIds, commentId: null });
+        for (const documentId of attachmentIds) audit(userId, null, "task.attachment_link", { boardId, cardId: id, documentId });
+      }
     })();
     return { card: cardDetail(id)!, ...(plan.renumbered ? { renormalized: true } : {}) };
   });
