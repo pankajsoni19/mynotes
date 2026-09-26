@@ -114,6 +114,33 @@ export function instantParts(instant: string | number, timeZone: string) {
   return { date: `${get("year")}-${get("month")}-${get("day")}`, time: `${get("hour")}:${get("minute")}` };
 }
 
+/**
+ * The instant (ISO) of wall time `time` on `date` in `timeZone`, as the server derives `due_at`
+ * (server/tasks/dueTime.ts): a time in a DST gap moves forward, and the earlier instant wins in an
+ * overlap. Null when the zone is unknown. Used where the client holds a time the server has not
+ * stored yet (the composer's draft), so its summary reads like the saved card's.
+ */
+export function wallTimeInstant(date: string, time: string, timeZone: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const wall = Date.UTC(year!, month! - 1, day!, hour!, minute!);
+  if (!Number.isFinite(wall)) return null;
+  try {
+    const offset = (utc: number) => {
+      const local = instantParts(utc, timeZone);
+      const [ly, lm, ld] = local.date.split("-").map(Number);
+      const [lh, lmin] = local.time.split(":").map(Number);
+      return Date.UTC(ly!, lm! - 1, ld!, lh!, lmin!) - Math.floor(utc / 60_000) * 60_000;
+    };
+    const before = offset(wall - 86_400_000);
+    const after = offset(wall + 86_400_000);
+    const candidates = [...new Set([before, after])].map((value) => wall - value).filter((utc) => wall - offset(utc) === utc).sort((left, right) => left - right);
+    return new Date(candidates[0] ?? wall - before).toISOString();
+  } catch {
+    return null;
+  }
+}
+
 /** A timed due date: its exact instant, plus "now" and the viewer's zone (injectable for tests). */
 export type DueTiming = { dueAt: string | null | undefined; now?: number; timeZone?: string };
 

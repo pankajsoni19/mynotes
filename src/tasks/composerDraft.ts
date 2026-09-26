@@ -1,6 +1,6 @@
 // The card composer's draft (WAVE_13_TASK_CARD_UX.md §4.3): everything a new card will have, kept
 // locally until one POST /boards/:b/cards writes it all. Pure, so it can be unit tested.
-import { canEnterColumn, columnFullMessage, viewerTimeZone } from "./taskActions";
+import { canEnterColumn, columnFullMessage, viewerTimeZone, wallTimeInstant } from "./taskActions";
 import type { BoardColumn, CardAssignee, CardCreate, CardDetail, CardSearchResult, RelationType, UploadedAttachment } from "./tasksApi";
 
 export type StagedRelation = { key: string; type: RelationType; card: CardSearchResult };
@@ -78,7 +78,9 @@ export function draftCard(draft: ComposerDraft, boardId: string): CardDetail {
   const first = draft.assignees[0];
   const card = {
     id: "", board_id: boardId, column_id: draft.columnId, position: 0, title: draft.title, has_description: draft.description.trim() ? 1 : 0, revision: 0,
-    created_by: null, creator_name: null, due_on: draft.dueOn, due_time: draft.dueTime, due_tz: draft.dueTz, due_at: null,
+    created_by: null, creator_name: null, due_on: draft.dueOn, due_time: draft.dueTime, due_tz: draft.dueTz,
+    // The instant the server will derive, so the due summary shows the time as the card dialog does.
+    due_at: draft.dueOn && draft.dueTime && draft.dueTz ? wallTimeInstant(draft.dueOn, draft.dueTime, draft.dueTz) : null,
     assignees: draft.assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null,
     comment_count: 0, attachment_count: draft.attachments.length, created_at: "", updated_at: "", description: draft.description,
     tag_ids: draft.tagIds, flags: draft.flags

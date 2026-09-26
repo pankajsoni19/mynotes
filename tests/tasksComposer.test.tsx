@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BoardColumnView } from "../src/tasks/BoardColumnView";
 import { CardComposer } from "../src/tasks/CardComposer";
 import { applyFieldChange, composerDirty, composerError, createBody, defaultColumnId, draftCard, emptyDraft } from "../src/tasks/composerDraft";
+import { dueStatus, wallTimeInstant } from "../src/tasks/taskActions";
+import { dueAt } from "../server/tasks/dueTime";
 import type { BoardColumn } from "../src/tasks/tasksApi";
 
 const noop = () => undefined;
@@ -60,6 +62,28 @@ test("assignees keep the names the picker passed; tags and flags replace the set
   const card = draftCard(draft, "b1");
   expect(card).toMatchObject({ board_id: "b1", column_id: "todo", assignee_id: "u2", assignee_name: "Bo", due_on: null });
   expect((card as unknown as { flags: string[] }).flags).toEqual(["urgent", "blocked"]);
+});
+
+test("the composer's due summary includes the time, as the card dialog's does", () => {
+  const draft = applyFieldChange(applyFieldChange(emptyDraft("todo"), { dueOn: "2026-10-03" }), { dueTime: "18:45", dueTz: "Europe/Berlin" });
+  const card = draftCard(draft, "b1");
+  expect(card.due_at).toBe(dueAt({ due_on: "2026-10-03", due_time: "18:45", due_tz: "Europe/Berlin" }));
+  const today = "2026-09-27";
+  const now = Date.parse("2026-09-27T08:00:00Z");
+  const summary = dueStatus(card.due_on, today, false, { dueAt: card.due_at, now, timeZone: "Europe/Berlin" });
+  expect(summary?.description).toMatch(/^Due .+ at 18:45$/);
+  // A date alone still reads as a date.
+  expect(draftCard(applyFieldChange(emptyDraft("todo"), { dueOn: "2026-10-03" }), "b1").due_at).toBeNull();
+});
+
+test("the client's wall-time instant matches the server's due_at, DST gaps and overlaps included", () => {
+  const cases: Array<[string, string, string]> = [
+    ["2026-10-03", "18:45", "Europe/Berlin"], ["2026-03-29", "02:30", "Europe/Berlin"], ["2026-10-25", "02:30", "Europe/Berlin"],
+    ["2026-03-08", "02:15", "America/New_York"], ["2026-11-01", "01:30", "America/New_York"], ["2026-06-01", "09:00", "Asia/Kolkata"],
+    ["2026-01-01", "00:00", "Pacific/Kiritimati"], ["2026-12-31", "23:59", "UTC"]
+  ];
+  for (const [date, time, zone] of cases) expect(wallTimeInstant(date, time, zone)).toBe(dueAt({ due_on: date, due_time: time, due_tz: zone }));
+  expect(wallTimeInstant("2026-10-03", "18:45", "Not/AZone")).toBeNull();
 });
 
 test("the create request carries only what was set", () => {
