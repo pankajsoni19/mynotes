@@ -62,7 +62,7 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
-import { DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
+import { canCreateMcpKeys, DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
 import { McpKeyScopeChips } from "./McpKeyScopes";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, parseRoute, type Route } from "./router";
@@ -269,7 +269,9 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
     <div className="mcp-card">
       <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
-      {!newToken && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
+      {!canCreateMcpKeys(role) && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
+      {role === "viewer" && !newToken && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
+      {!newToken && canCreateMcpKeys(role) && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
         const isLocked = locked.includes(permission.scope);
         return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
       })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}

@@ -28,10 +28,21 @@ export const OFFERED_MCP_PERMISSIONS = MCP_PERMISSIONS;
 /** Scopes only admins may hold (mirrors server/team/roles.ts ADMIN_ONLY_SCOPES). */
 export const ADMIN_ONLY_MCP_SCOPES: readonly McpScope[] = ["team:read"];
 
-/** The permissions Settings offers to someone with `role`: team:read only to admins. */
+/**
+ * The permissions Settings offers to someone with `role` (mirrors server mcpScopesForRole): admins
+ * everything, members all but team:read, viewers read permissions only, guests none (no key UI).
+ */
 export function offeredMcpPermissions(role: string | undefined) {
-  return role === "admin" ? OFFERED_MCP_PERMISSIONS : OFFERED_MCP_PERMISSIONS.filter((permission) => !ADMIN_ONLY_MCP_SCOPES.includes(permission.scope));
+  if (role === "guest") return [];
+  const forRole = role === "admin" ? OFFERED_MCP_PERMISSIONS : OFFERED_MCP_PERMISSIONS.filter((permission) => !ADMIN_ONLY_MCP_SCOPES.includes(permission.scope));
+  return role === "viewer" ? forRole.filter((permission) => !isWriteScope(permission.scope)) : forRole;
 }
+
+/** Write scopes are the ones that imply a read scope. */
+export const isWriteScope = (scope: McpScope) => MCP_PERMISSIONS.some((permission) => permission.scope === scope && permission.implies !== undefined);
+
+/** Whether Settings shows the key form at all (guests cannot hold keys, O6). */
+export const canCreateMcpKeys = (role: string | undefined) => role !== "guest";
 
 export const DEFAULT_KEY_SCOPES: readonly McpScope[] = ["notes:read"];
 

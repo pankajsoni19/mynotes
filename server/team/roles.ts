@@ -5,7 +5,7 @@
  * A role is a ceiling on what per-item sharing already grants; it never grants content access by
  * itself. Only admins manage the team, and admins never bypass item ACLs (D73).
  */
-import { MCP_SCOPES, type McpScope } from "../mcpScopes";
+import { IMPLIED_READ_SCOPE, MCP_SCOPES, type McpScope } from "../mcpScopes";
 
 export const ROLES = ["admin", "member", "viewer", "guest"] as const;
 export type Role = typeof ROLES[number];
@@ -34,7 +34,7 @@ export type Capability =
 const CAPABILITIES: Record<Role, readonly Capability[]> = {
   admin: ["content.write", "sharing.write", "files.upload", "feeds.create", "mcp.key.create", "team.read", "team.manage"],
   member: ["content.write", "sharing.write", "files.upload", "feeds.create", "mcp.key.create", "team.read"],
-  // Wave 15 enforces the read-only roles; the matrix is recorded here so there is one source.
+  // Read-only roles (Wave 15): the write gate, the MCP scope filter, and the services enforce this.
   viewer: ["mcp.key.create", "team.read"],
   guest: []
 };
@@ -45,15 +45,22 @@ export const can = (role: Role, capability: Capability) => CAPABILITIES[role].in
 /** MCP scopes only admins may hold (D79: read only, no emails). */
 export const ADMIN_ONLY_SCOPES: readonly McpScope[] = ["team:read"];
 
+/** Read scopes: every scope that is not a write scope (none of them is implied by another). */
+export const MCP_READ_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((scope) => IMPLIED_READ_SCOPE[scope] === undefined);
+
 /**
- * The MCP scopes a key of a user with `role` may use (§5.2.4). Effective scopes are the stored
- * scopes intersected with these, computed on every request and tool call, so a demoted admin's key
- * loses `team:read` on its next call. This wave applies only the admin-only restriction; the viewer
- * (read only) and guest (none) filters arrive with Wave 15.
+ * The MCP scopes a key of a user with `role` may use (§5.2.4, §7). Effective scopes are the stored
+ * scopes intersected with these, computed on every request and tool call, so a demoted holder's key
+ * loses what the new role cannot use on its next call (T81): admins everything, members everything
+ * but the admin-only scopes, viewers read scopes only, guests nothing (O6).
  */
 export function mcpScopesForRole(role: Role): McpScope[] {
-  if (role === "admin") return [...MCP_SCOPES];
-  return MCP_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
+  switch (role) {
+    case "admin": return [...MCP_SCOPES];
+    case "member": return MCP_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
+    case "viewer": return MCP_READ_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
+    case "guest": return [];
+  }
 }
 
 /** Stored scopes narrowed to what the holder's current role allows. */

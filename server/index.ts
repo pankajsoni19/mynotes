@@ -304,7 +304,11 @@ app.get("/api/mcp/keys", (c) => c.json({ keys: listMcpApiKeys(c.get("user").id) 
 app.post("/api/mcp/keys", async (c) => {
   const body = await parseJson(c.req.raw, mcpApiKeySchema);
   const userId = c.get("user").id;
-  // Checked before the password so no code is consumed; team:read is admin-only (T81).
+  // Checked before the password so no code is consumed: guests hold no keys (O6), viewers read
+  // scopes only, and team:read is admin-only (T81).
+  if (!can(c.get("user").role, "mcp.key.create")) {
+    return c.json({ error: "Your team role cannot create API keys", code: "ROLE_READ_ONLY" }, 403);
+  }
   const allowedScopes = mcpScopesForRole(c.get("user").role);
   if (body.scopes?.some((scope) => !allowedScopes.includes(scope))) {
     return c.json({ error: "Your team role cannot create a key with these permissions", code: "SCOPE_NOT_ALLOWED" }, 403);
