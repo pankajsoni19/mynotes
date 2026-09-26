@@ -1,4 +1,5 @@
-export type User = { id: string; email?: string; displayName: string };
+/** `role` is the platform role (Team, migration 017); older servers leave it out. */
+export type User = { id: string; email?: string; displayName: string; role?: "admin" | "member" | "viewer" | "guest" };
 export type Folder = {
   id: string;
   owner_id: string;

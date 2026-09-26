@@ -17,6 +17,8 @@ import { taskTools } from "./tasks/mcpTools";
 import { todayTools } from "./today/mcpTools";
 import { calendarTools } from "./calendar/mcpTools";
 import { collectionTools } from "./collections/mcpTools";
+import { teamTools } from "./team/mcpTools";
+import { effectiveMcpScopes, type Role } from "./team/roles";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -33,14 +35,17 @@ export { defineTool, errorResult, McpToolError, notFound, textResult } from "./m
 export type { McpErrorCode, McpKeyContext, McpToolSpec } from "./mcpToolKit";
 
 const liveKey = db.query(`
-  SELECT k.id, k.user_id, k.name, k.scopes FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
+  SELECT k.id, k.user_id, k.name, k.scopes, u.role FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
   WHERE k.id = ? AND k.revoked_at IS NULL AND u.disabled_at IS NULL
 `);
 
-/** The key as stored now, or null once it is revoked or its user is disabled. */
+/**
+ * The key as stored now, or null once it is revoked or its user is disabled. Its scopes are the
+ * effective ones: stored scopes narrowed to what the holder's current role allows (T81).
+ */
 export function loadLiveKey(keyId: string): McpKeyContext | null {
-  const row = liveKey.get(keyId) as { id: string; user_id: string; name: string; scopes: string } | null;
-  return row ? { keyId: row.id, userId: row.user_id, name: row.name, scopes: parseStoredScopes(row.scopes) } : null;
+  const row = liveKey.get(keyId) as { id: string; user_id: string; name: string; scopes: string; role: Role } | null;
+  return row ? { keyId: row.id, userId: row.user_id, name: row.name, scopes: effectiveMcpScopes(parseStoredScopes(row.scopes), row.role) } : null;
 }
 
 /**
@@ -330,7 +335,8 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...taskTools,
   ...calendarTools,
   ...collectionTools,
-  ...todayTools
+  ...todayTools,
+  ...teamTools
 ];
 
 /** Registers the tools this key may use on a per-request server. */

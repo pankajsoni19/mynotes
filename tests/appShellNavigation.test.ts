@@ -6,6 +6,7 @@ test("app shell history preserves existing panel state and round trips a section
   const state = createAppHistoryState("user-1", "notes", { external: "kept" });
   expect(state.external).toBe("kept");
   expect(readAppHistorySection(state, "user-1")).toBe("notes");
+  expect(readAppHistorySection(createAppHistoryState("user-1", "team", null), "user-1")).toBe("team");
 });
 
 test("app shell history rejects a different user and invalid app sections", () => {

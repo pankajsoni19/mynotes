@@ -1,9 +1,36 @@
-import { useEffect, useState } from "react";
-import { LogOut, Settings, Trash2 } from "lucide-react";
+import { createContext, useContext, useEffect, useState } from "react";
+import { LogOut, Settings, Trash2, Users } from "lucide-react";
 import "./appShell.css";
 import { listBin } from "./bin/binApi";
 import { useModuleEnabled } from "./modules";
 import { NotificationBell } from "./notifications/NotificationBell";
+import { listTeam } from "./team/teamApi";
+import { canManageTeam, canSeeTeam, type Role } from "./team/teamRoles";
+
+/**
+ * The Team button in the account row (D78), provided once by App so every app's header gets it
+ * without each app wiring a prop. Hidden for guests and on the Team app itself.
+ */
+export type TeamNav = { role: Role | undefined; openTeam: () => void; onTeam: boolean };
+export const TeamNavContext = createContext<TeamNav | null>(null);
+
+/** Admins see how many accounts are blocked: one lazy look on mount, like the Bin count. */
+function useBlockedCount(enabled: boolean) {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    listTeam().then(({ users }) => { if (live) setCount(users.filter((user) => user.status === "blocked").length); }, () => undefined);
+    return () => { live = false; };
+  }, [enabled]);
+  return count;
+}
+
+function TeamButton({ nav }: { nav: TeamNav }) {
+  const blocked = useBlockedCount(canManageTeam(nav.role));
+  const label = blocked > 0 ? `Team, ${blocked} blocked` : "Team";
+  return <button className="app-account-button app-account-bin" onClick={nav.openTeam} aria-label={label} title="Team"><Users /><span className="app-account-label">Team</span>{blocked > 0 && <span className="app-account-badge" aria-hidden="true">{blocked > 99 ? "99+" : blocked}</span>}</button>;
+}
 
 type AccountProps = {
   displayName: string;
@@ -17,12 +44,16 @@ type AccountProps = {
 export function AccountActions({ displayName, onSettings, onSignOut, onBin, binCount = 0 }: AccountProps) {
   // Bin turned off (D92): no Bin button, whatever the app passes. Deleting still moves items to the Bin.
   const binEnabled = useModuleEnabled("bin");
+  // Team turned off hides its button too (admins still reach Team from Settings → Manage team).
+  const teamEnabled = useModuleEnabled("team");
+  const team = useContext(TeamNavContext);
   const binLabel = binCount > 0 ? `Bin, ${binCount} item${binCount === 1 ? "" : "s"}` : "Bin";
   // The bell sits beside the group (it renders only inside the signed-in shell).
   return <><div className="app-account" role="group" aria-label="Account">
     <span className="app-home-user">{displayName}</span>
     <button className="app-account-button" onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>
     {onBin && binEnabled && <button className="app-account-button app-account-bin" onClick={onBin} aria-label={binLabel} title="Bin"><Trash2 /><span className="app-account-label">Bin</span>{binCount > 0 && <span className="app-account-badge" aria-hidden="true">{binCount > 99 ? "99+" : binCount}</span>}</button>}
+    {team && teamEnabled && canSeeTeam(team.role) && !team.onTeam && <TeamButton nav={team} />}
     <button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button>
   </div><NotificationBell /></>;
 }

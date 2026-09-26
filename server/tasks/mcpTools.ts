@@ -4,9 +4,16 @@ import { withAuditContext } from "../db";
 import { defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { searchText } from "../search";
 import { listAttachments } from "./attachments";
+import { createRelation, getBoardWithRelationCounts, listRelations, type CardRelation, type RelationCounts } from "./cardRelations";
+import { searchCards } from "./cardSearch";
+import { parseCardSearchQuery, relationCreateSchema } from "./relationRoutes";
+import { RELATION_TYPES, type RelationType } from "./relations";
 import { createComment, listComments } from "./comments";
-import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema } from "./routes";
+import { QUERY_LIMITS, TASK_FLAGS, type CardFilter } from "../../shared/taskQuery";
+import { filterBoardCardIds } from "./cardQuery";
+import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema, isCalendarDate } from "./routes";
 import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchCard, TaskError, type CardSummary } from "./service";
+import { listBoardTags, type BoardTag } from "./tags";
 
 /**
  * MCP tools for Task Boards (docs/plan/WAVES_7-9.md §4.2, D38–D40, D70).
@@ -15,9 +22,9 @@ import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchC
  * key's owner, so board membership, owner-only rules, IDOR joins, ordering,
  * and caps are enforced in one place. A board the user cannot read is
  * NOT_FOUND whether it is missing, private, or binned. There are no delete,
- * edit-description, column, WIP, or sharing tools: writes are create, update
- * (fields other than the description, with a revision compare-and-swap,
- * WAVE_13 §5.5, T99), move, and comment. Writes are audited through the usual task.* events with
+ * unlink, edit-description, column, WIP, or sharing tools: writes are create,
+ * update (fields other than the description, with a revision compare-and-swap,
+ * WAVE_13 §5.5, T99), move, comment, and link_cards. Writes are audited through the usual task.* events with
  * `{via: "mcp", keyId}` merged in, and count against the per-key and per-user
  * `task_write` daily buckets.
  */
@@ -37,12 +44,17 @@ export function taskErrorToMcp(error: TaskError) {
     LIMIT_REACHED: "LIMIT_REACHED",
     CARD_CHANGED: "CARD_CHANGED",
     OWNER_ONLY: "OWNER_ONLY",
-    COLUMN_FULL: "COLUMN_FULL"
+    COLUMN_FULL: "COLUMN_FULL",
+    RELATION_EXISTS: "RELATION_EXISTS"
   };
   const code = (error.code ? known[error.code] : undefined) ?? (error.status === 404 ? "NOT_FOUND" : error.status === 400 ? "INVALID" : "INTERNAL");
   if (code === "CARD_CHANGED") {
     const current = error.extra.card as { revision?: unknown } | undefined;
     return new McpToolError(code, error.message, typeof current?.revision === "number" ? { currentRevision: current.revision } : undefined);
+  }
+  if (code === "RELATION_EXISTS") {
+    const existing = error.extra.relation as CardRelation | undefined;
+    return new McpToolError(code, error.message, existing ? { relation: mcpRelation(existing) } : undefined);
   }
   if (code === "INVALID" && error.code) return new McpToolError(code, error.message, { reason: error.code, ...error.extra });
   return new McpToolError(code, error.message, error.extra);
@@ -72,21 +84,57 @@ function preview(markdown: string) {
   return text.length > DESCRIPTION_PREVIEW_CHARS ? `${text.slice(0, DESCRIPTION_PREVIEW_CHARS - 1)}…` : text;
 }
 
+/**
+ * A relation as agents see it, from the card they asked about (WAVE_13 §5.5): the other card's id,
+ * title, and board name, or only `{ type, restricted: true }` when the user cannot read it (T90).
+ */
+export function mcpRelation(relation: CardRelation) {
+  if (relation.restricted) return { type: relation.type, restricted: true as const };
+  return { type: relation.type, cardId: relation.card.id, title: relation.card.title, boardName: relation.card.board_name, columnName: relation.card.column_name, isDone: relation.card.is_done === 1 };
+}
+
 const attachmentNames = (cardId: string) => listAttachments(cardId).map((attachment) => attachment.name);
 
 type CardWithDescription = CardSummary & { description?: string };
 
-/** Due and assignee fields every card view shares (Wave 13): the zone and instant with a time, assignees as display names. */
-const cardFields = (card: CardSummary) => ({
+/** Tag names by id for one board; card tags are always tags of the card's own board. */
+const tagNames = (tags: readonly BoardTag[]) => new Map(tags.map((tag) => [tag.id, tag.name]));
+
+/**
+ * Fields every card view shares (Wave 13): the zone and instant with a time,
+ * assignees and tags as names, flags, and the plain-text excerpt.
+ */
+const cardFields = (card: CardSummary, tags: Map<string, string>) => ({
+  description_excerpt: card.description_excerpt,
   due_on: card.due_on,
   due_time: card.due_time,
   due_tz: card.due_tz,
   due_at: card.due_at,
   assignees: card.assignees.map((assignee) => assignee.display_name),
-  assignee_name: card.assignee_name
+  assignee_name: card.assignee_name,
+  tags: card.tag_ids.map((id) => tags.get(id)).filter((name): name is string => name !== undefined),
+  flags: card.flags
 });
 
-function listedCard(card: CardWithDescription, columnName: string | undefined) {
+/**
+ * Tag references (names, ignoring case, or ids) to ids of this board's tags.
+ * `none` is kept for filters only. Anything else is INVALID with the unknown
+ * values, so an agent can correct a typo; MCP never creates tags.
+ */
+function resolveTags(tags: readonly BoardTag[], refs: readonly string[], allowNone: boolean) {
+  const unknown: string[] = [];
+  const ids = refs.flatMap((ref) => {
+    if (allowNone && ref === "none") return ["none"];
+    const key = ref.trim().toLowerCase();
+    const tag = tags.find((candidate) => candidate.id === key) ?? tags.find((candidate) => candidate.name.toLowerCase() === key);
+    if (!tag) unknown.push(ref);
+    return tag ? [tag.id] : [];
+  });
+  if (unknown.length) throw new McpToolError("INVALID", "Unknown tag", { reason: "UNKNOWN_TAG", tags: unknown, known: tags.map((tag) => tag.name) });
+  return ids;
+}
+
+function listedCard(card: CardWithDescription, columnName: string | undefined, tags: Map<string, string>, counts: RelationCounts) {
   return {
     id: card.id,
     column_id: card.column_id,
@@ -96,8 +144,10 @@ function listedCard(card: CardWithDescription, columnName: string | undefined) {
     description_preview: card.description === undefined ? undefined : preview(card.description),
     revision: card.revision,
     creator_name: card.creator_name,
-    ...cardFields(card),
+    ...cardFields(card, tags),
     comment_count: card.comment_count,
+    relation_count: counts.relation_count,
+    open_blockers: counts.open_blockers,
     attachments: attachmentNames(card.id),
     updated_at: card.updated_at
   };
@@ -107,12 +157,28 @@ const uuid = z.string().uuid();
 
 /** A card as create_card and update_card return it. */
 const writtenCard = (card: CardSummary) => ({
-  id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, revision: card.revision, ...cardFields(card)
+  id: card.id, board_id: card.board_id, column_id: card.column_id, title: card.title, revision: card.revision, ...cardFields(card, tagNames(listBoardTags(card.board_id)))
 });
 
 const dueTimeInput = z.string().describe("Due time as HH:MM (24-hour), in dueTz; needs a due date");
 const dueTzInput = z.string().describe("IANA time zone of dueTime, for example Europe/Berlin");
 const assigneeIdsInput = z.array(uuid).max(20).describe("User ids who can open the board (see the board's readers); replaces the whole set");
+const tagsInput = z.array(z.string().min(1).max(64)).max(10).describe("Existing tags of the board, by name (any case) or id; replaces the whole set. Unknown tags are INVALID; tags are created in the app");
+const flagsInput = z.array(z.enum(TASK_FLAGS)).max(TASK_FLAGS.length).describe("Flags from the fixed set; replaces the whole set");
+const dateInput = z.string().refine(isCalendarDate, "Use a real date as YYYY-MM-DD");
+
+/** list_cards filters (D113, §5.5): values inside one filter are OR-ed, filters are AND-ed. */
+const listFilters = {
+  assigneeIds: z.array(z.union([uuid, z.literal("me"), z.literal("none")])).max(QUERY_LIMITS.values).optional()
+    .describe("Only cards assigned to any of these user ids; \"me\" is the key's user, \"none\" matches unassigned cards"),
+  tags: z.array(z.string().min(1).max(64)).max(QUERY_LIMITS.values).optional()
+    .describe("Only cards with any of these tags (names in any case, or ids); \"none\" matches untagged cards. Unknown tags are INVALID"),
+  flags: z.array(z.enum([...TASK_FLAGS, "none"])).max(TASK_FLAGS.length + 1).optional().describe("Only cards with any of these flags; \"none\" matches unflagged cards"),
+  dueBefore: dateInput.optional().describe("Only cards due strictly before this date (YYYY-MM-DD, the card's own calendar date)"),
+  dueAfter: dateInput.optional().describe("Only cards due strictly after this date; with dueBefore, a range"),
+  dueNone: z.boolean().optional().describe("true: also (or, alone, only) cards without a due date"),
+  text: z.string().min(1).max(QUERY_LIMITS.textMax).optional().describe("Only cards whose title or description excerpt contains this text, ignoring case and accents")
+};
 
 export const taskTools: McpToolSpec[] = [
   defineTool({
@@ -127,33 +193,44 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "list_cards",
     title: "List cards on a board",
-    description: "List a board's columns and its cards in order, optionally for one column. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
+    description: "List a board's columns, its tags, and its cards in order. Optional filters narrow the cards: columnId, assigneeIds, tags, flags, dueBefore/dueAfter/dueNone, and text; values inside one filter are alternatives, and different filters must all match. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
     scopes: ["tasks:read"],
     write: false,
-    inputSchema: z.object({ boardId: uuid, columnId: uuid.optional().describe("Only cards in this column") }),
-    handler: async ({ boardId, columnId }, key) => service(key, () => {
-      const { board, columns, cards } = getBoard(key.userId, boardId);
+    inputSchema: z.object({ boardId: uuid, columnId: uuid.optional().describe("Only cards in this column"), ...listFilters }),
+    handler: async ({ boardId, columnId, assigneeIds, tags, flags, dueBefore, dueAfter, dueNone, text }, key) => service(key, () => {
+      const { board, columns, cards, tags: boardTags } = getBoardWithRelationCounts(key.userId, boardId);
       if (columnId && !columns.some((column) => column.id === columnId)) throw new McpToolError("NOT_FOUND", "Column not found");
+      const filter: CardFilter = {
+        columns: columnId ? [columnId] : undefined,
+        assignees: assigneeIds,
+        tags: tags ? resolveTags(boardTags, tags, true) : undefined,
+        flags,
+        due: { before: dueBefore, after: dueAfter, none: dueNone },
+        text
+      };
+      // Filtered on the server with bound SQL (D113); the listing keeps the board's order.
+      const matching = new Set(filterBoardCardIds(board.id, filter, { userId: key.userId }));
       const names = new Map(columns.map((column) => [column.id, column.name]));
-      const selected = columnId ? cards.filter((card) => card.column_id === columnId) : cards;
+      const tagName = tagNames(boardTags);
       return {
         board: { id: board.id, name: board.name, owner_name: board.owner_name, is_owner: board.is_owner },
         columns: columns.map((column) => ({ id: column.id, name: column.name, position: column.position, wip_limit: column.wip_limit })),
+        tags: boardTags.map((tag) => ({ id: tag.id, name: tag.name, color: tag.color })),
         // Cards come from the board just authorized above.
-        cards: selected.map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id)))
+        cards: cards.filter((card) => matching.has(card.id)).map((card) => listedCard(cardDetail(card.id) ?? card, names.get(card.column_id), tagName, card))
       };
     })
   }),
   defineTool({
     name: "get_card",
     title: "Get a card",
-    description: "Read one card: title, plain-text description, column, the latest comments, and attachment names.",
+    description: "Read one card: title, plain-text description, column, the latest comments, attachment names, and its relations to other cards (a card the user cannot open shows only as restricted).",
     scopes: ["tasks:read"],
     write: false,
     inputSchema: z.object({ cardId: uuid }),
     handler: async ({ cardId }, key) => service(key, () => {
       const { card, board } = getCard(key.userId, cardId);
-      const { columns } = getBoard(key.userId, board.id);
+      const { columns, tags } = getBoard(key.userId, board.id);
       const page = listComments(key.userId, cardId);
       return {
         card: {
@@ -166,15 +243,34 @@ export const taskTools: McpToolSpec[] = [
           description: plainText(card.description),
           revision: card.revision,
           creator_name: card.creator_name,
-          ...cardFields(card),
+          ...cardFields(card, tagNames(tags)),
           created_at: card.created_at,
           updated_at: card.updated_at
         },
         comments: page.comments.map((comment) => ({ id: comment.id, author_name: comment.author_name, body: comment.body, created_at: comment.created_at, edited_at: comment.edited_at })),
         hasMoreComments: page.hasMore,
-        attachments: attachmentNames(cardId)
+        attachments: attachmentNames(cardId),
+        relations: listRelations(key.userId, cardId).map(mcpRelation)
       };
     })
+  }),
+  defineTool({
+    name: "search_cards",
+    title: "Search cards by title",
+    description: "Find cards by title across every board the user can open (case-insensitive substring match on titles only, not descriptions), for example to pick a card for link_cards. Cards on boardId come first. At most 20 results.",
+    scopes: ["tasks:read"],
+    write: false,
+    inputSchema: z.object({
+      query: z.string().min(1).max(100),
+      boardId: uuid.optional().describe("List this board's cards first"),
+      limit: z.number().int().min(1).max(20).optional()
+    }),
+    handler: ({ query, boardId, limit }, key) => {
+      const parsed = parseCardSearchQuery({ q: query, boardId, limit: limit === undefined ? undefined : String(limit) });
+      if ("error" in parsed) throw new McpToolError("INVALID", "Invalid arguments", { details: [parsed.error] });
+      const { q, ...options } = parsed.value!;
+      return searchCards(key.userId, q, options);
+    }
   }),
   defineTool({
     name: "create_card",
@@ -192,11 +288,15 @@ export const taskTools: McpToolSpec[] = [
       dueTime: dueTimeInput.optional(),
       dueTz: dueTzInput.optional(),
       assigneeIds: assigneeIdsInput.optional(),
+      tags: tagsInput.optional(),
+      flags: flagsInput.optional(),
       afterCardId: uuid.nullable().optional()
     }),
-    handler: async ({ boardId, ...fields }, key) => {
+    handler: async ({ boardId, tags, ...fields }, key) => {
       const input = routeInput(cardCreateSchema, fields);
       return service(key, async () => {
+        // Tags resolve against this board, after the board's own read check (NOT_FOUND first).
+        if (tags) input.tagIds = resolveTags(getBoard(key.userId, boardId).tags, tags, false);
         const { card } = await createCard(key.userId, boardId, input);
         return { card: writtenCard(card) };
       });
@@ -205,7 +305,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "update_card",
     title: "Update a card",
-    description: "Change a card's title, due date, due time, or assignees on a board the user can use. The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time; assigneeIds replaces the whole set ([] clears it).",
+    description: "Change a card's title, due date, due time, assignees, tags, or flags on a board the user can use. The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time; assigneeIds, tags, and flags each replace the whole set ([] clears it). Tags must already exist on the board (by name or id).",
     scopes: ["tasks:write"],
     write: true,
     dailyBucket: "task_write",
@@ -216,11 +316,15 @@ export const taskTools: McpToolSpec[] = [
       dueOn: z.string().nullable().optional().describe("Due date as YYYY-MM-DD, or null to clear"),
       dueTime: dueTimeInput.nullable().optional(),
       dueTz: dueTzInput.nullable().optional(),
-      assigneeIds: assigneeIdsInput.optional()
+      assigneeIds: assigneeIdsInput.optional(),
+      tags: tagsInput.optional(),
+      flags: flagsInput.optional()
     }).strict(),
-    handler: async ({ cardId, baseRevision, ...fields }, key) => {
-      const input = routeInput(cardPatchSchema, { ...fields, revision: baseRevision });
+    handler: async ({ cardId, baseRevision, tags, ...fields }, key) => {
       return service(key, async () => {
+        // Tags resolve against the card's own board, which the caller must be able to read.
+        const tagIds = tags ? resolveTags(listBoardTags(getCard(key.userId, cardId).board.id), tags, false) : undefined;
+        const input = routeInput(cardPatchSchema, { ...fields, ...(tagIds ? { tagIds } : {}), revision: baseRevision });
         const { card } = await patchCard(key.userId, cardId, input);
         return { card: writtenCard(card) };
       });
@@ -239,6 +343,26 @@ export const taskTools: McpToolSpec[] = [
       return service(key, async () => {
         const { card } = await moveCard(key.userId, cardId, input);
         return { card: { id: card.id, column_id: card.column_id, position: card.position } };
+      });
+    }
+  }),
+  defineTool({
+    name: "link_cards",
+    title: "Link two cards",
+    description: "Relate a card to another card the user can open, on the same or another board. type is seen from cardId toward targetCardId: relates_to, depends_on (the target must be done first), needed_by (this card must be done first), duplicates, or duplicated_by. Two cards have at most one relation (RELATION_EXISTS returns it); a card has at most 50. Links cannot be removed here. Linking never changes either card's revision.",
+    scopes: ["tasks:write"],
+    write: true,
+    dailyBucket: "task_write",
+    inputSchema: z.object({
+      cardId: uuid,
+      targetCardId: uuid,
+      type: z.enum(RELATION_TYPES as [RelationType, ...RelationType[]])
+    }).strict(),
+    handler: async ({ cardId, targetCardId, type }, key) => {
+      const input = routeInput(relationCreateSchema, { type, cardId: targetCardId });
+      return service(key, async () => {
+        const { relation } = await createRelation(key.userId, cardId, input);
+        return { relation: mcpRelation(relation) };
       });
     }
   }),

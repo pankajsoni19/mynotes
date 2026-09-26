@@ -22,14 +22,14 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not later migrations (017 onwards, Team) are present yet,
- * and pins the ids this branch depends on (1–16).
+ * holds whether or not 018 and 019 are present yet, and pins 1–17 and 020.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  // 017 onwards (Team, Wave 14) land from a parallel wave and may or may not be present yet.
-  expect(ids.slice(0, 16)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-  expect(ids.slice(16).every((id) => id >= 17)).toBe(true);
+  // 1–17 are on main; 018 (Team invites) and 019 (task hierarchy) may land later than 020 (task views).
+  expect(ids.slice(0, 17)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+  expect(ids.slice(17).every((id) => id >= 18)).toBe(true);
+  expect(ids).toContain(20);
 }
 
 function openDb() {
@@ -442,8 +442,10 @@ describe("database migrations", () => {
     expect(() => insert.run(JSON.stringify(["x".repeat(520)]), old)).toThrow();
     expect(() => db.query("INSERT INTO user_preferences (user_id, updated_at) VALUES ('missing', ?)").run(old)).toThrow();
     insert.run('["calendar"]', old);
-    db.query("DELETE FROM users WHERE id = 'u1'").run();
-    expect((db.query("SELECT user_id FROM user_preferences").all() as Array<{ user_id: string }>).map((row) => row.user_id)).toEqual(["u2"]);
+    // 017 makes u1 (the oldest account) the only admin, and the last admin cannot be deleted, so the
+    // cascade is checked on the member.
+    db.query("DELETE FROM users WHERE id = 'u2'").run();
+    expect((db.query("SELECT user_id FROM user_preferences").all() as Array<{ user_id: string }>).map((row) => row.user_id)).toEqual(["u1"]);
     db.close();
   });
 
@@ -467,10 +469,10 @@ describe("database migrations", () => {
     db.close();
   });
 
-  test("migration 020 backfills column states and adds task views with CHECKs and cascades, without 017–019", () => {
+  test("migration 020 backfills column states and adds task views with CHECKs and cascades on a 016-shaped database", () => {
     const db = openDb();
     db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-    // A 016-shaped database (no Team or hierarchy migrations): 020 needs only 009, 011, and 015.
+    // A 016-shaped database (no Team or hierarchy migrations yet): 020 needs only 009, 011, and 015.
     for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
       taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration]) {
       migration.up(db);
@@ -520,11 +522,13 @@ describe("database migrations", () => {
     view.run("v2", "Shared", "state:todo", "{}", "selected", old, old);
     db.query("INSERT INTO task_view_members (view_id, user_id, created_at) VALUES ('v2', 'u2', ?)").run(old);
     expect(() => db.query("INSERT INTO task_view_members (view_id, user_id, created_at) VALUES ('v2', 'missing', ?)").run(old)).toThrow();
-    // Deleting a member removes the membership; deleting the owner removes their views and memberships.
+    db.query(`INSERT INTO task_views (id, owner_id, name, query, display_json, position, created_at, updated_at)
+      VALUES ('v3', 'u2', 'Member view', '', '{}', 1024, ?, ?)`).run(old, old);
+    // Deleting a user removes their memberships and their own views (u1 is the last admin since 017, so u2 goes).
     db.query("DELETE FROM users WHERE id = 'u2'").run();
     expect((db.query("SELECT COUNT(*) AS count FROM task_view_members").get() as { count: number }).count).toBe(0);
-    db.query("DELETE FROM users WHERE id = 'u1'").run();
-    expect((db.query("SELECT COUNT(*) AS count FROM task_views").get() as { count: number }).count).toBe(0);
+    expect(db.query("SELECT id FROM task_views ORDER BY id").all()).toEqual([{ id: "v1" }, { id: "v2" }]);
+    db.query("DELETE FROM task_views WHERE id = 'v2'").run();
     db.close();
   });
 });

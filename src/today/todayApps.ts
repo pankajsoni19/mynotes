@@ -5,7 +5,7 @@ export type TodayApp = { section: LauncherSection; label: string; href: string; 
 
 /**
  * The launcher row on Today (D50), derived from the module registry (src/modules.ts, D92): each
- * module with a `launcher` adds its tile there. The Bin and notifications are not launcher items:
+ * module with a `launcher` adds its tile there. The Bin, Team, and notifications are not launcher items:
  * they stay in the account row and in each app's sidebar footer.
  */
 export const TODAY_APPS: TodayApp[] = MODULES.flatMap((module) => module.launcher

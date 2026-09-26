@@ -8,7 +8,9 @@
  */
 export const MCP_SCOPES = [
   "notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read",
-  "calendar:read", "calendar:write", "collections:read", "collections:write"
+  "calendar:read", "calendar:write", "collections:read", "collections:write",
+  // Admin-only (server/team/roles.ts ADMIN_ONLY_SCOPES); there is no team write scope (D79).
+  "team:read"
 ] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 

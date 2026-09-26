@@ -7,7 +7,8 @@ import { audit, db, now, type UserRow } from "./db";
 
 export type AppEnv = {
   Variables: {
-    user: Pick<UserRow, "id" | "email" | "display_name" | "totp_enabled_at">;
+    /** `role` is read fresh on every request (no cache), so a role change applies at once (T79). */
+    user: Pick<UserRow, "id" | "email" | "display_name" | "totp_enabled_at" | "role">;
     sessionId: string;
     csrfToken: string;
   };
@@ -53,10 +54,10 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) return c.json({ error: "Authentication required" }, 401);
   const row = db.query(`
-    SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.display_name, u.totp_enabled_at
+    SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.display_name, u.totp_enabled_at, u.role
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL
-  `).get(tokenHash(token), now()) as (Pick<UserRow, "id" | "email" | "display_name" | "totp_enabled_at"> & { session_id: string; csrf_token: string }) | null;
+  `).get(tokenHash(token), now()) as (Pick<UserRow, "id" | "email" | "display_name" | "totp_enabled_at" | "role"> & { session_id: string; csrf_token: string }) | null;
   if (!row) {
     clearSession(c);
     return c.json({ error: "Authentication required" }, 401);
@@ -67,7 +68,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
     clearSession(c);
     return c.json({ error: "Authentication required" }, 401);
   }
-  c.set("user", { id: row.id, email: row.email, display_name: row.display_name, totp_enabled_at: row.totp_enabled_at });
+  c.set("user", { id: row.id, email: row.email, display_name: row.display_name, totp_enabled_at: row.totp_enabled_at, role: row.role });
   c.set("sessionId", row.session_id);
   c.set("csrfToken", row.csrf_token);
   db.query("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now(), row.session_id);

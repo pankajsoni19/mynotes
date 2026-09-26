@@ -1,4 +1,4 @@
-# API contracts: Files, content, Bin, Search, Tasks, Today, Preferences, MCP, Collections, and Calendar
+# API contracts: Files, content, Bin, Search, Tasks, Today, Preferences, MCP, Collections, Calendar, and Team
 
 Companion to [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md). Every endpoint lives under `/api` and inherits the existing middleware:
 
@@ -319,7 +319,7 @@ Positions are computed by the server (D40) and never accepted from clients: a ne
 | --- | --- | --- | --- |
 | `GET /boards` | any | 200 `{ boards: BoardSummary[] }`: owned boards first, then shared ones, each by name (limit 500) | |
 | `POST /boards { name }` | any | 201 `{ board, columns }` with To do, Doing, Done at 1024, 2048, 3072 | 400, 409 `LIMIT_REACHED` |
-| `GET /boards/:b` | reader | 200 `{ board, columns, cards: CardSummary[] }` (columns and cards by position) | 404 |
+| `GET /boards/:b` | reader | 200 `{ board, columns, cards: (CardSummary & RelationCounts)[], tags: BoardTag[] }` (columns and cards by position, tags by name). Wave 13 adds `tags`, and each card adds `relation_count` and `open_blockers` for this viewer (§ Relations) | 404 |
 | `PATCH /boards/:b { name }` | owner | 200 `{ board }` | 400, 403, 404 |
 | `DELETE /boards/:b` | owner | 200 `{ ok: true, purgeAfter }`: the board moves to the Bin for 30 days | 403, 404 |
 
@@ -353,6 +353,7 @@ type CardSummary = {
   id: string; board_id: string; column_id: string; position: number;
   title: string;                     // 1–200 characters, trimmed, no control characters
   has_description: 0 | 1;            // the board view never carries descriptions
+  description_excerpt: string;       // Wave 13 (D111): plain text of the description, at most 160 characters (code points), '' without one
   revision: number;                  // starts at 1, +1 on every title/description edit
   created_by: string | null; creator_name: string | null;
   due_on: string | null;             // YYYY-MM-DD (migration 011); the civil date in due_tz when a time is set
@@ -362,29 +363,89 @@ type CardSummary = {
   assignees: CardAssignee[];         // Wave 13 (D102): at most 20, in assignment order
   assignee_id: string | null;        // DEPRECATED (D103): assignees[0].id, kept through v0.8.x
   assignee_name: string | null;      // DEPRECATED (D103): assignees[0].display_name
+  tag_ids: string[];                 // Wave 13 (D109): at most 10 tags of this board, in tagging order; resolve against the board's `tags`
+  flags: Flag[];                     // Wave 13 (D110): in the fixed order below
   comment_count: number; attachment_count: number;
   created_at: string; updated_at: string;
 };
 type CardAssignee = { id: string; display_name: string; can_read: 0 | 1 };  // 0: lost board access or disabled ("Former member", T93)
 type CardDetail = CardSummary & { description: string };  // Markdown, at most 65,536 UTF-8 bytes
+type Flag = "urgent" | "blocked" | "needs_review" | "on_hold";              // Wave 13 (D110), in this order
+type BoardTag = { id: string; board_id: string; name: string; color: OptionColor; card_count: number };  // color: the Collections option palette; card_count: live cards carrying it
 ```
 
 **Due time (Wave 13, D100–D101).** A card may carry a wall time next to its date. The client sends `dueTime` (`HH:MM`, 00:00–23:59) with `dueTz` (`Intl.DateTimeFormat().resolvedOptions().timeZone`); the server checks the zone with `isValidTimeZone` (browser aliases included), stores it as sent, and never converts it. `due_at` comes from `zonedToUtc`: a time inside a DST gap moves forward, and the earlier instant wins in an overlap. Rules (400 otherwise): a time needs a date and a zone; `dueTz` only comes with `dueTime`; `dueTime: null` clears the time and zone; changing only `dueOn` keeps the wall time and zone; `dueOn: null` also clears the time.
+
+**Description excerpt (Wave 13, D111).** `description_excerpt` is derived on the server with the search index's `searchText` (Markdown to plain text, as MCP's `description_preview`), whitespace collapsed, and cut to 160 code points with a trailing `…`. It is written with every description write (create and `PATCH`); a patch without `description` leaves it alone. Cards written before migration 015 are filled at boot by `reconcileCardExcerpts()` (live and binned cards whose description is not empty). Clients render it as text.
 
 **Assignees (Wave 13, D102–D103).** Assignees live in `card_assignees` (migration 015). `cards.assignee_id` is a legacy mirror of the first assignee, rewritten in the same transaction, for a rollback to v0.7.x only. Every user being **added** must be enabled and able to read the board (400 `ASSIGNEE_NOT_MEMBER`); a former member already on the card may stay until any reader removes them. Assigning never grants access.
 
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `GET /boards/:b/readers?q=&limit=` | reader | 200 `{ users: { id, displayName }[], truncated }`: everyone who can open the board (owner plus members, or every enabled user on an `all_users` board), display names only, for the assignee picker. Without `q`: at most 200 by name. With `q` (1–64 characters): a case-insensitive `instr` match on the display name (no wildcards), at most `limit` (1–50, default 20; `limit` needs `q`) | 400, 404, 429 `RATE_LIMITED` with `Retry-After` (60 a minute per user, T92) |
-| `POST /boards/:b/cards { columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. Assignees are written in the same transaction. | 400 (including `ASSIGNEE_NOT_MEMBER`), 404 (board, or a column not on this board), 409 `COLUMN_FULL`, `STALE_POSITION`, or `LIMIT_REACHED` |
-| `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: CardAttachment[] }`: the newest 50 comments in chronological order, and every live attachment | 404 |
-| `PATCH /cards/:k { title?, description?, dueOn?, dueTime?, dueTz?, assigneeIds?, assigneeId?, revision }` | reader | 200 `{ card }` with `revision + 1`, exactly once however many fields change (one transaction). `dueOn` is a real date `YYYY-MM-DD` (1900–2999) or `null`; `dueTime`/`dueTz` follow the due-time rules above; `assigneeIds` (≤ 20 after deduplication) replaces the whole set and `[]` clears it; the legacy `assigneeId` (a user or `null`) means `[id]` or `[]` (D103); omitted fields are unchanged | 400 (including `ASSIGNEE_NOT_MEMBER` when a new assignee is disabled or cannot read the board, and `assigneeId` sent together with `assigneeIds`), 404, 409 `{ code: "CARD_CHANGED", card }` (the current card, every field) when `revision` is not the stored one |
+| `POST /boards/:b/cards { columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), tagIds? (≤ 10), flags?, relations?: { targetCardId, type: RelationType }[] (≤ 50), attachmentIds? (≤ 50), afterCardId? }` | reader | 201 `{ card: CardDetail, renormalized? }`. Omitted `afterCardId` = bottom, `null` = top. The composer's one call: assignees, tags, flags, relations (seen from the new card, each audited `task.relation_create`, same rules as `POST /cards/:k/relations`: readable target, one per pair, 50 per card, no revision change on the target), and attachments (the caller's own `task_attachment` uploads that no card links yet, each audited `task.attachment_link`) are written in one transaction. `COLUMN_FULL` is checked first, and any refusal writes nothing. | 400 (including `ASSIGNEE_NOT_MEMBER`, more than 10 tags, an unknown or repeated flag, an unknown relation type or extra keys), 404 (board, a column not on this board, a tag not on this board, a relation target that is missing, binned, or unreadable, or a file that is not the caller's live attachment upload), 409 `COLUMN_FULL`, `STALE_POSITION`, `LIMIT_REACHED`, `RELATION_EXISTS` (two relations to one card), or `ATTACHMENT_LINKED` (the file is already on a card) |
+| `GET /cards/:k` | reader | 200 `{ card: CardDetail, comments: CardComment[], hasMoreComments, attachments: CardAttachment[], relations: CardRelation[] }`: the newest 50 comments in chronological order, every live attachment, and the card's relations as this viewer sees them, newest first (at most 50, § Relations) | 404 |
+| `PATCH /cards/:k { title?, description?, dueOn?, dueTime?, dueTz?, assigneeIds?, assigneeId?, tagIds?, flags?, revision }` | reader | 200 `{ card }` with `revision + 1`, exactly once however many fields change (one transaction). `dueOn` is a real date `YYYY-MM-DD` (1900–2999) or `null`; `dueTime`/`dueTz` follow the due-time rules above; `assigneeIds` (≤ 20 after deduplication) replaces the whole set and `[]` clears it; the legacy `assigneeId` (a user or `null`) means `[id]` or `[]` (D103); `tagIds` (≤ 10 after deduplication) and `flags` each replace the whole set, and `[]` clears it; omitted fields are unchanged | 400 (including `ASSIGNEE_NOT_MEMBER` when a new assignee is disabled or cannot read the board, `assigneeId` sent together with `assigneeIds`, more than 10 tags, and an unknown or repeated flag), 404 (the card, or a tag not on the card's board), 409 `{ code: "CARD_CHANGED", card }` (the current card, every field) when `revision` is not the stored one |
 | `POST /cards/:k/move { columnId, afterCardId }` | reader | 200 `{ card, renormalized?, positions? }`. `afterCardId: null` = top. `positions` lists `{ id, position }` for the whole target column after a renumber. | 400, 404 (card, or a column not on the card's board), 409 `STALE_POSITION`, or `COLUMN_FULL` when moving in from another column |
 | `DELETE /cards/:k` | reader | 200 `{ ok: true, purgeAfter }`: the card moves to the Bin and keeps its column | 404 |
 
 - **Stale positions.** `afterCardId` must be another live card in the target column. Otherwise (binned, in another column or board, the moved card itself, or unknown) the response is 409 `{ error, code: "STALE_POSITION", columnId, order: string[] }`, where `order` is the target column's live card ids in their current order.
 - **Moves** stay on the card's board and do not change `revision`, so an open editor can still save.
 - Binned cards and cards on binned boards return 404 on every card route. They are restored through `POST /api/bin/card/:id/restore` (§ Bin).
+
+### Relations (Wave 13, D104–D107)
+
+Typed, non-structural links between two cards, on the same board or on different boards. Three kinds are stored in `card_relations` (migration 015): `relates` (symmetric, stored with `source < target`), `blocks` (source is needed before target), and `duplicates`. The API shows five types, always **from the card in the path**:
+
+| Type sent or shown from card X toward Y | Stored `(source, target, kind)` | How Y shows it |
+| --- | --- | --- |
+| `relates_to` | `(min, max, relates)` | `relates_to` |
+| `needed_by` (X blocks Y) | `(X, Y, blocks)` | `depends_on` |
+| `depends_on` (Y blocks X) | `(Y, X, blocks)` | `needed_by` |
+| `duplicates` | `(X, Y, duplicates)` | `duplicated_by` |
+| `duplicated_by` | `(Y, X, duplicates)` | `duplicates` |
+
+There is one relation per unordered pair, whatever its kind. There is no parent or sprint kind (the hierarchy wave adds `cards.parent_card_id`).
+
+```ts
+type RelationType = "relates_to" | "depends_on" | "needed_by" | "duplicates" | "duplicated_by";
+type CardRelation =
+  | { id: string; type: RelationType; restricted: false; created_at: string; creator_name: string | null;
+      card: { id: string; board_id: string; board_name: string; title: string; column_name: string | null; is_done: 0 | 1; due_on: string | null } }
+  | { id: string; type: RelationType; restricted: true; created_at: string };   // nothing else (T90)
+type RelationCounts = {
+  relation_count: number;   // relations visible to this viewer: restricted rows count, hidden binned ones do not
+  open_blockers: number;    // readable, live depends_on cards not in a done column
+};
+```
+
+**Per-viewer resolution (D105, T90).** Each relation resolves for the caller on every read:
+
+- the other card is live and on a board the caller can read: `restricted: false` with the card's fields
+- the caller is not in the other board's audience (owner, members, or everyone on `all_users`): `restricted: true` with only `id`, `type`, `restricted`, and `created_at` (no card id, title, board, or creator), whether or not that card or board is binned, so binning is never disclosed
+- the caller is in the audience but the other card or its board is in the Bin: **hidden**, and back when it is restored (binning never removes relation rows). Purging a card or board deletes its relations (cascade)
+
+Links never grant access. Relations are **edges** (D107): they have their own endpoints and never change either card's `revision` or `updated_at`, so linking from another board never raises `CARD_CHANGED` for someone editing the card.
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /cards/:k/relations { type, cardId }` | reader of both cards | 201 `{ relation: CardRelation }`, seen from `k`. Runs under `k`'s board lock | 400 (a relation to itself, an unknown type, extra keys), 404 (`k` or `cardId` missing, binned, or unreadable; all look the same), 409 `{ code: "RELATION_EXISTS", relation }` (the existing relation seen from `k`, in either direction and of any kind; checked only after both cards are readable) or `LIMIT_REACHED` (50 relations per card, on either end) |
+| `DELETE /cards/:k/relations/:r` | reader of `k` | 200 `{ ok: true }`. `k` must be one end of `r`; a restricted relation may be removed, since it is metadata on the caller's own card | 404 (`k`, or `r` not a relation of `k`) |
+| `GET /cards/search?q=&boardId?&excludeCardId?&limit?` | any | 200 `{ results: { id, board_id, board_name, title, column_name, is_done }[], truncated }` for the relation picker (D106): live cards on live boards the caller can read whose title contains `q` (trimmed, 1–100 characters), case-insensitive `instr` (so `%` and `_` are literal), at most `limit` (1–20, default 20). Order: cards on `boardId` first (a hint only, never a filter or an access check), then titles starting with `q`, then `updated_at DESC`. `excludeCardId` drops the card being edited. Titles only, never descriptions | 400, 429 `RATE_LIMITED` with `Retry-After` (20 per 10 s per user, the `/api/search` window in its own bucket, T95) |
+
+`GET /cards/search` belongs to Tasks, not to `/api/search`; it keeps working when the Search module is hidden (D92).
+
+### Tags and flags (Wave 13, D109, D110, T101)
+
+Tags belong to one board: at most 100 per board (409 `LIMIT_REACHED`), names of 1–40 characters (trimmed, no control or bidi characters) unique ignoring case, and a colour from the Collections option palette (`gray`, the default, `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`). **Any reader creates a tag**; **only the owner** renames, recolours, or deletes one. A card carries at most 10 tags, each of its **own** board: a tag id from any other board is 404 `Tag not found`, even for a user who reads both boards, exactly like an unknown id. Flags are the fixed set `urgent`, `blocked`, `needs_review`, `on_hold`, each at most once; `blocked` is a manual flag, separate from the relation-derived blocker count (13D). Tags and flags are card **fields** (D107): they change through `PATCH /cards/:k` with the revision compare-and-swap, and `CARD_CHANGED` carries them.
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /boards/:b/tags { name, color? }` | reader | 201 `{ tag: BoardTag }` | 400, 404, 409 `{ code: "TAG_EXISTS", tag }` (a name that matches ignoring case, with the existing tag so a picker can use it; checked before the cap) or `LIMIT_REACHED` |
+| `PATCH /tags/:t { name?, color? }` | owner | 200 `{ tag: BoardTag }`. Renaming to another case of its own name is allowed | 400 (no field), 403 `OWNER_ONLY`, 404 (unknown, or a board the caller cannot read), 409 `TAG_EXISTS` |
+| `DELETE /tags/:t` | owner | 200 `{ ok: true, removedFrom }`: the tag is deleted with no Bin and unlinked from every card, binned ones included (`removedFrom` counts them all). No card's `revision` changes | 403 `OWNER_ONLY`, 404 |
+
+A binned card keeps its tags and flags; a restore brings back the tags that still exist. Audit (ids only): `task.tag_create { boardId, tagId }`, `task.tag_update { boardId, tagId, renamed?, color? }`, `task.tag_delete { boardId, tagId, removedFrom }`; `task.card_update` and `task.card_create` add `tagsAdded`, `tagsRemoved`, and the resulting `flags` when those fields are sent.
 
 ### Comments
 
@@ -426,9 +487,10 @@ type CardAttachment = {
 
 - **Reading (D43).** `GET /api/files/:id` and `/content` also admit a caller when the live document is linked to a live card on a board they can read. This never applies to lists. Access ends the moment the member is removed, the card or board is binned, the comment is deleted, or the link is removed.
 - **Lifecycle (director review §7).** Unlinking never deletes the file directly. When a document loses its last link (unlink, comment deleted, card or board purged), it moves to its uploader's Bin with `deleted_by` = the actor, and purges 30 days later. Binning a card keeps its links, so restoring the card brings its attachments back.
+- **Discard and never linked (Wave 13, §5.6, T100).** A client that uploaded files it will not attach (the composer's "Don't attach", a cancelled comment) discards each with `DELETE /api/files/:id`: only the uploader can, anyone else gets the same 404 as a missing id, and a linked file is 409 `ATTACHMENT_LINKED`. The file moves to the uploader's Bin (`document.delete { documentId }`), and restoring it there makes it an ordinary Files item. Anything the client leaves behind is caught by the hourly sweeper: a live `task_attachment` with no `card_attachments` row that is more than 24 hours old moves to its uploader's Bin (100 per run, `deleted_by = NULL`, audit `document.delete { documentId, reason: "attachment_never_linked" }`).
 - Inline images in a description use the same content URL, `/api/files/:id/content?disposition=inline`.
 
-**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.column_wip { wipLimit }`, `task.card_create { assigneesAdded? }`, `task.card_update { dueOn?, dueTime?: "set" | "cleared", assigneeId?, assigneesAdded?, assigneesRemoved? }` (counts, not ids), `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
+**Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.column_wip { wipLimit }`, `task.card_create { assigneesAdded? }`, `task.card_update { dueOn?, dueTime?: "set" | "cleared", assigneeId?, assigneesAdded?, assigneesRemoved? }` (counts, not ids), `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, `task.relation_create` / `task.relation_delete { boardId, cardId, relationId, kind }` (`boardId` and `cardId` are the path card's, `kind` the stored kind), and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
 ### Filter grammar (sub-wave 17C, D137, D140–D145)
 
 One grammar for the board filter bar (13E), cross-board queries, saved views, URLs, and MCP. It lives in `shared/taskQuery.ts`, a pure module that the server and the client both import (research 2026-09-26 §10.3, Q10). A query is terms separated by spaces: **terms AND together**, the **values of one term OR together**, and a leading `-` negates a term.
@@ -455,6 +517,7 @@ board:<uuid> column:<uuid> -tag:"Needs design",none flag:blocked "invoice"
 - **Canonical form.** `format` orders terms by key (`board state column assignee creator tag flag due has text`, positive before negated), dedupes and sorts values, lowercases ids and keywords, and always quotes text. URLs (`?q=`), `task_views.query`, and MCP carry the canonical form.
 - **Limits.** At most 2000 characters, 20 terms, 20 values per term, 100 characters per text term. No control or bidi characters.
 - **Errors.** `{ code: "FILTER_INVALID" | "FILTER_UNSUPPORTED" | "FILTER_SCOPE", message, position }`, where `position` is the character offset.
+- **One grammar with the Wave 13 structured filter.** The same module holds 13C's `CardFilter` and board pipeline (`queryCards`, `sortCards`, used by the client and mirrored by `list_cards` in `server/tasks/cardQuery.ts`). `queryFromCardFilter` gives a structured filter its canonical text, and `cardFilterFromQuery` turns a board-scoped query back into a `CardFilter`, or `null` when it uses what the board pipeline does not model (negation, `board:`, `state:`, `creator:`, `has:`, tag names, relative due windows, repeated keys); those run on the server. `tests/taskQueryParity.test.ts` checks that the three paths agree.
 - **URL codec.** `?q=` carries the canonical grammar and is the only filter parameter written. Decoding is lenient (bad terms and values are dropped) and still reads the Wave 13 per-key parameters (`assignee`, `tag`, `flag`, `due`, `column`, `rel=any|blocked|none`, plus `board` and `state`), so older links keep working. Other parameters (`view`, `layout`, `group`, `sort`) are left alone.
 
 ### Cross-board card query (sub-wave 17C, D144)
@@ -487,7 +550,7 @@ type QueryRefs = {                                   // first page only: what th
 - **Order and paging.** Keyset pagination on the group key, then the sort key, then the card id. `due` sorts by date then time with undated cards last; `updated` and `created` are newest first; `title` is case-insensitive; `board` is board name, column position, card position. `group` orders by the group first (board name; state todo → doing → done; due bucket overdue → today → this week → later → none), so a group is one contiguous run across pages; assignee and tag grouping are done by the client within the loaded cards. `nextCursor` is opaque and only continues the same canonical query, sort, and group (and, for date-relative queries, the same zone and date); anything else is `CURSOR_INVALID`.
 - **`total`** is on the first page only, when at most 1000 cards match. `refs` is on the first page only.
 - **Relations** (`has:`) follow the per-viewer relation rules (WAVE_13 D105): a relation to a card the caller cannot read counts, one to a readable binned card does not. `has:blocked` counts only readable, live `depends_on` cards outside a done column.
-- **Text** uses ASCII case folding (SQLite `lower`), as the Collections query does; accented capitals do not fold.
+- **Text** uses ASCII case folding (SQLite `lower`), as the Collections query does; accented capitals and accents do not fold here, while the board pipeline and `list_cards` fold accents in JavaScript. Keyset paging needs the match in SQL, so the cross-board query keeps the SQL match.
 
 ### Saved views (sub-wave 17C, D140, migration 020)
 
@@ -573,12 +636,12 @@ type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: s
 | Endpoint | Body | Success | Errors |
 | --- | --- | --- | --- |
 | `GET /api/mcp/keys` | | 200 `{ keys: McpKey[] }` (active keys, newest first) | |
-| `POST /api/mcp/keys` | `{ name, password, totpCode? \| recoveryCode?, scopes? }` | 201 `{ key: McpKey & { token, userId, prefix, createdAt } }`; the token is shown once | 400 (bad name or scopes), 401 (password or second factor), 409 (10 active keys) |
+| `POST /api/mcp/keys` | `{ name, password, totpCode? \| recoveryCode?, scopes? }` | 201 `{ key: McpKey & { token, userId, prefix, createdAt } }`; the token is shown once | 400 (bad name or scopes), 401 (password or second factor), 403 `SCOPE_NOT_ALLOWED` (a scope the caller's team role cannot hold, checked before the password; Wave 14), 409 (10 active keys) |
 | `DELETE /api/mcp/keys/:id` | `{}` | 200 `{ ok: true }` | 404 |
 
 ```ts
 type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read"
-  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write";
+  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "team:read";
 type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 ```
 
@@ -604,11 +667,13 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `read_document_text` | files:read | `{ documentId }` | `{ id, name, mimeType, sizeBytes, text }` for `preview_kind = 'text'` up to 1 MiB, strict UTF-8 |
 
 | `list_boards` | tasks:read | `{}` | `{ boards }` as `GET /api/tasks/boards` |
-| `list_cards` | tasks:read | `{ boardId, columnId? }` | `{ board: { id, name, owner_name, is_owner }, columns: { id, name, position, wip_limit }[], cards: { id, column_id, column_name, position, title, description_preview, revision, creator_name, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, comment_count, attachments: string[], updated_at }[] }`. `assignees` are display names in assignment order (Wave 13); `assignee_name` is the first one. `description_preview` is plain text, at most 280 characters; `attachments` are file names only. A `columnId` not on the board is `NOT_FOUND` |
-| `get_card` | tasks:read | `{ cardId }` | `{ card: { id, board_id, board_name, column_id, column_name, title, description, revision, creator_name, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, created_at, updated_at }, comments (latest 50), hasMoreComments, attachments: string[] }`. `description` is plain text |
-| `create_card` | tasks:write | `{ boardId, columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), afterCardId? }` | `{ card: { id, board_id, column_id, title, revision, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards`; a full column is `COLUMN_FULL` |
-| `update_card` | tasks:write | `{ cardId, baseRevision, title?, dueOn?, dueTime?, dueTz?, assigneeIds? }` (no other keys) | `{ card }` as `create_card` returns it, with `revision + 1`. Same validation as `PATCH /api/tasks/cards/:k`: `dueOn: null` clears the date and time, `dueTime: null` only the time, `assigneeIds` replaces the set. **Never changes the description** (a `description` key is `INVALID`, §11 Q8). `CARD_CHANGED` with `currentRevision` when `baseRevision` is stale. Wave 13 |
+| `list_cards` | tasks:read | `{ boardId, columnId?, assigneeIds?, tags?, flags?, dueBefore?, dueAfter?, dueNone?, text? }` | `{ board: { id, name, owner_name, is_owner }, columns: { id, name, position, wip_limit }[], tags: { id, name, color }[], cards: { id, column_id, column_name, position, title, description_preview, revision, creator_name, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, comment_count, relation_count, open_blockers, attachments: string[], updated_at }[] }`. `assignees` and `tags` are names in assignment and tagging order (Wave 13); `assignee_name` is the first assignee. `relation_count` and `open_blockers` are computed for the key's owner as in `GET /api/tasks/boards/:b` (13D). `description_preview` is plain text, at most 280 characters; `attachments` are file names only. A `columnId` not on the board is `NOT_FOUND`. **Filters (Wave 13C, D113)** run on the server with bound SQL (`server/tasks/cardQuery.ts`) and mean what the client's `shared/taskQuery.ts` means: values inside one filter are OR-ed and filters are AND-ed. `assigneeIds` (≤ 30): user ids, `"me"` (the key's user), or `"none"` (unassigned); `tags` (≤ 30): names in any case or ids of this board's tags, or `"none"` (untagged), where an unknown tag is `INVALID` with `reason: "UNKNOWN_TAG"`, the unknown `tags`, and the board's `known` names; `flags`: the fixed set or `"none"`; `dueBefore`/`dueAfter`: real dates, exclusive, AND-ed into one range over dated cards (the card's own civil `due_on`); `dueNone: true` adds cards without a date (alone: only those); `text` (1–100): a substring of the title or `description_excerpt`, ignoring case and accents, with no wildcards. The listing keeps the board order |
+| `get_card` | tasks:read | `{ cardId }` | `{ card: { id, board_id, board_name, column_id, column_name, title, description, revision, creator_name, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, created_at, updated_at }, comments (latest 50), hasMoreComments, attachments: string[], relations: McpRelation[] }`. `description` is plain text; `relations` resolve for the key's owner exactly as `GET /api/tasks/cards/:k` does, newest first (13D) |
+| `search_cards` | tasks:read | `{ query (1–100, trimmed), boardId?, limit? (1–20, default 20) }` | `{ results: { id, board_id, board_name, title, column_name, is_done }[], truncated }` as `GET /api/tasks/cards/search`: titles only, live cards on boards the owner can read, `boardId` first (a hint). Not rate-limited beyond the per-key call limits (13D) |
+| `create_card` | tasks:write | `{ boardId, columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), tags? (≤ 10), flags?, afterCardId? }` | `{ card: { id, board_id, column_id, title, revision, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards`; a full column is `COLUMN_FULL`. `tags` are **existing** tags of the board by name (any case) or id; an unknown one is `INVALID` with `reason: "UNKNOWN_TAG"` and nothing is written (MCP never creates tags) |
+| `update_card` | tasks:write | `{ cardId, baseRevision, title?, dueOn?, dueTime?, dueTz?, assigneeIds?, tags?, flags? }` (no other keys) | `{ card }` as `create_card` returns it, with `revision + 1`. Same validation as `PATCH /api/tasks/cards/:k`: `dueOn: null` clears the date and time, `dueTime: null` only the time, `assigneeIds`, `tags` (existing tags of the card's board, by name or id, as for `create_card`), and `flags` each replace the set, and `[]` clears it. **Never changes the description** (a `description` key is `INVALID`, §11 Q8). `CARD_CHANGED` with `currentRevision` when `baseRevision` is stale. Wave 13 |
 | `move_card` | tasks:write | `{ cardId, columnId, afterCardId? }` | `{ card: { id, column_id, position } }`. Same board only; `afterCardId` omitted = bottom, `null` = top; moving into another column at its WIP limit is `COLUMN_FULL` |
+| `link_cards` | tasks:write | `{ cardId, targetCardId, type: RelationType }` (no other keys) | `{ relation: McpRelation }` seen from `cardId`. Same service as `POST /api/tasks/cards/:k/relations`: both cards must be readable (`NOT_FOUND` otherwise, identical to a missing id), one relation per pair (`RELATION_EXISTS` with the existing `relation`), 50 per card (`LIMIT_REACHED`); never changes either card's revision. There is no unlink tool (13D) |
 | `comment_on_card` | tasks:write | `{ cardId, body }` | `{ comment: { id, card_id, created_at } }`, authored by the key's owner |
 | `get_today` | today:read | `{ tz? }` (IANA, default UTC) | The `GET /api/today` body, titles and ids only, with only the sections the key may read (T74): task sections need `tasks:read`, `notesRecent`/`drafts`/`agentDrafts` need `notes:read`, `files` needs `files:read`, `collectionsRecent` needs `collections:read`, `upcoming` needs `calendar:read`; `binSoon` and `storage` need `today:read` alone, and `binSoon` keeps only item types the key may read (notes: `notes:read`, documents: `files:read`, cards and boards: `tasks:read`, collections and rows: `collections:read`, calendars and events: `calendar:read`). It shares the 30-a-minute per-user Today limit (`RATE_LIMITED` with `retryAfterSeconds`). `list_cards` and `get_card` also return `due_on` and `assignee_name` |
 | `list_calendars` | calendar:read | `{}` | `{ calendars: { id, name, role, color, ownerName }[] }` as `GET /api/calendars` (a first call creates "Personal", as there) |
@@ -623,7 +688,14 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `create_row` | collections:write | `{ collectionId, values }` | `{ rowId, revision: 1, url }`. Editor role; the row goes at the bottom |
 | `update_row` | collections:write | `{ rowId, values, baseRevision }` | `{ rowId, revision, url }` or `ROW_CHANGED` with `currentRevision`. Values merge; `null` clears a field |
 
-Task tools call the `/api/tasks` services as the key's owner, so the W9 rules apply unchanged: any board reader (owner, member, everyone on an `all_users` board) may create, update, move, and comment; a board the user cannot read, and every id on it, is `NOT_FOUND`, identical to a missing id. There are no tools that edit descriptions, delete, or bin cards, or that change columns, WIP limits, sharing, or boards. `ASSIGNEE_NOT_MEMBER` and the due-time rules are `INVALID` (with `reason` when the service gave a code). A stale `afterCardId` returns `STALE_POSITION` with `columnId` and the column's current `order`; `LIMIT_REACHED` passes through the board caps. Task writes are audited through the usual `task.card_create`, `task.card_update`, `task.card_move`, and `task.comment_create` events with `{ via: "mcp", keyId }` added.
+Task tools call the `/api/tasks` services as the key's owner, so the W9 rules apply unchanged: any board reader (owner, member, everyone on an `all_users` board) may create, update, move, and comment; a board the user cannot read, and every id on it, is `NOT_FOUND`, identical to a missing id. There are no tools that edit descriptions, delete, or bin cards, or that change columns, WIP limits, sharing, or boards. `ASSIGNEE_NOT_MEMBER` and the due-time rules are `INVALID` (with `reason` when the service gave a code). A stale `afterCardId` returns `STALE_POSITION` with `columnId` and the column's current `order`; `LIMIT_REACHED` passes through the board and relation caps. There is no tool to unlink cards. Task writes are audited through the usual `task.card_create`, `task.card_update`, `task.card_move`, `task.comment_create`, and `task.relation_create` events with `{ via: "mcp", keyId }` added.
+
+```ts
+// Relations as agents see them, from the card they asked about (T90).
+type McpRelation =
+  | { type: RelationType; cardId: string; title: string; boardName: string; columnName: string | null; isDone: boolean }
+  | { type: RelationType; restricted: true };   // a card the key's owner cannot read: nothing else
+```
 
 Calendar tools call the `/api/calendars`, `/api/events`, and `/api/reminders` services, and collection tools the `/api/collections` services, as the key's owner (D70, T72–T75). Readers read; only the owner and editors write (a viewer gets `READ_ONLY`); anything the user cannot read, including binned items, is `NOT_FOUND`. Writes are create and update only: there are no delete, exdate, share, feed, schema, view, attachment, or import tools. Every write sets `updated_via_key_id` (the event view's and row panel's "Changed by <key>", with Undo), is audited through the usual `event.create`, `event.update`, `reminder.create`, `collection.row_create`, and `collection.row_update` events with `{ via: "mcp", keyId }` added, and counts against the daily buckets below. A person's own edit or undo clears the key mark.
 
@@ -656,6 +728,7 @@ Errors are tool results with `isError: true` whose text is `{ error, code, ...de
 | `EVENT_CHANGED` | `update_event`'s `baseRevision` is not the event's revision. Includes `currentRevision` |
 | `CARD_CHANGED` | `update_card`'s `baseRevision` is not the card's revision. Includes `currentRevision` only |
 | `COLUMN_FULL` | `create_card` or `move_card` (from another column) into a column at its WIP limit. Includes `columnId`, `wipLimit`, and `cardCount` |
+| `RELATION_EXISTS` | `link_cards` on two cards that already have a relation (either direction, any type). Includes the existing `relation` seen from `cardId` |
 | `ROW_CHANGED` | `update_row`'s `baseRevision` is not the row's revision. Includes `currentRevision` |
 | `REMINDER_EXISTS` | The key's owner already has a reminder at that offset on the event |
 | `SCHEMA_CHANGED` | A `query_rows` cursor was issued before the collection's fields changed; start again without it |
@@ -982,6 +1055,69 @@ type CalendarFeed = { id: string; calendarId: string; prefix: string; detail: "b
 - Empty Bin purges the caller's binned calendars and the binned events on calendars they own; events they deleted on someone else's calendar stay for that owner.
 - The hourly sweeper resumes tombstones and purges expired calendars and events with the same per-table budgets (events first).
 - Audit: `calendar.restore { calendarId }`, `event.restore { eventId, calendarId }`, `calendar.purge { calendarId, reason }`, `event.purge { eventId, reason }` with `reason` `user`, `retention`, or `resumed`.
+
+## Team (Wave 14)
+
+Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-module.md) (§11 overrides the earlier text). Migration `017_team_roles`.
+
+**Roles.** `users.role` is `admin | member | viewer | guest` (D71). This wave assigns only `admin` and `member`; `viewer` and `guest` exist in the schema and are refused by the API with 400 `ROLE_NOT_ENABLED` until Wave 15 enforces them. The first account registered on an empty database is `admin` (D76, inside the register transaction). On upgrade every account becomes `member` and the oldest enabled one `admin` (O8). `role` is returned on `user` by `POST /api/auth/register`, `POST /api/auth/login`, and `GET /api/auth/me`; no request body accepts it except the Team role route.
+
+**Always one active admin.** "Active admin" means `role = 'admin' AND disabled_at IS NULL`. Every write that would leave none returns 409 `LAST_ADMIN`; the `users_keep_one_admin` triggers refuse it in SQL too (T78).
+
+**Block.** Blocking reuses `users.disabled_at` (D74), shown as `blockedAt`. Sign-in for a blocked account returns 403 `{ code: "ACCOUNT_BLOCKED", error: "This account has been blocked. Contact your Nook administrator." }` only after the right password and before any second factor is checked; a wrong password still gets the generic 401. The block reason is never shown to the blocked user (O11).
+
+### Types
+
+```ts
+type TeamRole = "admin" | "member" | "viewer" | "guest";
+type TeamMember = {
+  id: string; displayName: string; role: TeamRole; status: "active" | "blocked"; createdAt: string; isYou: boolean;
+  // Admins only (T85): absent for everyone else.
+  email?: string; lastSeenAt?: string | null; blockedAt?: string | null;
+  blockedBy?: { id: string; displayName: string } | null; blockReason?: string | null;
+  totpEnabled?: boolean; mcpKeys?: { live: number }; storageBytes?: number; emailAllowed?: boolean;
+};
+type TeamEvent = {
+  id: string; action: "role_change" | "block" | "unblock" | "sessions_revoked" | "bootstrap_admin";
+  via: "web" | "cli" | "migration" | "bootstrap" | "mcp"; fromRole: TeamRole | null; toRole: TeamRole | null;
+  reason: string | null; createdAt: string; actor: { id: string; displayName: string } | null;
+};
+type Reauth = { password?: string; totpCode?: string; recoveryCode?: string };  // one factor at most
+```
+
+`lastSeenAt` is the latest `last_seen_at` of the account's live sessions (null once they are gone). `blockedBy` is null for accounts disabled before migration 017 ("Blocked (before Team)"). `emailAllowed` is false when the address is no longer on `ALLOWED_EMAILS`, so the account cannot sign in. `storageBytes` is the quota sum (live and binned documents).
+
+### Endpoints
+
+Guests get **404** on every Team route. Members and viewers read; every write needs `admin` (403 `ADMIN_ONLY` otherwise). Writes count against 30 a minute per admin (429 `RATE_LIMITED`). A malformed or unknown `:userId` is 404. Bodies are strict JSON (extra fields are 400).
+
+| Endpoint | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/team` | | 200 `{ me: { id, role }, users: TeamMember[] }`, active before blocked, then admin, member, viewer, guest, then name; at most 500 | 404 (guest) |
+| `GET /api/team/:userId` | | 200 `{ member: TeamMember & { events?: TeamEvent[] } }`; `events` (latest 50) for admins only | 404 |
+| `PUT /api/team/:userId/role` | `{ role, expectedRole } & Reauth` | 200 `{ changed, role, member }`; `changed: false` when `role` equals the current role (no event) | 400 `ROLE_NOT_ENABLED`; 401 `REAUTH_REQUIRED`; 409 `ROLE_CHANGED` `{ currentRole }` (compare-and-swap on `expectedRole`, T79), `LAST_ADMIN` |
+| `POST /api/team/:userId/block` | `{ reason?: string ≤ 200 } & Reauth` | 200 `{ blockedAt, sessionsRevoked, mcpKeysPaused, member }` | 401 `REAUTH_REQUIRED`; 409 `SELF_ACTION`, `ALREADY_BLOCKED`, `LAST_ADMIN`, `ROLE_CHANGED` |
+| `POST /api/team/:userId/unblock` | `{}` | 200 `{ ok: true, member }` | 409 `NOT_BLOCKED` |
+| `POST /api/team/:userId/sessions/revoke` | `{}` | 200 `{ sessionsRevoked, member }` | 409 `SELF_ACTION` (use Sign out) |
+
+- **Re-authentication** (§5.5): granting or removing admin (`expectedRole` or `role` is `admin`) and blocking an admin need `password`, plus `totpCode` or `recoveryCode` when the caller has two-factor on, checked with the MCP key creation helpers (`server/reauth.ts`). Missing or wrong → 401 `REAUTH_REQUIRED`; the factor is consumed only after the password verifies, and not at all when the role is unavailable or `expectedRole` is stale. Other Team writes rely on the session and CSRF (T82).
+- **Role change** runs `UPDATE users SET role = ? WHERE id = ? AND role = ?`. It takes effect on the target's next request (the role is read on every request, no cache). An admin may demote themselves while another active admin exists.
+- **Block** runs one transaction: set `disabled_at`, `blocked_by`, `block_reason`; delete every session of the account (an unblock does not revive them); delete its push subscriptions. MCP keys and calendar feed tokens are kept and pause (their existing `disabled_at` checks), then resume on unblock (O9). Content the account owns stays where it is and stays shared (O10). The account drops out of share pickers and assignee lists. An upload that passed `requireAuth` before the block fails at commit with 401 and its staged object is removed; the reminders dispatcher skips blocked accounts (their reminders stay due and fire after an unblock). Upload slots are per request in memory and are released as those requests fail; there are no persistent upload reservations.
+- **Unblock** clears the three columns. The account signs in again with its existing password and second factor; push must be re-enabled per device; the role is unchanged.
+- **Audit and activity** (T83): each write adds one `team_events` row (append-only through triggers) and one `audit_log` row with ids and roles only: `team.role_changed { targetId, fromRole, toRole, via }`, `team.user_blocked { targetId, sessions, via }`, `team.user_unblocked { targetId, via }`, `team.sessions_revoked { targetId, sessions, via }`, `team.bootstrap_admin { targetId }`, and `team.reauth_failed`. The block reason lives only in `users.block_reason` and the `block` event. Blocked sign-in attempts are audited as `auth.login_blocked`.
+
+### Host CLI
+
+`bun server/team-admin.ts list | set-role <email> admin|member | unblock <email>` (in Docker: `docker compose exec mynotes bun server/team-admin.ts …`). It runs the same service functions with no actor and `via = 'cli'`, so the last-admin rule applies; exit codes are 0 (done), 1 (refused or unknown account, with the error code), and 2 (usage).
+
+### MCP (`team:read`)
+
+`team:read` is admin-only: `POST /api/mcp/keys` refuses it for other roles with 403 `SCOPE_NOT_ALLOWED`, and a key's **effective scopes** are its stored scopes narrowed to what the holder's current role allows, computed on every `/mcp` request and every tool call (`effectiveMcpScopes`, T81). A demoted admin's key loses the Team tools on its next call (hidden from `tools/list`, `SCOPE_REQUIRED` from a direct call) and gets them back if the role is restored. No write tools exist (D79). Output never includes emails or block reasons (O12).
+
+| Tool | Scope | Arguments | Result |
+| --- | --- | --- | --- |
+| `list_team_members` | team:read | `{ role?, status?: "active" \| "blocked" }` | `{ members: [{ id, displayName, role, status, createdAt, lastSeenAt }] }` |
+| `get_team_member` | team:read | `{ userId }` | the same fields plus `blockedAt` and `events` (latest 20: `{ action, fromRole, toRole, createdAt, actor }` with the actor's display name) |
 
 ## Changes to existing note endpoints (Wave 4)
 

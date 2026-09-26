@@ -220,7 +220,9 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
     const due = db.query(`SELECT r.*, CASE WHEN e.id IS NULL THEN NULL WHEN e.deleted_at IS NULL THEN 1 ELSE 0 END AS event_live, e.calendar_id
         FROM reminders r LEFT JOIN events e ON e.id = r.event_id
         WHERE r.next_fire_at IS NOT NULL AND r.claimed_at IS NULL AND r.next_fire_at <= ?
-          AND r.user_id NOT IN (SELECT value FROM json_each(?)) ORDER BY r.next_fire_at LIMIT ?`)
+          AND r.user_id NOT IN (SELECT value FROM json_each(?))
+          -- Blocked accounts (T80): their reminders stay due and resume after an unblock.
+          AND r.user_id NOT IN (SELECT id FROM users WHERE disabled_at IS NOT NULL) ORDER BY r.next_fire_at LIMIT ?`)
       .all(now, JSON.stringify([...deferredUntil.keys()]), DISPATCH_BATCH) as DueRow[];
     for (const row of due) {
       if (deferredUntil.has(row.user_id)) {

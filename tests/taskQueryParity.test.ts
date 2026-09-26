@@ -1,0 +1,154 @@
+import { beforeAll, describe, expect, test } from "bun:test";
+import { createUser, db, request, type Session } from "./support/harness";
+import { cardFilterFromQuery, format, parse, queryCards, queryFromCardFilter, type CardFilter, type QueryCard } from "../shared/taskQuery";
+
+const { filterBoardCardIds } = await import("../server/tasks/cardQuery");
+const { runQuery } = await import("../server/tasks/query");
+
+/**
+ * One grammar (research 2026-09-26 §10.3, §10.6): a Wave 13 structured filter
+ * and its canonical text form select the same cards through the board
+ * pipeline (client, `shared/taskQuery.ts`), the board SQL (`list_cards`,
+ * `server/tasks/cardQuery.ts`), and the cross-board query
+ * (`server/tasks/query.ts`) scoped to the board. The `has:` filters agree
+ * with the board payload's `relation_count` and `open_blockers`.
+ */
+
+async function call(session: Session, method: string, path: string, body?: unknown) {
+  const response = await request(`/tasks${path}`, method === "GET" ? {} : { method, body: JSON.stringify(body ?? {}) }, session);
+  const text = await response.text();
+  return { status: response.status, body: (text ? JSON.parse(text) : null) as Record<string, any> };
+}
+
+let owner: Session;
+let member: Session;
+let boardId: string;
+let otherBoardId: string;
+let columns: Array<{ id: string; position: number }>;
+let tagA: string;
+let tagB: string;
+const cardIds: Record<string, string> = {};
+const stamp = "2026-01-01T00:00:00.000Z";
+
+beforeAll(async () => {
+  owner = await createUser("Parity owner");
+  member = await createUser("Parity member");
+  const created = await call(owner, "POST", "/boards", { name: "Parity board" });
+  boardId = created.body.board.id;
+  columns = created.body.columns;
+  expect((await call(owner, "PUT", `/boards/${boardId}/sharing`, { visibility: "selected", userIds: [member.userId] })).status).toBe(200);
+  const other = await call(member, "POST", "/boards", { name: "Parity private" });
+  otherBoardId = other.body.board.id;
+  const specs: Array<[string, number, string[], string | null]> = [
+    ["Alpha invoice", 0, [owner.userId], "2026-10-01"],
+    ["Beta", 0, [], null],
+    ["Gamma", 1, [member.userId], "2026-10-05"],
+    ["Delta invoice", 1, [owner.userId, member.userId], "2026-09-20"],
+    ["Epsilon", 2, [], "2026-10-10"],
+    ["Zeta", 2, [member.userId], null]
+  ];
+  for (const [title, column, assigneeIds, dueOn] of specs) {
+    const card = await call(owner, "POST", `/boards/${boardId}/cards`, { columnId: columns[column]!.id, title, assigneeIds, ...(dueOn ? { dueOn } : {}) });
+    expect(card.status).toBe(201);
+    cardIds[title] = card.body.card.id;
+  }
+  tagA = crypto.randomUUID();
+  tagB = crypto.randomUUID();
+  db.query("INSERT INTO board_tags (id, board_id, name, created_at, updated_at) VALUES (?, ?, 'Backend', ?, ?)").run(tagA, boardId, stamp, stamp);
+  db.query("INSERT INTO board_tags (id, board_id, name, created_at, updated_at) VALUES (?, ?, 'Design', ?, ?)").run(tagB, boardId, stamp, stamp);
+  const tag = db.query("INSERT INTO card_tags (card_id, tag_id, created_at) VALUES (?, ?, ?)");
+  tag.run(cardIds["Alpha invoice"]!, tagA, stamp);
+  tag.run(cardIds.Gamma!, tagA, stamp);
+  tag.run(cardIds.Gamma!, tagB, stamp);
+  const flag = db.query("INSERT INTO card_flags (card_id, flag, created_at) VALUES (?, ?, ?)");
+  flag.run(cardIds.Beta!, "urgent", stamp);
+  flag.run(cardIds.Gamma!, "blocked", stamp);
+  db.query("UPDATE cards SET description_excerpt = 'pay the plumber' WHERE id = ?").run(cardIds.Zeta!);
+  // Relations: Beta depends on Gamma (open), Epsilon depends on Zeta (done column), Alpha relates to a card the owner cannot read.
+  const privateCard = await call(member, "POST", `/boards/${otherBoardId}/cards`, { columnId: other.body.columns[0].id, title: "Hidden" });
+  const relate = db.query("INSERT INTO card_relations (id, source_card_id, target_card_id, kind, created_at) VALUES (?, ?, ?, ?, ?)");
+  relate.run(crypto.randomUUID(), cardIds.Gamma!, cardIds.Beta!, "blocks", stamp);
+  relate.run(crypto.randomUUID(), cardIds.Zeta!, cardIds.Epsilon!, "blocks", stamp);
+  const [low, high] = [cardIds["Alpha invoice"]!, privateCard.body.card.id as string].sort();
+  relate.run(crypto.randomUUID(), low, high, "relates", stamp);
+});
+
+const filters: CardFilter[] = [
+  {},
+  { assignees: ["me"] },
+  { assignees: ["none"] },
+  { assignees: ["me", "none"] },
+  { assignees: [crypto.randomUUID()] },
+  { tags: ["TAG_A"] },
+  { tags: ["none"] },
+  { tags: ["TAG_A", "TAG_B"], flags: ["blocked"] },
+  { flags: ["urgent", "none"] },
+  { flags: ["none"] },
+  { due: { before: "2026-10-05" } },
+  { due: { after: "2026-10-01" } },
+  { due: { before: "2026-10-10", after: "2026-09-20" } },
+  { due: { before: "2026-10-05", none: true } },
+  { due: { none: true } },
+  { columns: ["COL_1"] },
+  { columns: ["COL_0", "COL_2"], assignees: ["me"] },
+  { text: "invoice" },
+  { text: "PLUMBER" },
+  { text: "invoice", due: { after: "2026-09-25" }, assignees: ["me"] }
+];
+
+const resolve = (filter: CardFilter): CardFilter => JSON.parse(JSON.stringify(filter)
+  .replaceAll("TAG_A", tagA).replaceAll("TAG_B", tagB)
+  .replaceAll("COL_0", columns[0]!.id).replaceAll("COL_1", columns[1]!.id).replaceAll("COL_2", columns[2]!.id));
+
+describe("one grammar across the board pipeline, list_cards SQL, and the cross-board query", () => {
+  test.each(filters.map((filter, index) => [index, filter] as const))("filter %i gives the same cards everywhere", async (_index, template) => {
+    const filter = resolve(template);
+    const board = (await call(owner, "GET", `/boards/${boardId}`)).body;
+    const client = queryCards(board.cards as QueryCard[], board.columns, filter, { userId: owner.userId }).map((card) => card.id).sort();
+    const boardSql = filterBoardCardIds(boardId, filter, { userId: owner.userId }).sort();
+    const text = format(queryFromCardFilter(filter));
+    const parsed = parse(`board:${boardId} ${text}`);
+    if (!parsed.ok) throw new Error(`${text}: ${parsed.error.message}`);
+    const crossBoard = runQuery(owner.userId, parsed.query, { tz: "UTC", limit: 100 }).cards.map((card) => card.id).sort();
+    expect(boardSql).toEqual(client);
+    expect(crossBoard).toEqual(client);
+    // The structured filter survives the round trip through its text form.
+    const back = cardFilterFromQuery(parse(text, { boardScoped: true }).ok ? (parse(text, { boardScoped: true }) as { ok: true; query: never }).query : { terms: [] });
+    expect(back).not.toBeNull();
+    expect(queryCards(board.cards as QueryCard[], board.columns, back!, { userId: owner.userId }).map((card) => card.id).sort()).toEqual(client);
+  });
+
+  test("has:relation and has:blocked match relation_count and open_blockers on the board", async () => {
+    for (const viewer of [owner, member]) {
+      const board = (await call(viewer, "GET", `/boards/${boardId}`)).body;
+      const expectIds = (predicate: (card: { relation_count: number; open_blockers: number }) => boolean) =>
+        (board.cards as Array<{ id: string; relation_count: number; open_blockers: number }>).filter(predicate).map((card) => card.id).sort();
+      const run = (text: string) => {
+        const parsed = parse(`board:${boardId} ${text}`);
+        if (!parsed.ok) throw new Error(parsed.error.message);
+        return runQuery(viewer.userId, parsed.query, { tz: "UTC", limit: 100 }).cards.map((card) => card.id).sort();
+      };
+      expect(run("has:relation")).toEqual(expectIds((card) => card.relation_count > 0));
+      expect(run("-has:relation")).toEqual(expectIds((card) => card.relation_count === 0));
+      expect(run("has:blocked")).toEqual(expectIds((card) => card.open_blockers > 0));
+    }
+    // Binning the other board hides nothing from the owner (not in its audience) but hides the relation from its member.
+    expect((await call(member, "DELETE", `/boards/${otherBoardId}`)).status).toBe(200);
+    const alpha = cardIds["Alpha invoice"]!;
+    const ownerRun = runQuery(owner.userId, (parse(`board:${boardId} has:relation`) as { ok: true; query: never }).query, { tz: "UTC" }).cards.map((card) => card.id);
+    const memberRun = runQuery(member.userId, (parse(`board:${boardId} has:relation`) as { ok: true; query: never }).query, { tz: "UTC" }).cards.map((card) => card.id);
+    expect(ownerRun).toContain(alpha);
+    expect(memberRun).not.toContain(alpha);
+    const memberBoard = (await call(member, "GET", `/boards/${boardId}`)).body.cards as Array<{ id: string; relation_count: number }>;
+    expect(memberBoard.find((card) => card.id === alpha)!.relation_count).toBe(0);
+  });
+
+  test("queries the board pipeline cannot express map to null, not to a wider filter", () => {
+    for (const text of ["-assignee:me", "state:todo", `board:${crypto.randomUUID()}`, "creator:me", "has:relation", "tag:Backend", "due:overdue",
+      "due:today", "assignee:me assignee:none", '"a" "b"', "due:<2026-01-01 due:<2026-02-01", "due:<2026-01-01,none due:>2025-01-01", "due:2026-01-01"]) {
+      const parsed = parse(text, { boardScoped: true });
+      expect(parsed.ok).toBe(true);
+      expect(cardFilterFromQuery((parsed as { ok: true; query: never }).query)).toBeNull();
+    }
+  });
+});

@@ -20,9 +20,12 @@ import { TaskError } from "./service";
  * - Ids the caller cannot read simply match nothing; no error tells them apart
  *   from ids that do not exist (T116).
  * - Relation filters (`has:`) follow the per-viewer relation rules of WAVE_13
- *   D105: a relation to an unreadable card counts (it is metadata on the
- *   caller's own card, shown as restricted), one to a readable binned card
- *   does not. Blockers count only when readable, live, and not done.
+ *   D105, exactly as `relationCountsForBoard` (server/tasks/cardRelations.ts)
+ *   counts them: `has:relation` is `relation_count > 0` (a relation to a card
+ *   outside the caller's audience counts, shown as restricted; one to a card
+ *   in their audience that is binned, or on a binned board, does not), and
+ *   `has:blocked` is `open_blockers > 0` (live `depends_on` cards in the
+ *   audience, outside a done column). A parity test checks both.
  */
 
 export type Binding = string | number;
@@ -35,8 +38,12 @@ export const COLUMN_STATE = "col.state";
 /** `readableBoardPredicate` for another card's board (alias `ob`), derived so the two never drift apart. */
 export const readableOtherBoardPredicate = readableBoardPredicate.replace(/\bb\./g, "ob.");
 
-/** A relation from card `k` to another card `o` is visible unless `o` is readable and binned (D105). */
-const visibleOther = `(o.deleted_at IS NULL OR NOT ${readableOtherBoardPredicate})`;
+/** Whether the caller is in the audience of another card's board `ob`, binned or not (D105: binning is never disclosed). */
+export const otherBoardAudience = `(ob.owner_id = $userId OR ob.visibility = 'all_users'
+  OR (ob.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members om WHERE om.board_id = ob.id AND om.user_id = $userId)))`;
+
+/** A relation from card `k` to another card `o` is visible unless the caller is in `o`'s audience and `o` or its board is binned. */
+const visibleOther = `(NOT ${otherBoardAudience} OR (o.deleted_at IS NULL AND ob.deleted_at IS NULL))`;
 const hasRelation = `(EXISTS (SELECT 1 FROM card_relations r JOIN cards o ON o.id = r.target_card_id JOIN boards ob ON ob.id = o.board_id
     WHERE r.source_card_id = k.id AND ${visibleOther})
   OR EXISTS (SELECT 1 FROM card_relations r JOIN cards o ON o.id = r.source_card_id JOIN boards ob ON ob.id = o.board_id

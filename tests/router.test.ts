@@ -86,3 +86,18 @@ test("format never escapes origin", () => {
     }
   }
 });
+
+test("Team routes: /team, /team/:userId (lowercased), and malformed ids open the list", () => {
+  const userId = "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e";
+  expect(parseRoute("/team")).toEqual({ app: "team", userId: null });
+  expect(parseRoute("/team/")).toEqual({ app: "team", userId: null });
+  expect(parseRoute(`/team/${userId}`)).toEqual({ app: "team", userId });
+  expect(parseRoute(`/team/${userId.toUpperCase()}`)).toEqual({ app: "team", userId });
+  expect(parseRoute("/team/garbage")).toEqual({ app: "team", userId: null });
+  expect(parseRoute(`/team/${userId}/extra`)).toEqual({ app: "team", userId: null });
+  expect(formatRoute({ app: "team", userId: null })).toBe("/team");
+  expect(formatRoute({ app: "team", userId: userId.toUpperCase() })).toBe(`/team/${userId}`);
+  expect(formatRoute({ app: "team", userId: "garbage" })).toBe("/team");
+  expect(formatRoute(parseRoute(`/team/${userId}`))).toBe(`/team/${userId}`);
+  expect(sameRoute({ app: "team", userId: null }, { app: "team", userId })).toBe(false);
+});
