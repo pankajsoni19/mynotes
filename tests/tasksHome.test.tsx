@@ -11,6 +11,7 @@ import { formatMyWorkSearch, formatViewSearch, isSelectiveQuery, myWorkDefault, 
 import { MyWork, statePreset } from "../src/tasks/home/MyWork";
 import { QueryResults } from "../src/tasks/home/QueryResults";
 import { TasksHome } from "../src/tasks/home/TasksHome";
+import { ColumnStateField } from "../src/tasks/views/ColumnStateField";
 import { validateViewName, viewUndoBody } from "../src/tasks/views/viewActions";
 import { ViewsList } from "../src/tasks/views/ViewsList";
 
@@ -179,6 +180,13 @@ test("results show Load more with a cursor and the loaded count", () => {
   expect(table).toContain('aria-label="Cards table"');
   expect(renderToStaticMarkup(<QueryResults cards={[]} layout="list" group="none" today="2026-09-27" userId={me} nextCursor={null} loadingMore={false}
     onLoadMore={noop} onOpenCard={noop} onMoveCard={noop} emptyText="Nothing here" />)).toContain("Nothing here");
+});
+
+test("the column menu shows the column's state, derived from is_done on older payloads", () => {
+  const column = { id: "c1", board_id: boardId, name: "Review", position: 2, is_done: 0 as const, created_at: "", updated_at: "" };
+  expect(renderToStaticMarkup(<ColumnStateField column={{ ...column, state: "todo" } as typeof column} onChanged={noop} onError={noop} />)).toContain("To do");
+  expect(renderToStaticMarkup(<ColumnStateField column={column} onChanged={noop} onError={noop} />)).toContain("In progress");
+  expect(renderToStaticMarkup(<ColumnStateField column={{ ...column, is_done: 1 }} onChanged={noop} onError={noop} />)).toContain("Done");
 });
 
 test("view names follow the server rule, and Undo re-creates the same body", () => {

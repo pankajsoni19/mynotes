@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, Gauge, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert } from "lucide-react";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
@@ -17,6 +17,9 @@ import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
 import { canEnterColumn, cardCountLabel, columnFullMessage, validateBoardName, validateColumnName, wipCountLabel, wipState } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
+import { ColumnStateField } from "./views/ColumnStateField";
+import { columnState } from "./home/homeApi";
+import { STATE_LABELS } from "./home/homeResults";
 import { BoardGroupedList } from "./BoardGroupedList";
 import { BoardTable } from "./BoardTable";
 import { BoardViewSwitch } from "./BoardViewSwitch";
@@ -369,18 +372,6 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     closeDialog();
   }
 
-  async function setColumnDone(columnId: string, isDone: boolean) {
-    closeDialog();
-    try {
-      const { columns: saved } = await updateColumn(columnId, { isDone });
-      setDetail((current) => current ? { ...current, columns: saved } : current);
-      const changed = saved.find((column) => column.id === columnId);
-      notify(isDone ? `Cards in ${changed?.name ?? "this column"} count as done` : `Cards in ${changed?.name ?? "this column"} count as open`);
-    } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not change the column"));
-    }
-  }
-
   async function setWipLimit(columnId: string, wipLimit: number | null) {
     const { columns: saved } = await updateColumn(columnId, { wipLimit });
     setDetail((current) => current ? { ...current, columns: saved } : current);
@@ -591,7 +582,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     {dialog?.kind === "columnMenu" && dialogColumn && <ModalDialog title={dialogColumn.name} eyebrow="Column" onClose={closeDialog}>
       <div className="move-list task-menu">
         <button className="move-option" autoFocus onClick={() => setDialog({ kind: "renameColumn", columnId: dialogColumn.id })}><Pencil aria-hidden="true" /><span>Rename</span></button>
-        <button className="move-option" aria-pressed={dialogColumn.is_done === 1} onClick={() => { void setColumnDone(dialogColumn.id, dialogColumn.is_done !== 1); }}><CircleCheck aria-hidden="true" /><span>{dialogColumn.is_done === 1 ? "Done column (on)" : "Mark as a done column"}<small>Cards here are left out of Today and show no due date</small></span></button>
+        <ColumnStateField column={dialogColumn} onError={notify} onChanged={(saved, changed) => {
+          setDetail((current) => current ? { ...current, columns: saved } : current);
+          notify(`${changed.name} is now ${STATE_LABELS[columnState(changed)].toLowerCase()}${changed.is_done === 1 ? ": its cards count as done" : ""}`);
+        }} />
         <button className="move-option" onClick={() => setDialog({ kind: "wipLimit", columnId: dialogColumn.id })}><Gauge aria-hidden="true" /><span>{dialogColumn.wip_limit ? `WIP limit: ${dialogColumn.wip_limit}` : "Set WIP limit…"}<small>{dialogColumn.wip_limit ? "Change or remove the most cards it holds" : "Stop cards coming in once it holds this many"}</small></span></button>
         <button className="move-option" disabled={columns[0]?.id === dialogColumn.id} onClick={() => { closeDialog(); void moveColumn(dialogColumn.id, -1); }}><ArrowLeft aria-hidden="true" /><span>Move left</span></button>
         <button className="move-option" disabled={columns[columns.length - 1]?.id === dialogColumn.id} onClick={() => { closeDialog(); void moveColumn(dialogColumn.id, 1); }}><ArrowRight aria-hidden="true" /><span>Move right</span></button>

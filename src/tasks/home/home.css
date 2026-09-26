@@ -44,6 +44,12 @@
 .task-view-actions { display: inline-flex; align-items: center; gap: 6px; }
 .task-view-actions .icon-button svg { width: 17px; }
 
+/* Column state in the owner's column menu (BoardView) */
+.task-column-state { min-height: 52px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 12px; border-radius: 10px; padding: 4px 4px 4px 12px; color: #d6d6d9; font-size: .9rem; }
+.task-column-state > svg { width: 17px; height: 17px; color: #b99b59; }
+.task-column-state-copy { min-width: 0; display: grid; gap: 2px; }
+.task-column-state-copy small { overflow: hidden; color: #77777e; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+
 @media (max-width: 760px) {
   .task-home-segments { display: flex; width: 100%; }
   .task-home-segments button { flex: 1; min-height: 44px; padding: 0 6px; }
