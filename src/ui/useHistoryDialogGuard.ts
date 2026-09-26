@@ -41,7 +41,7 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
   // The depth of the entry the dialog was opened on, to tell Back from Forward.
   const depthRef = useRef(0);
   const wasOpenRef = useRef(false);
-  if (open && !wasOpenRef.current) depthRef.current = readHistoryDepth(window.history.state);
+  if (open && !wasOpenRef.current) depthRef.current = typeof window === "undefined" ? 0 : readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
   useDialogSentinel(open);
   useEffect(() => {

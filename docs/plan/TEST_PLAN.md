@@ -390,6 +390,13 @@ Manual QA (desktop and 390×844):
 - [ ] Calendars → Subscribe links: create a Busy link, copy it once (the dialog never shows it again), subscribe from a phone calendar on the tailnet HTTPS origin, and see times titled "Busy"; revoke it and the phone's next refresh fails. The dialog is usable at 390 px and Back closes it.
 - [ ] An MCP client with `calendar:write` creates and moves an event; the event view says "Changed by the MCP key <name>", and Undo last change restores it.
 
+## Wave 13: shared dropdowns (13A)
+
+`Select` and `Combobox` in `src/ui/` replace every native select (D91, D114; [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §4.1–4.2). The tests render with `react-dom/server` and drive the pure reducers, so no DOM library is needed.
+
+- [x] `tests/uiListNavigation.test.ts`: arrow keys, Home/End, and PageUp/PageDown skip disabled options and stop at the ends; type-ahead ignores case and accents, wraps, and cycles on a repeated letter; the select reducer opens, chooses on Enter, Space, Tab, and Alt+↑, and closes on Escape without choosing; the multi reducer adds, removes, keeps `maxSelected`, and Backspace in an empty input removes the last chip; filtering matches every word in labels and descriptions; auto search above 8 options; `popoverPosition` opens below, flips above, clamps to the viewport, and lands on target inside a transformed container; async options are debounced by 200 ms and a new request aborts the previous one.
+- [x] `tests/uiSelect.test.tsx` and `tests/uiCombobox.test.tsx`: the combobox, listbox, option, and `aria-activedescendant` attributes; chips are "Remove <name>" buttons; `aria-multiselectable` only when several can be chosen; `maxSelected` disables the rest; `selectedOptions` label chips; the `onCreate` row; labels containing `<img onerror>` render as text (T98); the phone presentation is a bottom sheet dialog, and its guard closes only the sheet on Back (and undoes Forward) before the host dialog's guard is asked (D69).
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.
