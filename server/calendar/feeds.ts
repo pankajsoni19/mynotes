@@ -50,11 +50,14 @@ function readable(calendarId: string, userId: string) {
   return calendar;
 }
 
-/** The caller's live tokens for one calendar they can read (never anyone else's). */
+/**
+ * The caller's live tokens for one calendar they can read (never anyone else's), newest first.
+ * Links made in the same millisecond share `created_at`; rowid (insertion order) breaks the tie.
+ */
 export function listFeeds(userId: string, calendarId: string) {
   readable(calendarId, userId);
   const rows = db.query(`SELECT id, calendar_id, user_id, token_prefix, detail, created_at, last_used_at FROM calendar_feeds
-      WHERE calendar_id = ? AND user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC, id`).all(calendarId, userId) as FeedRow[];
+      WHERE calendar_id = ? AND user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC, rowid DESC`).all(calendarId, userId) as FeedRow[];
   return { feeds: rows.map(summary) };
 }
 

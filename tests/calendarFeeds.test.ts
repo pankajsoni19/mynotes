@@ -127,6 +127,18 @@ describe("ICS output", () => {
 });
 
 describe("calendar feeds API", () => {
+  test("links made in the same millisecond list newest first, whatever their random ids", async () => {
+    const owner = await createUser("Feed tie owner");
+    const calendarId = await newCalendar(owner);
+    const createdAt = new Date().toISOString();
+    // The newer link gets the larger id, so the old ascending-id tie-break would list it last.
+    const insert = db.query("INSERT INTO calendar_feeds (id, calendar_id, user_id, token_hash, token_prefix, detail, created_at) VALUES (?, ?, ?, ?, 'nookfeed_tie', 'busy', ?)");
+    insert.run("00000000-0000-4000-8000-000000000000", calendarId, owner.userId, "a".repeat(64), createdAt);
+    insert.run("ffffffff-0000-4000-8000-000000000000", calendarId, owner.userId, "b".repeat(64), createdAt);
+    const listed = await body<{ feeds: Array<{ id: string }> }>(await send(owner, "GET", `/calendars/${calendarId}/feeds`));
+    expect(listed.feeds.map((feed) => feed.id)).toEqual(["ffffffff-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000000"]);
+  });
+
   test("readers create, list, and revoke their own links; strangers get 404; the cap is five", async () => {
     const owner = await createUser("Feed owner");
     const viewer = await createUser("Feed viewer");
