@@ -5,12 +5,12 @@ import { binFolderLabel, binItemLabel, filterBinItems } from "../src/bin/binForm
 import type { BinItem } from "../src/types";
 import { CellEditor } from "../src/collections/cells";
 import { CollectionCards } from "../src/collections/CollectionCards";
-import { CollectionList } from "../src/collections/CollectionList";
-import type { CollectionRow, FieldDefinition } from "../src/collections/collectionsApi";
+import { CollectionList, CollectionListRow } from "../src/collections/CollectionList";
+import type { CollectionRow, CollectionSummary, FieldDefinition } from "../src/collections/collectionsApi";
 import { fromDrafts, moveDraft, newFieldDraft, toDrafts, typeChoices, validateDrafts } from "../src/collections/fieldDrafts";
 import { importButtonLabel } from "../src/collections/ImportDialog";
 import { RowPanel } from "../src/collections/RowPanel";
-import { allowedTypeChanges, cardFields, defaultFilterValue, displayValue, filterReady, parseInput, submitOnEnter, validateCollectionName } from "../src/collections/values";
+import { allowedTypeChanges, cardFields, collectionBinMessage, defaultFilterValue, displayValue, filterReady, parseInput, submitOnEnter, validateCollectionName } from "../src/collections/values";
 
 const fields: FieldDefinition[] = [
   { id: "f_aaaaaaaa", name: "Name", type: "text", required: true },
@@ -36,6 +36,30 @@ test("the collection list starts with its loading state and a New collection act
   expect(markup).toContain("Loading collections…");
   expect(markup).toContain(">New collection</button>");
   expect(markup).toContain('<h1 id="collections-title">Collections</h1>');
+});
+
+test("owned collection rows offer Rename, Share, and Move to Bin; shared rows show the owner instead", () => {
+  const summary: CollectionSummary = {
+    id: "c_1", name: "Pantry", icon: "table", owner_id: "u_1", owner_name: "Asha", is_owner: 1, role: "owner", visibility: "private", share_role: "viewer",
+    row_count: 3, field_count: 2, template_id: null, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z"
+  };
+  const owned = renderToStaticMarkup(<CollectionListRow collection={summary} onOpen={() => undefined} onAction={() => undefined} />);
+  expect(owned).toContain('class="collection-list-actions"');
+  expect(owned).toContain('aria-label="Rename Pantry" title="Rename"');
+  expect(owned).toContain('aria-label="Share Pantry" title="Share"');
+  expect(owned).toContain('aria-label="Delete Pantry" title="Move to the Bin"');
+  expect(owned.match(/aria-haspopup="dialog"/g)?.length).toBe(3);
+  expect(owned).not.toContain("owner-badge");
+  const shared = renderToStaticMarkup(<CollectionListRow collection={{ ...summary, is_owner: 0, role: "editor" }} onOpen={() => undefined} onAction={() => undefined} />);
+  expect(shared).not.toContain("collection-list-actions");
+  expect(shared).toContain('<span class="owner-badge">Asha</span>');
+  expect(collectionBinMessage(summary)).toBe("Move “Pantry” and its 3 rows to the Bin? Everyone it is shared with loses access. You can restore it for 30 days.");
+});
+
+test("collection list actions get 44 px hit areas on phones", async () => {
+  const css = await Bun.file(new URL("../src/collections/collections.css", import.meta.url)).text();
+  const phone = css.slice(css.indexOf("@media (max-width: 760px)"));
+  expect(phone).toMatch(/\.collection-list-actions \.icon-button \{ width: 44px; height: 44px; \}/);
 });
 
 test("values display per type and parse the way the server validates them", () => {

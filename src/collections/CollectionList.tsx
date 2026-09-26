@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, RotateCcw, Search, Table2, TriangleAlert, Users } from "lucide-react";
+import { Pencil, Plus, RotateCcw, Search, Share2, Table2, Trash2, TriangleAlert, Users } from "lucide-react";
+import { ConfirmDialog } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { errorMessage, listCollections, searchRows, type CollectionDetail, type CollectionSummary, type RowSearchHit, type Segment } from "./collectionsApi";
+import { NameDialog } from "../files/RenameDialog";
+import { deleteCollection, errorMessage, listCollections, renameCollection, searchRows, type CollectionDetail, type CollectionSummary, type RowSearchHit, type Segment } from "./collectionsApi";
 import { readCollectionsSearch, withCollectionsSearch } from "../collectionsRoute";
 import { useDialogLayer } from "./dialogLayers";
 import { CollectionIcon } from "./icons";
+import { CollectionSharePanel } from "./CollectionSharePanel";
 import { NewCollectionDialog } from "./NewCollectionDialog";
-import { roleLabel, rowCountLabel } from "./values";
+import { collectionBinMessage, roleLabel, rowCountLabel, validateCollectionName } from "./values";
 
 type CollectionListProps = {
   userId?: string;
@@ -17,6 +20,39 @@ type CollectionListProps = {
   onCreatedForImport?: (collection: CollectionDetail) => void;
 };
 
+type RowAction = "rename" | "share" | "delete";
+type ListDialog = { kind: "new" } | { kind: RowAction; collectionId: string };
+
+type CollectionListRowProps = {
+  collection: CollectionSummary;
+  onOpen: (collection: CollectionSummary) => void;
+  onAction: (kind: RowAction, collection: CollectionSummary) => void;
+};
+
+/** One collection in the list. Owners get Rename, Share, and Move to Bin, as on the Tasks board list. */
+export function CollectionListRow({ collection, onOpen, onAction }: CollectionListRowProps) {
+  return <li className="collection-row">
+    <button className="collection-open" onClick={() => onOpen(collection)}>
+      <span className="collection-icon"><CollectionIcon name={collection.icon} /></span>
+      <span className="collection-copy">
+        <span className="collection-name" title={collection.name}>{collection.name}</span>
+        <span className="collection-meta">
+          <span>{rowCountLabel(collection.row_count)}</span>
+          <time dateTime={collection.updated_at}>Updated {relativeTime(collection.updated_at)}</time>
+          {collection.is_owner === 0
+            ? <><span className="owner-badge">{collection.owner_name}</span><span className={`collection-role role-${collection.role}`}>{roleLabel(collection.role)}</span></>
+            : collection.visibility !== "private" && <span className="collection-shared"><Users aria-hidden="true" />Shared · {collection.share_role === "editor" ? "can edit" : "view only"}</span>}
+        </span>
+      </span>
+    </button>
+    {collection.is_owner === 1 && <span className="collection-list-actions">
+      <button className="icon-button" onClick={() => onAction("rename", collection)} aria-haspopup="dialog" aria-label={`Rename ${collection.name}`} title="Rename"><Pencil /></button>
+      <button className="icon-button" onClick={() => onAction("share", collection)} aria-haspopup="dialog" aria-label={`Share ${collection.name}`} title="Share"><Share2 /></button>
+      <button className="icon-button" onClick={() => onAction("delete", collection)} aria-haspopup="dialog" aria-label={`Delete ${collection.name}`} title="Move to the Bin"><Trash2 /></button>
+    </span>}
+  </li>;
+}
+
 /** Plain-text segments from the search API; hits are marked, nothing is parsed as HTML. */
 function Segments({ segments, fallback = "" }: { segments: Segment[]; fallback?: string }) {
   if (!segments.some((segment) => segment.text.trim())) return <>{fallback}</>;
@@ -26,7 +62,8 @@ function Segments({ segments, fallback = "" }: { segments: Segment[]; fallback?:
 export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreatedForImport }: CollectionListProps) {
   const [collections, setCollections] = useState<CollectionSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [dialog, setDialog] = useState<ListDialog | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [query, setQuery] = useState(() => typeof window === "undefined" ? "" : readCollectionsSearch(window.history.state, userId));
   const [hits, setHits] = useState<RowSearchHit[] | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -63,28 +100,39 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const closeDialog = useCallback(() => setCreating(false), []);
-  useDialogLayer(creating, closeDialog);
+  const closeDialog = useCallback(() => setDialog(null), []);
+  useDialogLayer(dialog !== null, closeDialog);
 
   const all = collections ?? [];
   const owned = all.filter((collection) => collection.is_owner === 1);
   const shared = all.filter((collection) => collection.is_owner !== 1);
+  const dialogCollection = dialog && dialog.kind !== "new" ? all.find((collection) => collection.id === dialog.collectionId) ?? null : null;
 
-  const row = (collection: CollectionSummary) => <li key={collection.id} className="collection-row">
-    <button className="collection-open" onClick={() => onOpen(collection)}>
-      <span className="collection-icon"><CollectionIcon name={collection.icon} /></span>
-      <span className="collection-copy">
-        <span className="collection-name" title={collection.name}>{collection.name}</span>
-        <span className="collection-meta">
-          <span>{rowCountLabel(collection.row_count)}</span>
-          <time dateTime={collection.updated_at}>Updated {relativeTime(collection.updated_at)}</time>
-          {collection.is_owner === 0
-            ? <><span className="owner-badge">{collection.owner_name}</span><span className={`collection-role role-${collection.role}`}>{roleLabel(collection.role)}</span></>
-            : collection.visibility !== "private" && <span className="collection-shared"><Users aria-hidden="true" />Shared · {collection.share_role === "editor" ? "can edit" : "view only"}</span>}
-        </span>
-      </span>
-    </button>
-  </li>;
+  async function rename(collection: CollectionSummary, name: string) {
+    const { collection: saved } = await renameCollection(collection.id, name);
+    setCollections((current) => current?.map((item) => item.id === saved.id ? { ...item, ...saved } : item) ?? current);
+    setDialog(null);
+    notify(`Renamed to “${saved.name}”`);
+  }
+
+  async function remove(collection: CollectionSummary) {
+    setDeleting(true);
+    try {
+      await deleteCollection(collection.id);
+      setCollections((current) => current?.filter((item) => item.id !== collection.id) ?? current);
+      setDialog(null);
+      notify(`Moved “${collection.name}” to the Bin`);
+    } catch (reason) {
+      setDialog(null);
+      notify(errorMessage(reason, "Could not delete the collection"));
+      void load();
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const onAction = (kind: RowAction, collection: CollectionSummary) => setDialog({ kind, collectionId: collection.id });
+  const row = (collection: CollectionSummary) => <CollectionListRow key={collection.id} collection={collection} onOpen={onOpen} onAction={onAction} />;
 
   return <section className="collections-content" aria-labelledby="collections-title">
     <div className="collections-intro">
@@ -93,7 +141,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
         <h1 id="collections-title">Collections</h1>
         <p>Track anything in typed tables: inventories, subscriptions, recipes, contacts. Share them view-only or let people edit rows.</p>
       </div>
-      <button className="primary-button collections-new-button" onClick={() => setCreating(true)} aria-haspopup="dialog"><Plus />New collection</button>
+      <button className="primary-button collections-new-button" onClick={() => setDialog({ kind: "new" })} aria-haspopup="dialog"><Plus />New collection</button>
     </div>
 
     {all.length > 0 && <div className="collections-search">
@@ -127,19 +175,27 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
       <span className="bin-state-icon"><Table2 /></span>
       <h2>No collections yet</h2>
       <p>Start from a template such as Home inventory or Recipes, or from a blank table.</p>
-      <button className="primary-button" onClick={() => setCreating(true)}><Plus />New collection</button>
+      <button className="primary-button" onClick={() => setDialog({ kind: "new" })}><Plus />New collection</button>
     </div>}
     {owned.length > 0 && <><h2 className="collections-section-label">Your collections</h2><ul className="collection-list" aria-label="Your collections">{owned.map(row)}</ul></>}
     {shared.length > 0 && <><h2 className="collections-section-label">Shared with you</h2><ul className="collection-list" aria-label="Collections shared with you">{shared.map(row)}</ul></>}
 
-    {creating && <NewCollectionDialog
+    {dialog?.kind === "new" && <NewCollectionDialog
       onCancel={closeDialog}
       onCreated={(collection) => {
-        setCreating(false);
+        setDialog(null);
         notify(`Created “${collection.name}”`);
         onOpen(collection);
       }}
-      onImport={onCreatedForImport ? (collection) => { setCreating(false); onCreatedForImport(collection); } : undefined}
+      onImport={onCreatedForImport ? (collection) => { setDialog(null); onCreatedForImport(collection); } : undefined}
     />}
+    {dialog?.kind === "rename" && dialogCollection && <NameDialog title="Rename collection" eyebrow="Collections" label="Name" initialValue={dialogCollection.name} submitLabel="Rename" hint="Up to 120 characters."
+      validate={(value) => validateCollectionName(value, dialogCollection.name)} onSubmit={(name) => rename(dialogCollection, name)} onCancel={closeDialog} />}
+    {dialog?.kind === "delete" && dialogCollection && <ConfirmDialog title="Move to the Bin?" message={collectionBinMessage(dialogCollection)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void remove(dialogCollection); }} onCancel={closeDialog} />}
+    {dialog?.kind === "share" && dialogCollection && <CollectionSharePanel collection={dialogCollection} onClose={closeDialog} onChanged={() => {
+      setDialog(null);
+      notify("Sharing updated");
+      void load();
+    }} />}
   </section>;
 }

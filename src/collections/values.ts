@@ -149,6 +149,10 @@ export const rowTitle = (row: Pick<CollectionRow, "title">) => row.title.trim() 
 
 export const rowCountLabel = (count: number) => count === 1 ? "1 row" : `${count.toLocaleString()} rows`;
 
+/** The Move to Bin confirmation for a collection, from the list and from the collection view. */
+export const collectionBinMessage = (collection: { name: string; row_count: number }) =>
+  `Move “${collection.name}” and its ${rowCountLabel(collection.row_count)} to the Bin? Everyone it is shared with loses access. You can restore it for 30 days.`;
+
 export function roleLabel(role: "owner" | "editor" | "viewer") {
   return role === "owner" ? "Owner" : role === "editor" ? "Can edit" : "View only";
 }
