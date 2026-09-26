@@ -90,6 +90,13 @@ describe("parse and format", () => {
     expect(fail(`tag:"${"x".repeat(41)}"`).code).toBe("FILTER_INVALID");
   });
 
+  test("an unknown key is echoed back at most 40 characters long", () => {
+    expect(fail("owner:me").message).toBe("Unknown filter owner:");
+    const long = fail(`${"k".repeat(1500)}:x`);
+    expect(long).toMatchObject({ code: "FILTER_INVALID", position: 0 });
+    expect(long.message).toBe(`Unknown filter ${"k".repeat(40)}…:`);
+  });
+
   test("errors carry a code and the character position", () => {
     expect(fail("state:todo owner:me")).toMatchObject({ code: "FILTER_INVALID", position: 11 });
     expect(fail("state:later")).toMatchObject({ code: "FILTER_INVALID", position: 6 });

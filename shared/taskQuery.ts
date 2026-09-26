@@ -55,6 +55,8 @@ export type FilterKey = typeof FILTER_KEYS[number];
  * refused rather than silently widened.
  */
 export const RESERVED_FILTER_KEYS = ["parent", "level", "sprint"] as const;
+/** How much of an unknown key an error message repeats back. */
+const UNKNOWN_KEY_ECHO = 40;
 
 export const TASK_STATES = ["todo", "doing", "done"] as const;
 export type TaskState = typeof TASK_STATES[number];
@@ -325,7 +327,7 @@ export function parse(input: string, options: ParseOptions = {}): ParseResult {
         } else {
           const keyName = keyMatch[1]!.toLowerCase();
           if ((RESERVED_FILTER_KEYS as readonly string[]).includes(keyName)) throw new Fail("FILTER_UNSUPPORTED", `${keyName}: is not available yet`, index);
-          if (!(FILTER_KEYS as readonly string[]).includes(keyName) || keyName === "text") throw new Fail("FILTER_INVALID", `Unknown filter ${keyName}:`, index);
+          if (!(FILTER_KEYS as readonly string[]).includes(keyName) || keyName === "text") throw new Fail("FILTER_INVALID", `Unknown filter ${keyName.length > UNKNOWN_KEY_ECHO ? `${keyName.slice(0, UNKNOWN_KEY_ECHO)}…` : keyName}:`, index);
           const key = keyName as FilterKey;
           index += keyMatch[0].length;
           const values: string[] = [];
