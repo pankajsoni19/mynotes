@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { FileUp } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
+import { Select } from "../ui/Select";
 import { errorCode, errorMessage, errorPayload, importCsv, type CollectionDetail, type ImportError, type ImportPreview } from "./collectionsApi";
 import { displayValue } from "./values";
 
@@ -29,6 +30,7 @@ export function ImportDialog({ collection, onImported, onClose }: ImportDialogPr
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [mapping, setMapping] = useState<Array<string | null> | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const mappingId = useId();
   const [error, setError] = useState<string | null>(null);
   const [failures, setFailures] = useState<ImportError[]>([]);
   const importable = collection.fields.filter((field) => field.type !== "file");
@@ -92,17 +94,14 @@ export function ImportDialog({ collection, onImported, onClose }: ImportDialogPr
       {preview && <>
         <h3>Columns</h3>
         <div className="import-mapping">
-          {preview.header.map((name, index) => <label key={index}>
-            <span title={name}>{name || `Column ${index + 1}`}</span>
-            <select value={mapping?.[index] ?? ""} disabled={busy} onChange={(event) => {
+          {preview.header.map((name, index) => <div key={index} className="import-mapping-row">
+            <span id={`${mappingId}-${index}`} title={name}>{name || `Column ${index + 1}`}</span>
+            <Select value={mapping?.[index] ?? ""} disabled={busy} label={`Field for ${name || `column ${index + 1}`}`} labelledBy={`${mappingId}-${index}`} onChange={(fieldId) => {
               const next = [...(mapping ?? preview.header.map(() => null))];
-              next[index] = event.target.value || null;
+              next[index] = fieldId || null;
               setMapping(next);
-            }}>
-              <option value="">Skip</option>
-              {importable.map((field) => <option key={field.id} value={field.id} disabled={field.id !== mapping?.[index] && mapping?.includes(field.id)}>{field.name}</option>)}
-            </select>
-          </label>)}
+            }} options={[{ value: "", label: "Skip" }, ...importable.map((field) => ({ value: field.id, label: field.name, disabled: field.id !== mapping?.[index] && mapping?.includes(field.id) }))]} />
+          </div>)}
         </div>
         <button className="secondary-button import-recheck" onClick={() => { if (csv) void check(csv, mapping); }} disabled={busy || !csv}>Check again</button>
         <p className="import-summary" role="status">
