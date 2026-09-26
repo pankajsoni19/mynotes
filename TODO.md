@@ -171,11 +171,16 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [ ] Wave 15 (Team B): viewer and guest enforcement (write gate, `AUDIENCE_ALL_USERS`, MCP role filter, `SIGNUP_ROLE`, role-aware chrome).
 - [ ] Wave 16 (Team C, unscheduled): invites, migration `018`.
 
-### Wave 13 — Task card UX and Calendar picker (planning in progress)
+### Task hierarchy and team workflows (research in progress → plan → build)
+- [ ] Cross-board visibility at `/tasks`: a Linear-style filter over cards from every board the user can read, and saved **views** (filter + display settings) that can be private or shared. Researched together with hierarchy for a cohesive Tasks UX.
+- [ ] UX cohesion research: how hierarchy, sprints, cross-board views, and the existing board list fit together in the product without feeling bolted on.
+- [ ] Card hierarchy: sprint > task, or sprint > task > subtask, chosen per board. Research the workflows most teams use (kanban, scrum sprints, epics/stories/subtasks, simple to-do lists, GTD) and how one board model can support them. Research doc: `docs/plan/research/2026-09-26-task-hierarchy-workflows.md`.
+
+### Wave 13 — Task card UX, board views, dropdowns, Modules — plan of record: `docs/plan/WAVE_13_TASK_CARD_UX.md` (§12 director review). Sub-waves 13A–13F; 13A, 13F, 13B-server in progress.
 - [ ] Column WIP limit: each board column/lane gets an optional max card count (default: no limit). Shown as `n / limit` in the column header, warns or blocks moves that would exceed it (kanban + agile).
 - [ ] Card tags and flags: cards get tags (free-form, board-scoped, coloured) and flags (fixed set, e.g. blocked, urgent, needs review) in create, edit, list, and MCP tools.
 - [ ] Lane card face shows title, description excerpt, assignees, due date + due time if present, tags, flags.
-- [ ] Board views: column (current swimlanes), table (all fields, sortable columns), grouped list (group by column/assignee/tag/due). Switch via icons in the board header; view is part of the URL.
+- [ ] Board views: column (current swimlanes), table (all fields, sortable columns), grouped list, and **calendar** (cards by due date, reusing the Calendar module's month/agenda components; drag to reschedule) (group by column/assignee/tag/due). Switch via icons in the board header; view is part of the URL.
 - [ ] Linear-style filter bar: compose filters on assignee, tag, flag, due, column, relation; filters live in the URL query so they survive Back/Forward and sharing.
 - [ ] Rule D91: every dropdown is a custom component; migrate all 15 existing native `<select>` usages (7 files under `src/`).
 - [ ] Settings → new left-nav item "Modules": per-user on/off toggle for every module, all on by default (D92). Hidden modules leave the launcher, nav, routes, and Today; data and server authorization untouched.
@@ -185,7 +190,7 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [ ] Card dialog gets an expand control that opens the card as a full page (`/tasks/:board/card/:key` full view).
 - [ ] Card relations: link cards with typed relations (related, depends on, needed by, …).
 - [ ] Calendar: the calendars dropdown becomes a custom picker instead of a native `<select>`.
-- [ ] `/collections` list: give each collection row the same inline edit / share / delete actions the task board list has in `/tasks` (this resolves the earlier "/collections page has list of collection" note). (observation or change request?).
+- [x] `/collections` list: inline rename / share / Move to Bin actions like the board list (merged `fdac35c`, ships in v0.8.0). (observation or change request?).
 
 ## Backlog — candidate modules and enhancements (for later picking)
 
