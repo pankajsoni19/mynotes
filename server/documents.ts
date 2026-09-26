@@ -26,7 +26,7 @@ export function setUploadIdleTimeoutForTests(ms: number | null) {
 }
 
 class UploadError extends Error {
-  constructor(readonly status: 400 | 404 | 408 | 411 | 413 | 507, readonly body: Record<string, unknown>) {
+  constructor(readonly status: 400 | 401 | 404 | 408 | 411 | 413 | 507, readonly body: Record<string, unknown>) {
     super(String(body.error));
   }
 }
@@ -283,6 +283,8 @@ async function handleUpload(c: Context<AppEnv>) {
     let outcome: { replayOf: string } | { created: true };
     try {
       outcome = db.transaction(() => {
+        // T80: an upload that authenticated before its owner was blocked must not commit after it.
+        if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) throw new UploadError(401, { error: "Authentication required" });
         if (uploadKey) {
           const existing = db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string } | null;
           if (existing) return { replayOf: existing.id };

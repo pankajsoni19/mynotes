@@ -15,6 +15,23 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. "Everyone here" sharing includes all current and future registered users on that allowlist.
 
+### Team admins and blocking
+
+Every account has a team role: **admin** or **member** (viewer and guest arrive in a later release). The first account created on an empty database is the admin. When an existing install upgrades to the release with Team (migration 017), every account becomes a member and the **oldest enabled account becomes the admin**; change it with the command below if that is wrong. Admins manage roles, block and unblock accounts, and sign accounts out everywhere from the **Team** app. Nook always keeps at least one active admin: the last one cannot be demoted or blocked, in the app or in the database.
+
+Blocking an account signs it out on every device at once and removes its push subscriptions. Its MCP keys and calendar feeds pause and resume when it is unblocked; its content stays where it is and stays shared as before. A blocked user who enters the right password is told the account is blocked; a wrong password still gets the usual error.
+
+The host CLI is the way out of a lockout, for example when the only admin forgot their password or is no longer on `ALLOWED_EMAILS`. Each change is recorded in the Team activity log as made from the command line:
+
+```sh
+docker compose exec mynotes bun server/team-admin.ts list
+docker compose exec mynotes bun server/team-admin.ts set-role user@example.com admin
+docker compose exec mynotes bun server/team-admin.ts set-role user@example.com member
+docker compose exec mynotes bun server/team-admin.ts unblock user@example.com
+```
+
+A role change applies to the account's next request. `set-role` refuses to demote the last active admin; promote another account first.
+
 ### Two-factor authentication
 
 Generate a server-side encryption key and keep it only in `.env`:
