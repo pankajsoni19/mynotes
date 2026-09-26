@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Repeat } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
+import { Select } from "../ui/Select";
 import type { CalendarSummary, RepeatRule, Weekday } from "./calendarApi";
 import { repeatSummary, WEEKDAYS, weekdayNames, weekdayOf, type EventForm } from "./calendarFormat";
 
@@ -23,18 +24,18 @@ type EventSheetProps = {
 /** Create or edit an event. A full-screen sheet on phones; it pushes no history entry (D69). */
 export function EventSheet({ mode, form, calendars, calendarId, busy, error, conflict, onChange, onCalendarChange, onRepeat, onSave, onReload, onClose }: EventSheetProps) {
   const set = <K extends keyof EventForm>(key: K, value: EventForm[K]) => onChange({ ...form, [key]: value });
+  const calendarLabelId = useId();
   return <ModalDialog title={mode === "create" ? "New event" : "Edit event"} eyebrow="Calendar" onClose={onClose} variant="sheet" busy={busy}>
     <form className="calendar-form" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
       <label className="calendar-field">
         <span>Title</span>
         <input value={form.title} maxLength={200} onChange={(event) => set("title", event.target.value)} autoFocus required />
       </label>
-      {mode === "create" && calendars.length > 1 && <label className="calendar-field">
-        <span>Calendar</span>
-        <select value={calendarId} onChange={(event) => onCalendarChange(event.target.value)}>
-          {calendars.map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}{calendar.is_owner ? "" : ` (${calendar.owner_name})`}</option>)}
-        </select>
-      </label>}
+      {mode === "create" && calendars.length > 1 && <div className="calendar-field">
+        <span id={calendarLabelId}>Calendar</span>
+        <Select value={calendarId} onChange={onCalendarChange} label="Calendar" labelledBy={calendarLabelId}
+          options={calendars.map((calendar) => ({ value: calendar.id, label: calendar.name, swatch: calendar.color, description: calendar.is_owner ? undefined : `Shared by ${calendar.owner_name}` }))} />
+      </div>}
       <label className="calendar-toggle">
         <input type="checkbox" checked={form.allDay} onChange={(event) => set("allDay", event.target.checked)} />
         <span>All day</span>
@@ -94,6 +95,7 @@ export function RepeatSheet({ rule, startDate, onDone, onCancel }: RepeatSheetPr
   const [until, setUntil] = useState(rule?.until ?? startDate);
   const [count, setCount] = useState(String(rule?.count ?? 10));
   const [error, setError] = useState<string | null>(null);
+  const repeatsLabelId = useId();
 
   function done() {
     if (freq === "none") return onDone(null);
@@ -120,16 +122,16 @@ export function RepeatSheet({ rule, startDate, onDone, onCancel }: RepeatSheetPr
   const unit = { daily: "days", weekly: "weeks", monthly: "months", yearly: "years", none: "" }[freq];
   return <ModalDialog title="Repeat" eyebrow="Event" onClose={onCancel} variant="sheet">
     <div className="calendar-form">
-      <label className="calendar-field">
-        <span>Repeats</span>
-        <select value={freq} onChange={(event) => setFreq(event.target.value as typeof freq)} autoFocus>
-          <option value="none">Does not repeat</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly (on day {Number(startDate.slice(8, 10))})</option>
-          <option value="yearly">Yearly</option>
-        </select>
-      </label>
+      <div className="calendar-field">
+        <span id={repeatsLabelId}>Repeats</span>
+        <Select value={freq} onChange={setFreq} label="Repeats" labelledBy={repeatsLabelId} autoFocus options={[
+          { value: "none", label: "Does not repeat" },
+          { value: "daily", label: "Daily" },
+          { value: "weekly", label: "Weekly" },
+          { value: "monthly", label: `Monthly (on day ${Number(startDate.slice(8, 10))})` },
+          { value: "yearly", label: "Yearly" }
+        ]} />
+      </div>
       {freq !== "none" && <>
         <label className="calendar-field calendar-inline-field">
           <span>Every</span>

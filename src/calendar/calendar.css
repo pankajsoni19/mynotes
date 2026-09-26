@@ -14,7 +14,7 @@
 .calendar-dot.large { width: 12px; height: 12px; }
 .color-blue { --cal-color: var(--cal-blue); } .color-green { --cal-color: var(--cal-green); } .color-amber { --cal-color: var(--cal-amber); }
 .color-red { --cal-color: var(--cal-red); } .color-violet { --cal-color: var(--cal-violet); } .color-slate { --cal-color: var(--cal-slate); }
-.calendar-dot[class*="color-"] { background: var(--cal-color); }
+.calendar-dot[class*="color-"], .calendar-app .ui-option-swatch[class*="color-"] { background: var(--cal-color); }
 .calendar-dot.task { background: transparent; border: 2px solid #c9a85c; }
 
 .calendar-loading, .calendar-note { color: #8d8d94; font-size: .84rem; }
@@ -96,9 +96,9 @@
 .calendar-form .file-dialog-actions { padding: 8px 0 18px; }
 .calendar-field { display: grid; gap: 6px; min-width: 0; }
 .calendar-field > span, .calendar-form legend { color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.calendar-field input, .calendar-field select, .calendar-field textarea, .calendar-ends input, .calendar-new input, .calendar-new select, .calendar-list-actions select, .calendar-list-copy input { min-height: 44px; min-width: 0; border: 1px solid #333338; border-radius: 10px; padding: 0 12px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .92rem; outline: 0; color-scheme: dark; }
+.calendar-field input, .calendar-field .ui-select, .calendar-field textarea, .calendar-ends input, .calendar-new input, .calendar-new .ui-select, .calendar-list-copy input { min-height: 44px; min-width: 0; border: 1px solid #333338; border-radius: 10px; padding: 0 12px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .92rem; outline: 0; color-scheme: dark; }
 .calendar-field textarea { min-height: 96px; padding: 10px 12px; resize: vertical; }
-.calendar-field input:focus, .calendar-field select:focus, .calendar-field textarea:focus { border-color: #6b582f; }
+.calendar-field input:focus, .calendar-field .ui-select:focus-visible, .calendar-field textarea:focus { border-color: #6b582f; }
 .calendar-field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 150px); gap: 10px; }
 .calendar-inline-field { grid-template-columns: auto 90px auto; align-items: center; justify-content: start; }
 .calendar-inline-field em, .calendar-ends em { color: #9a9aa1; font-style: normal; font-size: .86rem; }
@@ -131,7 +131,8 @@
 .calendar-list-actions { display: flex; align-items: center; gap: 2px; }
 .calendar-list-actions .icon-button { width: 44px; height: 44px; }
 .calendar-list-actions .icon-button.danger { color: #f3a3ae; }
-.calendar-list-actions select { min-height: 36px; padding: 0 6px; font-size: .78rem; }
+/* The colour picker keeps a 44 px target next to the 44 px icon buttons. */
+.calendar-list-actions .ui-select { min-width: 44px; min-height: 44px; padding: 0 4px 0 8px; gap: 4px; }
 .calendar-new { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto; gap: 8px; padding: 12px 20px 18px; }
 .calendar-new .primary-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 14px; }
 .calendar-new .primary-button svg { width: 16px; }
