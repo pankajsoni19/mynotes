@@ -169,7 +169,29 @@ function recordEvent(targetId: string, actor: TeamActor, via: TeamVia | "bootstr
     .run(crypto.randomUUID(), targetId, actor?.id ?? null, via, action, extra.fromRole ?? null, extra.toRole ?? null, extra.reason ?? null, timestamp);
 }
 
-/** D76: the first registered account is the admin. Call inside the register transaction. */
+/** Whether any account is an admin that is not blocked (the last-admin rule keeps one once there is one). */
+export const hasActiveAdmin = () => Boolean(db.query("SELECT 1 FROM users WHERE role = 'admin' AND disabled_at IS NULL LIMIT 1").get());
+
+export const NO_ACTIVE_ADMIN_WARNING = "Nook has accounts but no active admin (every admin is blocked, or migration 017 found no enabled account). "
+  + "Recover from the host: docker compose exec mynotes bun server/team-admin.ts unblock <email> (if the account is blocked), then "
+  + "docker compose exec mynotes bun server/team-admin.ts set-role <email> admin. "
+  + "While there is no active admin, the next account registered becomes the admin.";
+
+/**
+ * Boot check: logs NO_ACTIVE_ADMIN_WARNING when accounts exist but none is an active admin. An
+ * empty database is a fresh install (the first registration becomes the admin) and stays quiet.
+ */
+export function warnIfNoActiveAdmin(warn: (message: string) => void = console.warn) {
+  if (hasActiveAdmin() || !db.query("SELECT 1 FROM users LIMIT 1").get()) return false;
+  warn(NO_ACTIVE_ADMIN_WARNING);
+  return true;
+}
+
+/**
+ * D76: the first registered account is the admin, and so is one registered while there is no active
+ * admin at all (an upgraded database whose accounts were all disabled). Call inside the register
+ * transaction.
+ */
 export function recordBootstrapAdmin(userId: string, timestamp: string) {
   recordEvent(userId, null, "bootstrap", "bootstrap_admin", { toRole: "admin" }, timestamp);
   audit(userId, null, "team.bootstrap_admin", { targetId: userId });
