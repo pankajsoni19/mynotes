@@ -13,6 +13,12 @@ export function firstEnabled(options: readonly NavOption[]) {
   return options.findIndex((option) => !option.disabled);
 }
 
+/** The index of the only enabled option, or -1 when there is none or more than one. */
+export function onlyEnabled(options: readonly NavOption[]) {
+  const first = firstEnabled(options);
+  return first >= 0 && first === lastEnabled(options) ? first : -1;
+}
+
 export function lastEnabled(options: readonly NavOption[]) {
   for (let index = options.length - 1; index >= 0; index -= 1) if (!options[index]!.disabled) return index;
   return -1;
@@ -203,9 +209,11 @@ export type ComboboxKeyResult = {
  * Keyboard for an editable combobox (APG list autocomplete). ↓ or Alt+↓ opens; ↑/↓, Home/End (only
  * while open, so the caret keys still work in the text otherwise), PageUp/PageDown move; Enter chooses
  * (and keeps the list open when `multiple`); Escape closes; Backspace in an empty input removes the
- * last chip; Tab closes and lets focus move on.
+ * last chip; Tab closes and lets focus move on. Enter with no active option but text typed chooses
+ * the one enabled option left, when exactly one is (a single match, or the "Create" row when nothing
+ * matches), unless the list is still loading (`settled: false`).
  */
-export function comboboxKey(state: { open: boolean; active: number }, event: SelectKeyInput, options: readonly NavOption[], context: { query: string; multiple: boolean; hasValues: boolean }): ComboboxKeyResult {
+export function comboboxKey(state: { open: boolean; active: number }, event: SelectKeyInput, options: readonly NavOption[], context: { query: string; multiple: boolean; hasValues: boolean; settled?: boolean }): ComboboxKeyResult {
   const { open, active } = state;
   if (event.key === "Backspace" && context.query === "" && context.hasValues) return { open, active, handled: true, removeLast: true };
   if (!open) {
@@ -219,8 +227,9 @@ export function comboboxKey(state: { open: boolean; active: number }, event: Sel
   if (event.key === "ArrowUp" && event.altKey) return { open: false, active, handled: true, close: true };
   if (isNavKey(event.key)) return { open, active: moveActive(options, active, event.key), handled: true };
   if (event.key === "Enter") {
-    if (active < 0 || options[active]?.disabled) return { open, active, handled: true };
-    return { open: context.multiple, active, handled: true, commit: active, close: !context.multiple };
+    const pick = active < 0 && context.query.trim() && context.settled !== false ? onlyEnabled(options) : active;
+    if (pick < 0 || options[pick]?.disabled) return { open, active, handled: true };
+    return { open: context.multiple, active: pick, handled: true, commit: pick, close: !context.multiple };
   }
   return { open, active, handled: false };
 }

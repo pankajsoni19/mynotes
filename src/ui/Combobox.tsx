@@ -136,7 +136,7 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
 
   function onKey(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (disabled || creating) return;
-    const result = comboboxKey({ open, active }, event, shown, { query, multiple, hasValues: value.length > 0 });
+    const result = comboboxKey({ open, active }, event, shown, { query, multiple, hasValues: value.length > 0, settled: !loading });
     if (result.handled) {
       event.preventDefault();
       event.stopPropagation();
