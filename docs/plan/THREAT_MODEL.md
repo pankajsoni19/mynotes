@@ -156,6 +156,15 @@ Rows T72, T73, and T75 of [WAVES_10-12.md](WAVES_10-12.md) §5 (T74 is under Tod
 | T73 | **MCP overwrites or vandalizes rows and events** | Create and update only: no delete, exdate, share, feed, schema, view, attachment, or import tools. Writes need the editor role (`READ_ONLY` for viewers), updates need `baseRevision` (`EVENT_CHANGED`, `ROW_CHANGED` with `currentRevision`), and row updates merge instead of replacing. Every write keeps the previous values for one-step undo, sets `updated_via_key_id` (the event view and row panel say "Changed by the MCP key <name>" and offer Undo), and is audited with `{ via: "mcp", keyId }`. Reminders are always the key owner's own. Daily caps per key: 200 event writes, 100 reminders, 500 row writes (per user across keys: 400, 200, 1000), on top of 120 calls and 30 writes a minute. Revoking the key stops it at once. | Done (Waves 11–12) |
 | T75 | **Prompt injection through rows or events returned to agents** | As T35: rows and events are returned as data (event descriptions as stored plain text, rows keyed by field name, note links as titles or `restricted`, attachments as names only); writes are opt-in scopes, reversible, audited, and capped. The server cannot tell instructions from data. | Accepted (documented) |
 
+### Task cards, views, and Modules (Wave 13)
+
+Rows T90–T102 of [WAVE_13_TASK_CARD_UX.md](WAVE_13_TASK_CARD_UX.md) §6. Rows land with the sub-wave that implements them; 13B (server) covers T92–T94, T96, and T99.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T92 | **Enumerating users through the assignee picker** | `GET /boards/:b/readers` lists only readers of the board (owner and members, or every enabled user on an `all_users` board, the same set as `GET /api/users`), as `{ id, displayName }` only. `q` is 1–64 characters matched with `instr` (no wildcards), `limit` at most 50, and the endpoint allows 60 requests a minute per user (429 `RATE_LIMITED` with `Retry-After`). Strangers get 404. Assigning someone never grants access. `tests/tasksCardUx.test.ts` | Done (13B) |
+| T93 | **Assignees who lose access** keep their names on the card | They stay as `can_read: 0` ("Former member"), computed live per board load; they cannot be re-added once removed, and any reader can remove them. Today lists a card only for callers who can read its board. `tests/tasksCardUx.test.ts` | Accepted (13B) |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

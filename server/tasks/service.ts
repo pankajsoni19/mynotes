@@ -2,6 +2,7 @@ import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { withResourceLock } from "../storage";
 import { readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardVisibility, type ColumnRow } from "./access";
+import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
 
 /**
@@ -87,7 +88,11 @@ export type CardSummary = {
   creator_name: string | null;
   /** Calendar date YYYY-MM-DD (migration 011). */
   due_on: string | null;
+  /** Every assignee, in assignment order, at most 20 (D102). */
+  assignees: CardAssignee[];
+  /** Deprecated (D103): the first assignee's id, kept for one release. */
   assignee_id: string | null;
+  /** Deprecated (D103): the first assignee's display name. */
   assignee_name: string | null;
   comment_count: number;
   attachment_count: number;
@@ -99,17 +104,28 @@ const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
          k.revision, k.created_by, cu.display_name AS creator_name,
-         k.due_on, k.assignee_id, au.display_name AS assignee_name,
+         k.due_on,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
          k.created_at, k.updated_at${extraColumns}
-  FROM cards k LEFT JOIN users cu ON cu.id = k.created_by LEFT JOIN users au ON au.id = k.assignee_id
+  FROM cards k LEFT JOIN users cu ON cu.id = k.created_by
 `;
-export const cardSummarySelect = cardSelect();
+const cardSummarySelect = cardSelect();
 const cardDetailSelect = cardSelect(", k.description");
 
-export function listCards(boardId: string) {
-  return db.query(`${cardSummarySelect} WHERE k.board_id = ? AND k.deleted_at IS NULL ORDER BY k.position, k.id`).all(boardId) as CardSummary[];
+/** A selected card row before its grouped fields (assignees) are attached. */
+type SelectedCard = Omit<CardSummary, "assignees" | "assignee_id" | "assignee_name">;
+
+/** Adds the grouped fields; the deprecated `assignee_id`/`assignee_name` are the first assignee (D103). */
+function withCardFields<T extends SelectedCard>(card: T, assignees: CardAssignee[]) {
+  const first = assignees[0];
+  return { ...card, assignees, assignee_id: first?.id ?? null, assignee_name: first?.display_name ?? null };
+}
+
+export function listCards(boardId: string): CardSummary[] {
+  const cards = db.query(`${cardSummarySelect} WHERE k.board_id = ? AND k.deleted_at IS NULL ORDER BY k.position, k.id`).all(boardId) as SelectedCard[];
+  const assignees = assigneesForBoard(boardId);
+  return cards.map((card) => withCardFields(card, assignees.get(card.id) ?? []));
 }
 
 export function getBoard(userId: string, boardId: string) {
@@ -304,9 +320,9 @@ export type CardDetail = CardSummary & { description: string };
 
 export const cardNotFound = () => new TaskError(404, "Card not found");
 
-export function cardDetail(cardId: string) {
-  return db.query(`${cardDetailSelect} WHERE k.id = ? AND k.deleted_at IS NULL`)
-    .get(cardId) as CardDetail | null;
+export function cardDetail(cardId: string): CardDetail | null {
+  const card = db.query(`${cardDetailSelect} WHERE k.id = ? AND k.deleted_at IS NULL`).get(cardId) as (SelectedCard & { description: string }) | null;
+  return card ? withCardFields(card, assigneesForCard(cardId)) : null;
 }
 
 export function liveCardsIn(columnId: string) {
@@ -334,13 +350,18 @@ export function requireReadableCard(cardId: string, userId: string) {
   return found;
 }
 
-export type CardCreateInput = { columnId: string; title: string; description?: string; dueOn?: string | null; afterCardId?: string | null };
+export type CardCreateInput = {
+  columnId: string; title: string; description?: string; dueOn?: string | null; afterCardId?: string | null;
+  assigneeIds?: string[];
+};
 
 /** Creates a card. `afterCardId`: omitted = bottom of the column, null = top, an id = after that card. */
 export function createCard(userId: string, boardId: string, input: CardCreateInput) {
   return withBoardLock(boardId, () => {
     requireReadableBoard(boardId, userId);
     requireBoardColumn(boardId, input.columnId);
+    const assignees = input.assigneeIds === undefined ? undefined : uniqueAssignees(input.assigneeIds);
+    for (const assigneeId of assignees ?? []) requireAssignableUser(boardId, assigneeId);
     const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(boardId) as { count: number }).count;
     if (live >= LIMITS.liveCardsPerBoard) throw limitReached(`A board can have up to ${LIMITS.liveCardsPerBoard} cards`);
     const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
@@ -351,8 +372,9 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
       const timestamp = now();
       db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, due_on, created_by, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", input.dueOn ?? null, userId, timestamp, timestamp);
+      if (assignees?.length) replaceAssignees(id, assignees, userId, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
-      audit(userId, null, "task.card_create", { boardId, cardId: id });
+      audit(userId, null, "task.card_create", { boardId, cardId: id, ...(assignees?.length ? { assigneesAdded: assignees.length } : {}) });
     })();
     return { card: cardDetail(id)!, ...(plan.renumbered ? { renormalized: true } : {}) };
   });
@@ -364,21 +386,57 @@ export function getCard(userId: string, cardId: string) {
   return { card: cardDetail(cardId)!, board: found.board };
 }
 
-export type CardPatchInput = { title?: string; description?: string; dueOn?: string | null; assigneeId?: string | null; revision: number };
+export type CardPatchInput = {
+  title?: string; description?: string; dueOn?: string | null;
+  /** Legacy (D103): `id` means `[id]`, `null` means `[]`. Not together with `assigneeIds`. */
+  assigneeId?: string | null;
+  /** Replaces the whole set; `[]` clears it. */
+  assigneeIds?: string[];
+  revision: number;
+};
+
+export const READERS_UNFILTERED_LIMIT = 200;
+export const READERS_DEFAULT_LIMIT = 20;
 
 /**
  * Users who can read the board, for the assignee picker: the owner plus the
- * members (`selected`), or every enabled user (`all_users`). Capped like
- * `GET /api/users`.
+ * members (`selected`), or every enabled user (`all_users`), display names
+ * only (T92). Without `q`, at most 200 by name, as before. With `q`, a
+ * case-insensitive `instr` match on the display name (no LIKE wildcards),
+ * at most `limit`. `truncated` says more matched.
  */
-export function listBoardReaders(userId: string, boardId: string) {
+export function listBoardReaders(userId: string, boardId: string, options: { q?: string; limit?: number } = {}) {
   const board = requireReadableBoard(boardId, userId);
-  const rows = board.visibility === "all_users"
-    ? db.query("SELECT id, display_name FROM users WHERE disabled_at IS NULL ORDER BY display_name, id LIMIT 200").all()
+  const q = options.q ?? "";
+  const limit = q ? options.limit ?? READERS_DEFAULT_LIMIT : READERS_UNFILTERED_LIMIT;
+  const match = "($q = '' OR instr(lower(u.display_name), lower($q)) > 0)";
+  const rows = (board.visibility === "all_users"
+    ? db.query(`SELECT u.id, u.display_name FROM users u WHERE u.disabled_at IS NULL AND ${match} ORDER BY u.display_name, u.id LIMIT $limit`).all({ q, limit: limit + 1 })
     : db.query(`SELECT u.id, u.display_name FROM users u WHERE u.disabled_at IS NULL AND (u.id = $ownerId
         OR ($visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = $boardId AND m.user_id = u.id)))
-        ORDER BY u.display_name, u.id LIMIT 200`).all({ ownerId: board.owner_id, visibility: board.visibility, boardId });
-  return { users: (rows as Array<{ id: string; display_name: string }>).map((row) => ({ id: row.id, displayName: row.display_name })) };
+        AND ${match} ORDER BY u.display_name, u.id LIMIT $limit`).all({ ownerId: board.owner_id, visibility: board.visibility, boardId, q, limit: limit + 1 })
+  ) as Array<{ id: string; display_name: string }>;
+  return {
+    users: rows.slice(0, limit).map((row) => ({ id: row.id, displayName: row.display_name })),
+    truncated: rows.length > limit
+  };
+}
+
+/** Deduplicated ids, in the order given; 400 above the cap. */
+function uniqueAssignees(ids: readonly string[]) {
+  const unique = [...new Set(ids.map((id) => id.toLowerCase()))];
+  if (unique.length > MAX_ASSIGNEES) throw new TaskError(400, `A card can have up to ${MAX_ASSIGNEES} assignees`);
+  return unique;
+}
+
+/** The requested assignee set of a patch, or undefined when it leaves assignees alone (D103). */
+function requestedAssignees(input: Pick<CardPatchInput, "assigneeId" | "assigneeIds">) {
+  if (input.assigneeId !== undefined && input.assigneeIds !== undefined) {
+    throw new TaskError(400, "Send assigneeIds or the legacy assigneeId, not both");
+  }
+  if (input.assigneeIds !== undefined) return uniqueAssignees(input.assigneeIds);
+  if (input.assigneeId !== undefined) return input.assigneeId ? [input.assigneeId.toLowerCase()] : [];
+  return undefined;
 }
 
 /** 400 ASSIGNEE_NOT_MEMBER unless the user is enabled and can read the board (D53). */
@@ -390,9 +448,12 @@ function requireAssignableUser(boardId: string, assigneeId: string) {
 }
 
 /**
- * Edits title, description, due date, and/or assignee with a compare-and-swap
- * on `revision` (409 CARD_CHANGED carries the current card). `dueOn` and
- * `assigneeId` accept null to clear.
+ * Edits title, description, due date, and/or assignees with a compare-and-swap
+ * on `revision` (409 CARD_CHANGED carries the current card). Every field
+ * changes in one transaction and `revision` goes up by exactly 1 (D107).
+ * `dueOn` accepts null to clear; `assigneeIds` replaces the whole set. Only
+ * users being added must be able to read the board, so a former member can
+ * stay until someone removes them (T93).
  */
 export async function patchCard(userId: string, cardId: string, input: CardPatchInput) {
   const { board } = requireReadableCard(cardId, userId);
@@ -401,30 +462,30 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
     if (card.revision !== input.revision) {
       throw new TaskError(409, "Someone else changed this card", "CARD_CHANGED", { card: cardDetail(cardId)! });
     }
-    if (input.assigneeId) requireAssignableUser(board.id, input.assigneeId);
+    const assignees = requestedAssignees(input);
+    for (const assigneeId of assignees ? newAssignees(cardId, assignees) : []) requireAssignableUser(board.id, assigneeId);
     db.transaction(() => {
       const timestamp = now();
       const updated = db.query(`UPDATE cards SET title = COALESCE($title, title), description = COALESCE($description, description),
           due_on = CASE WHEN $setDue THEN $dueOn ELSE due_on END,
-          assignee_id = CASE WHEN $setAssignee THEN $assigneeId ELSE assignee_id END,
           revision = revision + 1, updated_at = $timestamp
         WHERE id = $cardId AND revision = $revision AND deleted_at IS NULL`).run({
         title: input.title ?? null,
         description: input.description ?? null,
         setDue: input.dueOn !== undefined ? 1 : 0,
         dueOn: input.dueOn ?? null,
-        setAssignee: input.assigneeId !== undefined ? 1 : 0,
-        assigneeId: input.assigneeId ?? null,
         timestamp,
         cardId,
         revision: input.revision
       });
       if (updated.changes !== 1) throw new Error("Concurrent card update detected");
+      const changed = assignees ? replaceAssignees(cardId, assignees, userId, timestamp) : null;
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
       audit(userId, null, "task.card_update", {
         boardId: board.id, cardId,
         ...(input.dueOn !== undefined ? { dueOn: input.dueOn } : {}),
-        ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {})
+        ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+        ...(changed ? { assigneesAdded: changed.added.length, assigneesRemoved: changed.removed.length } : {})
       });
     })();
     return { card: cardDetail(cardId)! };
