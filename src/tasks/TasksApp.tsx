@@ -6,8 +6,9 @@ import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, locationUrl, routeFromLocation, type Route } from "../router";
-import { fullPageAction, tasksBackAction, tasksRoute, withFromDialogHint, type TasksRoute } from "../tasksRoute";
-import { BoardList } from "./BoardList";
+import { fullPageAction, tasksBackAction, tasksHomeRoute, tasksRoute, withFromDialogHint, type TasksRoute } from "../tasksRoute";
+import { TasksHome } from "./home/TasksHome";
+import type { TasksHome as TasksHomeRoute } from "./home/homeUrl";
 import { BoardView } from "./BoardView";
 import { DEFAULT_BOARD_QUERY, type BoardQuery } from "./boardUrl";
 import "../bin/bin.css";
@@ -116,6 +117,14 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
     if (current.boardId) go(tasksRoute(current.boardId, current.cardId, current.full === true, query), !options.push);
   }, [go]);
 
+  // The home segments and views are routes (17C, §9.5): a segment tap, a layout switch, or a
+  // committed filter change pushes; value edits replace. A card from cross-board results pushes
+  // its board's card URL, so closing it (or Back) returns to the list it came from.
+  const goHome = useCallback((home: TasksHomeRoute | undefined, options: { replace?: boolean } = {}) => {
+    go(home ? tasksHomeRoute(home) : tasksRoute(), options.replace === true);
+  }, [go]);
+  const openResultCard = useCallback((card: { board_id: string; id: string }) => go(tasksRoute(card.board_id, card.id)), [go]);
+
   const onMissing = useCallback(() => {
     notify("Board not found");
     go(tasksRoute(), true);
@@ -132,7 +141,8 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
       ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} openCardFull={route.full === true} onExpandCard={expandCard} onCollapseCard={collapseCard} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))}
         onOpenCardRoute={(boardId, cardId) => go(tasksRoute(boardId, cardId, false, boardId === routeRef.current.boardId ? routeRef.current.query : null))}
         query={route.query ?? DEFAULT_BOARD_QUERY} onQueryChange={changeQuery} />
-      : <BoardList onOpen={(board) => go(tasksRoute(board.id))} onOpenBoard={(boardId) => go(tasksRoute(boardId))} notify={notify} />}
+      : <TasksHome userId={userId} home={route.home} onHome={goHome} onOpenBoard={(board) => go(tasksRoute(board.id))} onOpenBoardId={(boardId) => go(tasksRoute(boardId))}
+        onOpenCard={openResultCard} onBack={back} notify={notify} />}
     {toast && <div className="toast file-toast" role="status">
       <span>{toast.message}</span>
       {toast.action && <button className="file-toast-action" onClick={() => { const run = toast.action!.run; setToast(null); run(); }}>{toast.action.label}</button>}

@@ -57,7 +57,7 @@ function SectionView({ name, section, date, busy, retrying, onRetry, onOpenRoute
   return <section className={`today-section today-section-${name}`} aria-labelledby={headingId} aria-busy={busy || retrying || undefined}>
     <header className="today-section-header">
       <h2 id={headingId}>{def.title}</h2>
-      {section && <RouteLink className="today-view-all" route={viewAllRoute(section.href)} onOpenRoute={onOpenRoute} label={`View all ${def.title.toLowerCase()} in ${def.app}`}>View all<ArrowRight aria-hidden="true" /></RouteLink>}
+      {section && <RouteLink className="today-view-all" route={viewAllRoute(def.viewAll ?? section.href)} onOpenRoute={onOpenRoute} label={`View all ${def.title.toLowerCase()} in ${def.app}`}>View all<ArrowRight aria-hidden="true" /></RouteLink>}
     </header>
     {busy || !section
       ? <ul className="today-skeleton" aria-hidden="true"><li /><li /><li /></ul>

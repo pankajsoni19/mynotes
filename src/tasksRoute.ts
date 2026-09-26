@@ -1,5 +1,6 @@
 import type { Route } from "./router";
 import { isDefaultBoardQuery, type BoardQuery } from "./tasks/boardUrl";
+import type { TasksHome } from "./tasks/home/homeUrl";
 
 export type TasksRoute = Extract<Route, { app: "tasks" }>;
 
@@ -13,11 +14,18 @@ export function tasksRoute(boardId: string | null = null, cardId: string | null 
   return boardId && query && !isDefaultBoardQuery(query) ? { ...route, query } : route;
 }
 
+/** A Tasks home segment (17C): My work, the views list, or one view, with its query. */
+export function tasksHomeRoute(home: TasksHome): TasksRoute {
+  return { app: "tasks", boardId: null, cardId: null, home };
+}
+
 /**
  * The view one level up, used when in-app Back has no history entry of this visit to step back
  * to (a deep link): full page → card dialog → board (each in the same view) → board list → Home (null).
+ * On the home: a view → the views list → the board list (/tasks); My work → the board list.
  */
 export function parentTasksRoute(route: TasksRoute): TasksRoute | null {
+  if (!route.boardId && route.home) return route.home.section === "view" ? tasksHomeRoute({ section: "views" }) : tasksRoute();
   if (route.cardId && route.full) return tasksRoute(route.boardId, route.cardId, false, route.query);
   if (route.cardId) return tasksRoute(route.boardId, null, false, route.query);
   if (route.boardId) return tasksRoute();
