@@ -5,6 +5,7 @@ import { readableBoard, readableBoardPredicate, readableCard, readableColumn, ty
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
 import { dueAt, resolveDue, type DueInput } from "./dueTime";
+import { descriptionExcerpt } from "./excerpt";
 import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
 
 /**
@@ -76,7 +77,8 @@ export function listColumns(boardId: string) {
 
 /**
  * A card as shown on the board: no description (up to 64 KiB each), only
- * whether one exists, plus comment and attachment counts.
+ * whether one exists and a short plain-text excerpt, plus comment and
+ * attachment counts.
  */
 export type CardSummary = {
   id: string;
@@ -85,6 +87,8 @@ export type CardSummary = {
   position: number;
   title: string;
   has_description: 0 | 1;
+  /** Plain text of the description, at most 160 characters (D111); '' without one. */
+  description_excerpt: string;
   revision: number;
   created_by: string | null;
   creator_name: string | null;
@@ -115,7 +119,7 @@ export type CardSummary = {
 const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
-         k.revision, k.created_by, cu.display_name AS creator_name,
+         k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
          k.due_on, k.due_time, k.due_tz,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
@@ -420,9 +424,10 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     db.transaction(() => {
       applyRenumber("cards", plan.renumbered);
       const timestamp = now();
-      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, due_on, due_time, due_tz, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, boardId, input.columnId, plan.position, input.title, input.description ?? "", due.due_on, due.due_time, due.due_tz, userId, timestamp, timestamp);
+      const description = input.description ?? "";
+      db.query(`INSERT INTO cards (id, board_id, column_id, position, title, description, description_excerpt, due_on, due_time, due_tz, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, boardId, input.columnId, plan.position, input.title, description, descriptionExcerpt(description), due.due_on, due.due_time, due.due_tz, userId, timestamp, timestamp);
       if (assignees?.length) replaceAssignees(id, assignees, userId, timestamp);
       if (tagIds?.length) replaceCardTags(id, tagIds, timestamp);
       if (input.flags?.length) replaceCardFlags(id, input.flags, timestamp);
@@ -535,6 +540,7 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
     db.transaction(() => {
       const timestamp = now();
       const updated = db.query(`UPDATE cards SET title = COALESCE($title, title), description = COALESCE($description, description),
+          description_excerpt = COALESCE($excerpt, description_excerpt),
           due_on = CASE WHEN $setDue THEN $dueOn ELSE due_on END,
           due_time = CASE WHEN $setDue THEN $dueTime ELSE due_time END,
           due_tz = CASE WHEN $setDue THEN $dueTz ELSE due_tz END,
@@ -542,6 +548,8 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
         WHERE id = $cardId AND revision = $revision AND deleted_at IS NULL`).run({
         title: input.title ?? null,
         description: input.description ?? null,
+        // Every description write refreshes the excerpt (D111).
+        excerpt: input.description === undefined ? null : descriptionExcerpt(input.description),
         setDue: due ? 1 : 0,
         dueOn: due?.value.due_on ?? null,
         dueTime: due?.value.due_time ?? null,

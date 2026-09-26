@@ -352,6 +352,7 @@ type CardSummary = {
   id: string; board_id: string; column_id: string; position: number;
   title: string;                     // 1–200 characters, trimmed, no control characters
   has_description: 0 | 1;            // the board view never carries descriptions
+  description_excerpt: string;       // Wave 13 (D111): plain text of the description, at most 160 characters (code points), '' without one
   revision: number;                  // starts at 1, +1 on every title/description edit
   created_by: string | null; creator_name: string | null;
   due_on: string | null;             // YYYY-MM-DD (migration 011); the civil date in due_tz when a time is set
@@ -373,6 +374,8 @@ type BoardTag = { id: string; board_id: string; name: string; color: OptionColor
 ```
 
 **Due time (Wave 13, D100–D101).** A card may carry a wall time next to its date. The client sends `dueTime` (`HH:MM`, 00:00–23:59) with `dueTz` (`Intl.DateTimeFormat().resolvedOptions().timeZone`); the server checks the zone with `isValidTimeZone` (browser aliases included), stores it as sent, and never converts it. `due_at` comes from `zonedToUtc`: a time inside a DST gap moves forward, and the earlier instant wins in an overlap. Rules (400 otherwise): a time needs a date and a zone; `dueTz` only comes with `dueTime`; `dueTime: null` clears the time and zone; changing only `dueOn` keeps the wall time and zone; `dueOn: null` also clears the time.
+
+**Description excerpt (Wave 13, D111).** `description_excerpt` is derived on the server with the search index's `searchText` (Markdown to plain text, as MCP's `description_preview`), whitespace collapsed, and cut to 160 code points with a trailing `…`. It is written with every description write (create and `PATCH`); a patch without `description` leaves it alone. Cards written before migration 015 are filled at boot by `reconcileCardExcerpts()` (live and binned cards whose description is not empty). Clients render it as text.
 
 **Assignees (Wave 13, D102–D103).** Assignees live in `card_assignees` (migration 015). `cards.assignee_id` is a legacy mirror of the first assignee, rewritten in the same transaction, for a rollback to v0.7.x only. Every user being **added** must be enabled and able to read the board (400 `ASSIGNEE_NOT_MEMBER`); a former member already on the card may stay until any reader removes them. Assigning never grants access.
 
