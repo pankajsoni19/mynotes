@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Combobox, createRow } from "../src/ui/Combobox";
+import { Combobox, createRow, pickFocusTarget } from "../src/ui/Combobox";
 import type { Option } from "../src/ui/Listbox";
 
 const people: Option[] = [
@@ -67,4 +67,13 @@ test("chip and option labels render as text (T98)", () => {
   const markup = renderToStaticMarkup(<Combobox multiple value={["x"]} onChange={noop} options={hostile} label="Tags" presentation="popup" defaultOpen />);
   expect(markup).not.toContain("<img");
   expect(markup).toContain("Remove &lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+});
+
+test("a pointer pick that leaves focus outside moves it back into the combobox so Escape still closes it", () => {
+  // The filter bar's value list opens on mount and the "+ Filter" trigger that had focus is gone.
+  expect(pickFocusTarget(false, false)).toBe("field");
+  expect(pickFocusTarget(true, false)).toBe("search");
+  // The option's mousedown kept focus in the field or search box: leave it there.
+  expect(pickFocusTarget(false, true)).toBeNull();
+  expect(pickFocusTarget(true, true)).toBeNull();
 });

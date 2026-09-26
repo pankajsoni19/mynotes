@@ -23,7 +23,13 @@ export type ComboboxProps<V extends string> = {
   disabled?: boolean;
   id?: string;
   presentation?: Presentation;
+  /** Opens on mount; the desktop popup then takes focus, so Escape and the arrow keys reach it. */
   defaultOpen?: boolean;
+  /**
+   * The phone sheet closed (Done, Back, the scrim, or a single pick). With this set, focus does not
+   * return to the field on the page, whose focus would raise the keyboard: the host moves it.
+   */
+  onSheetClose?: () => void;
 };
 
 const CREATE_VALUE = "\u0000create";
@@ -37,11 +43,21 @@ export function createRow(query: string, options: readonly { label: string }[], 
 }
 
 /**
+ * Where focus goes after a pointer pick, when the list stays open (several values): nowhere while it
+ * is already inside the combobox (the option's mousedown keeps it there), otherwise back into the
+ * field (desktop popup) or the sheet's search box, so Escape and the arrow keys still reach it.
+ */
+export function pickFocusTarget(sheet: boolean, focusInside: boolean): "field" | "search" | null {
+  if (focusInside) return null;
+  return sheet ? "search" : "field";
+}
+
+/**
  * An editable combobox with list autocomplete (APG), single or multiple, with chips for the chosen
  * values (D91). Desktop: a popup under the field. Phones: a bottom sheet with a sticky search box
  * that Back closes (D69).
  */
-export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false }: ComboboxProps<V>) {
+export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false, onSheetClose }: ComboboxProps<V>) {
   const autoId = useId();
   const inputId = id ?? `${autoId}-input`;
   const listId = `${autoId}-listbox`;
@@ -86,6 +102,12 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
   }, [open, loading, loadError, matches.length, emptyText]);
 
   useEffect(() => { if (open && sheet) sheetInputRef.current?.focus(); }, [open, sheet]);
+  // Opened on mount (a filter's value list): focus the field, or Escape and the keys go nowhere.
+  useEffect(() => {
+    if (defaultOpen && !sheet && !rootRef.current?.contains(document.activeElement)) inputRef.current?.focus({ preventScroll: true });
+    // Only on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // A click or tap outside closes the desktop popup without choosing.
   useOutsideClose(open && !sheet, rootRef, () => close(false));
@@ -94,6 +116,10 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
     setOpen(false);
     setActive(-1);
     setQuery("");
+    if (sheet && onSheetClose) {
+      onSheetClose();
+      return;
+    }
     if (focusInput) inputRef.current?.focus();
   }
 
@@ -126,7 +152,12 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
     } else {
       choose(option);
     }
-    if (!multiple) close();
+    if (!multiple) {
+      close();
+      return;
+    }
+    const target = pickFocusTarget(sheet, Boolean(rootRef.current?.contains(document.activeElement)));
+    if (target) (target === "search" ? sheetInputRef : inputRef).current?.focus({ preventScroll: true });
   }
 
   function remove(candidate: V) {
