@@ -200,7 +200,7 @@ app.post("/api/auth/register", async (c) => {
       // while no active admin exists (an upgrade where every account was disabled, so migration 017
       // had nobody to promote). The check and the insert share this transaction, so two concurrent
       // registrations cannot both become admin.
-      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : "member";
+      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : config.signupRole;
       const timestamp = now();
       db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)")
         .run(id, body.email, body.displayName, passwordHash, timestamp, role);

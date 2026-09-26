@@ -38,6 +38,13 @@ if (!(["optional", "required"] as const).includes(totpPolicyValue as "optional" 
   throw new Error("TOTP_POLICY must be either optional or required");
 }
 const totpPolicy = totpPolicyValue as "optional" | "required";
+// D80: the team role of accounts registered after the first (the first is always admin, D76).
+// Never admin: promoting to admin needs an admin and re-authentication (Team plan §5.5).
+const signupRoleValue = process.env.SIGNUP_ROLE?.trim() || "guest";
+if (!(["guest", "viewer", "member"] as const).includes(signupRoleValue as "guest")) {
+  throw new Error("SIGNUP_ROLE must be guest, viewer, or member");
+}
+const signupRole = signupRoleValue as "guest" | "viewer" | "member";
 const cookieSecureValue = process.env.COOKIE_SECURE ?? (process.env.NODE_ENV === "production" ? "true" : "false");
 if (!(cookieSecureValue === "true" || cookieSecureValue === "false")) throw new Error("COOKIE_SECURE must be true or false");
 const totpEncryptionKeyValue = process.env.TOTP_ENCRYPTION_KEY ?? "";
@@ -72,6 +79,7 @@ export const config = {
   allowRegistration: process.env.ALLOW_REGISTRATION === "true",
   totpPolicy,
   totpEncryptionKey,
+  signupRole,
   sessionDays: Math.max(1, Number(process.env.SESSION_DAYS ?? 14)),
   maxMarkdownBytes: Math.max(1024, Number(process.env.MAX_MARKDOWN_BYTES ?? 2_000_000)),
   maxUploadBytes: integerEnv("MAX_UPLOAD_BYTES", 104_857_600, 1_048_576, 2_147_483_648),
