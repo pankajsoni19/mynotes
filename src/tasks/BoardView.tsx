@@ -25,6 +25,7 @@ import { applyBoardQuery, boardData, type BoardContext } from "./boardQuery";
 import { hasBoardFilter, withBoardQuery, type BoardQuery } from "./boardUrl";
 import { localDateString, viewerTimeZone } from "./taskActions";
 import { FilterBar } from "./FilterBar";
+import { KeyboardMoveHint } from "./boardViewParts";
 import { BoardCalendar } from "./BoardCalendar";
 import { displayedDay, displayedTime, dueAnnouncement, shiftedDueAt } from "./calendarPlacement";
 import { daysBetween } from "../calendarRoute";
@@ -478,7 +479,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         <button className="icon-button" onClick={(event) => openDialog({ kind: "deleteBoard" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Delete board" title="Move to the Bin"><Trash2 /></button>
       </span>}
     </header>
-    <p id="task-card-keys" className="sr-only">Press Alt with an arrow key to move a card up, down, or to the next column.</p>
+    <KeyboardMoveHint id="task-card-keys">Press Alt with an arrow key to move a card up, down, or to the next column.</KeyboardMoveHint>
     <p className="sr-only" aria-live="polite">{announcement}</p>
 
     {loadError && <div className="bin-state bin-error task-board-state" role="alert">

@@ -10,7 +10,8 @@ import { CARD_DRAG_TYPE, isCardDrag, readCardDragPayload } from "./boardOrder";
 import { cardsDueInMonth, displayedDay, displayedTime, dropDueOn, emptyMonthNote, keyboardDayDelta, placeCards, selectGridDay } from "./calendarPlacement";
 import type { BoardCard, BoardData } from "./boardQuery";
 import type { CalendarLayout } from "./boardUrl";
-import { FlagIcons } from "./boardViewParts";
+import { FlagIcons, KeyboardMoveHint } from "./boardViewParts";
+import { useModuleEnabled } from "../modules";
 import { committableDueDate } from "./taskActions";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 import "../calendar/calendar.css";
@@ -45,6 +46,7 @@ type Sheet = { kind: "tray" } | { kind: "due"; cardId: string };
  */
 export function BoardCalendar({ board, cards, layout, month: routeMonth, today, viewerZone, onMonth, onLayout, onOpenCard, onSetDue, filtered }: BoardCalendarProps) {
   const phone = useIsPhone();
+  const calendarEnabled = useModuleEnabled("calendar");
   const month = resolveMonth(routeMonth, today);
   const [selected, setSelected] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -127,8 +129,8 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
   const agendaDays = [...byDay.entries()].sort(([left], [right]) => left < right ? -1 : 1).map(([key, items]) => ({ day: key, items }));
 
   return <div className="task-board-calendar">
-    <p className="task-cal-subtitle">Due dates of cards on this board. Events linked to cards are in Calendar.</p>
-    <p id="task-cal-keys" className="sr-only">Press Alt with the left or right arrow to move a card a day, or up and down to move it a week.</p>
+    <p className="task-cal-subtitle">Due dates of cards on this board.{calendarEnabled && " Events linked to cards are in Calendar."}</p>
+    <KeyboardMoveHint id="task-cal-keys">Press Alt with the left or right arrow to move a card a day, or up and down to move it a week.</KeyboardMoveHint>
     <div className="task-cal-toolbar">
       <div className="task-cal-layout" role="radiogroup" aria-label="Calendar layout">
         {(["month", "agenda"] as const).map((value) => <button key={value} type="button" role="radio" aria-checked={layout === value} className={layout === value ? "active" : undefined}

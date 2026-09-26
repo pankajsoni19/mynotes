@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BoardGroupedList } from "../src/tasks/BoardGroupedList";
 import { BoardTable, nextSort } from "../src/tasks/BoardTable";
 import { BoardViewSwitch } from "../src/tasks/BoardViewSwitch";
+import { KeyboardMoveHint } from "../src/tasks/boardViewParts";
+import { moduleDef } from "../src/modules";
 import { applyBoardQuery, boardData, type BoardContext } from "../src/tasks/boardQuery";
 import { DEFAULT_BOARD_QUERY, parseBoardSearch } from "../src/tasks/boardUrl";
 import type { CardSummary } from "../src/tasks/tasksApi";
@@ -92,4 +94,16 @@ test("the grouped list shows counted, collapsible sections and marks cards liste
   const columnMarkup = renderToStaticMarkup(<BoardGroupedList board={board} groups={byColumn} group="column" today={context.today} filtered onGroup={noop} onOpenCard={noop} onCardMenu={noop} />);
   expect(columnMarkup).toContain('<span class="task-group-name">Done</span><span class="task-group-count" aria-label="0 cards">0</span>');
   expect(columnMarkup).toContain("No cards");
+});
+
+test("polish: the Alt+Arrow hint, module help, avatar overlap, and focus ring", () => {
+  // Rendered for a keyboard; on a touch-only device the hint is left empty (useFinePointer).
+  expect(renderToStaticMarkup(<KeyboardMoveHint id="task-card-keys">Press Alt</KeyboardMoveHint>)).toBe('<p id="task-card-keys" class="sr-only">Press Alt</p>');
+  expect(moduleDef("search").description).toContain("the text filter on boards");
+  const tasksCss = readFileSync(new URL("../src/tasks/tasks.css", import.meta.url), "utf8");
+  expect(tasksCss).toContain("border-radius: 999px; margin-left: -4px;");
+  expect(tasksCss).toContain(".task-description-editor .editor-surface:focus-within { outline: 2px solid var(--yellow);");
+  // Muted copy in the Tasks views keeps at least 4.5:1 on the darkest panels (#85858c on #1c1c20 is 4.6:1).
+  const boardCss = readFileSync(new URL("../src/tasks/boardViews.css", import.meta.url), "utf8");
+  for (const css of [tasksCss, boardCss]) expect(css).not.toMatch(/[{; ]color: #(55555c|6f6f76|7c7c83)/);
 });
