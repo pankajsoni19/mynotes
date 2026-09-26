@@ -244,6 +244,49 @@ describe("Bin subtrees (D129, D130, T114)", () => {
   });
 });
 
+describe("board structure (D122, T120)", () => {
+  test("the owner sets a structure; members get 403 and strangers 404; bad structures are 400", async () => {
+    const { owner, member, stranger, boardId } = await setup("Structure", { levels: [{ name: "Card", plural: "Cards" }], workLevel: 0, sprints: false });
+    const saved = await call(owner, "PATCH", `/boards/${boardId}`, { structure: EPICS });
+    expect(saved).toMatchObject({ status: 200, body: { board: { structure: EPICS } } });
+    expect(JSON.parse(lastAudit("task.board_structure")!.metadata_json)).toEqual({ boardId, levels: 3, workLevel: 1, sprints: false });
+    expect((await call(member, "PATCH", `/boards/${boardId}`, { structure: EPICS })).body.code).toBe("OWNER_ONLY");
+    expect((await call(stranger, "PATCH", `/boards/${boardId}`, { structure: EPICS })).status).toBe(404);
+    for (const structure of [{ levels: [] }, { ...EPICS, workLevel: 3 }, { ...EPICS, levels: [{ name: "x".repeat(30), plural: "y" }] }, "flat"]) {
+      expect((await call(owner, "PATCH", `/boards/${boardId}`, { structure })).status).toBe(400);
+    }
+    expect((await call(owner, "PATCH", `/boards/${boardId}`, {})).status).toBe(400);
+    expect((await call(owner, "PATCH", `/boards/${boardId}`, { structure: EPICS, extra: 1 })).status).toBe(400);
+    // Name and structure together; custom names are free.
+    const custom = { levels: [{ name: "Goal", plural: "Goals" }, { name: "Step", plural: "Steps" }], workLevel: 0, sprints: false };
+    const both = await call(owner, "PATCH", `/boards/${boardId}`, { name: "Renamed", structure: custom });
+    expect(both.body.board).toMatchObject({ name: "Renamed", structure: custom });
+  });
+
+  test("removing a level that cards use is LEVEL_IN_USE, counting binned cards; sprints off with open sprints is SPRINTS_IN_USE", async () => {
+    const { owner, member, boardId, columns } = await setup("Structure refusals");
+    const todo = columns[0].id;
+    const epic = await addCard(member, boardId, todo, "Epic", { level: 0 });
+    const story = await addCard(member, boardId, todo, "Story", { parentId: epic.id });
+    const subtask = await addCard(member, boardId, todo, "Subtask", { parentId: story.id });
+    const twoLevels = { levels: EPICS.levels.slice(0, 2), workLevel: 1, sprints: false };
+    expect(await call(owner, "PATCH", `/boards/${boardId}`, { structure: twoLevels }))
+      .toMatchObject({ status: 409, body: { code: "LEVEL_IN_USE", level: 2, cardCount: 1, binnedCount: 0 } });
+    expect((await call(member, "DELETE", `/cards/${subtask.id}`)).status).toBe(200);
+    expect(await call(owner, "PATCH", `/boards/${boardId}`, { structure: twoLevels }))
+      .toMatchObject({ status: 409, body: { code: "LEVEL_IN_USE", cardCount: 1, binnedCount: 1 } });
+    expect((await call(owner, "DELETE", `/bin/card/${subtask.id}`)).status).toBe(200);
+    expect((await call(owner, "PATCH", `/boards/${boardId}`, { structure: twoLevels })).status).toBe(200);
+    // New cards may not use the removed level.
+    expect((await call(member, "POST", `/boards/${boardId}/cards`, { columnId: todo, title: "Deep", parentId: story.id })).body.code).toBe("PARENT_INVALID");
+    // Sprints on, then an open sprint blocks turning them off (17B creates sprints; inserted here).
+    const withSprints = { ...twoLevels, sprints: true };
+    expect((await call(owner, "PATCH", `/boards/${boardId}`, { structure: withSprints })).status).toBe(200);
+    db.query("INSERT INTO board_sprints (id, board_id, name, position, created_at, updated_at) VALUES (?, ?, 'Sprint 1', 1024, ?, ?)").run(crypto.randomUUID(), boardId, "2026-01-01", "2026-01-01");
+    expect((await call(owner, "PATCH", `/boards/${boardId}`, { structure: twoLevels })).body.code).toBe("SPRINTS_IN_USE");
+  });
+});
+
 describe("roll-ups", () => {
   test("the board payload counts live direct children and those in a done column, with one grouped query (D134)", async () => {
     const { owner, member, boardId, columns } = await setup("Rollup");

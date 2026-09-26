@@ -524,6 +524,24 @@ type CardHierarchy = {
 - **WIP limits** count every card in a column, whatever its level (§8, Q7).
 - There is no endpoint that changes a card's board, so a parent never ends up on another board (T112).
 
+### Board structure (sub-wave 17A, D122, D123, T120)
+
+```ts
+type BoardStructure = {
+  levels: { name: string; plural: string }[];   // 1–3, top first; names 1–24 characters, trimmed, no control characters
+  workLevel: number;                              // 0 … levels.length − 1: where new cards are created and what columns show
+  sprints: boolean;                               // "Sprint ›" is the outer grouping (17B); never a card level
+};
+```
+
+`BoardSummary` adds `structure` (every board starts Flat: `{ levels: [{ name: "Card", plural: "Cards" }], workLevel: 0, sprints: false }`). Presets (`shared/boardStructure.ts`): Flat, Task › Subtask, Sprint › Task, Sprint › Task › Subtask, Epic › Story › Subtask (work level Story); anything else is Custom.
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `PATCH /boards/:b { name?, structure? }` | owner | 200 `{ board }`; at least one field | 400 (an invalid structure, with `details`), 403, 404, 409 `LEVEL_IN_USE { level, cardCount, binnedCount }` (a card, live or in the Bin, sits at a level being removed), 409 `SPRINTS_IN_USE` (sprints turned off while sprints are open, or the work level moved while cards carry a sprint) |
+
+Audit: `task.board_structure { boardId, levels, workLevel, sprints }` (counts only, no names).
+
 ### Filter grammar (sub-wave 17C, D137, D140–D145)
 
 One grammar for the board filter bar (13E), cross-board queries, saved views, URLs, and MCP. It lives in `shared/taskQuery.ts`, a pure module that the server and the client both import (research 2026-09-26 §10.3, Q10). A query is terms separated by spaces: **terms AND together**, the **values of one term OR together**, and a leading `-` negates a term.

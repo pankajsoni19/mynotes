@@ -28,14 +28,19 @@ import {
   patchColumn,
   putSharing,
   renameBoard,
+  setBoardStructure,
   TaskError
 } from "./service";
+import { validateStructure } from "../../shared/boardStructure";
 
 // C0/C1 controls and bidi overrides never belong in a board, column, or card name.
 const controlCharacters = /[\u0000-\u001F\u007F-\u009F‪-‮⁦-⁩]/;
 const label = (max: number) => z.string().trim().min(1).max(max).refine((value) => !controlCharacters.test(value), "Names cannot contain control characters");
 
 export const boardNameSchema = z.object({ name: label(120) }).strict();
+/** `PATCH /boards/:b`: a new name and/or a new structure (checked by `validateStructure`, D122). */
+export const boardPatchSchema = z.object({ name: label(120).optional(), structure: z.unknown().optional() }).strict()
+  .refine((value) => value.name !== undefined || value.structure !== undefined, "Provide a name or a structure");
 export const boardSharingSchema = z.object({
   visibility: z.enum(["private", "selected", "all_users"]),
   userIds: z.array(uuid).max(100).default([])
@@ -198,8 +203,15 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
 
   app.patch("/api/tasks/boards/:boardId", async (c) => {
     const boardId = id(c, "boardId");
-    const body = await parseJson(c.req.raw, boardNameSchema);
-    return respond(c, () => renameBoard(c.get("user").id, boardId, body.name));
+    const body = await parseJson(c.req.raw, boardPatchSchema);
+    const structure = body.structure === undefined ? null : validateStructure(body.structure);
+    if (structure && !structure.ok) return c.json(invalid(structure.error), 400);
+    const userId = c.get("user").id;
+    return respond(c, async () => {
+      let result = structure?.ok ? await setBoardStructure(userId, boardId, structure.structure) : null;
+      if (body.name !== undefined) result = await renameBoard(userId, boardId, body.name);
+      return result!;
+    });
   });
 
   app.delete("/api/tasks/boards/:boardId", (c) => {

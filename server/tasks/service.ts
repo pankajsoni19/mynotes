@@ -235,6 +235,39 @@ export function renameBoard(userId: string, boardId: string, name: string) {
 }
 
 /**
+ * Replaces the board's structure (owner only, D122, T120). Refused while it would hide cards:
+ * 409 LEVEL_IN_USE when a card (live or in the Bin, which would restore at a missing level) sits
+ * at a level being removed, and 409 SPRINTS_IN_USE when turning sprints off with open sprints or
+ * moving the work level while cards carry a sprint (17B).
+ */
+export function setBoardStructure(userId: string, boardId: string, structure: BoardStructure) {
+  return withBoardLock(boardId, () => {
+    requireOwnedBoard(boardId, userId);
+    const current = boardStructure(boardId);
+    const removed = db.query("SELECT COUNT(*) AS count, MIN(level) AS level, SUM(deleted_at IS NOT NULL) AS binned FROM cards WHERE board_id = ? AND level >= ?")
+      .get(boardId, structure.levels.length) as { count: number; level: number | null; binned: number | null };
+    if (removed.count > 0) {
+      const binned = removed.binned ?? 0;
+      throw new TaskError(409, `${removed.count === 1 ? "1 card is" : `${removed.count} cards are`} ${current.levels[removed.level!]?.plural ?? "at that level"}${binned ? ` (${binned} in the Bin)` : ""}. Move or change them before removing this level.`,
+        "LEVEL_IN_USE", { level: removed.level, cardCount: removed.count, binnedCount: binned });
+    }
+    if (!structure.sprints && current.sprints) {
+      const open = (db.query("SELECT COUNT(*) AS count FROM board_sprints WHERE board_id = ? AND state IN ('planned', 'active')").get(boardId) as { count: number }).count;
+      if (open) throw new TaskError(409, "Complete or delete the open sprints before turning sprints off", "SPRINTS_IN_USE", { sprintCount: open });
+    }
+    if (structure.workLevel !== current.workLevel) {
+      const assigned = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND sprint_id IS NOT NULL").get(boardId) as { count: number }).count;
+      if (assigned) throw new TaskError(409, "Take the cards out of their sprints before changing where new cards are created", "SPRINTS_IN_USE", { cardCount: assigned });
+    }
+    db.transaction(() => {
+      db.query("UPDATE boards SET structure_json = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").run(JSON.stringify(structure), now(), boardId);
+      audit(userId, null, "task.board_structure", { boardId, levels: structure.levels.length, workLevel: structure.workLevel, sprints: structure.sprints });
+    })();
+    return { board: boardSummary(boardId, userId)! };
+  });
+}
+
+/**
  * Moves a board to the Bin (owner only). Stage A sets the Bin columns only;
  * restore, purge, and the Bin listing arrive with Task Boards stage D.
  */
