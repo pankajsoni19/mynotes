@@ -1,0 +1,414 @@
+import { createHash } from "node:crypto";
+import { db } from "../db";
+import { dateInZone } from "../today/registry";
+import { addQueryDays, dueWindow, parse, format, type FilterTerm, type TaskQuery } from "../../shared/taskQuery";
+import { readableBoardPredicate } from "./access";
+import { assigneesForCards, type CardAssignee } from "./assignees";
+import { dueAt } from "./dueTime";
+import { TaskError } from "./service";
+
+/**
+ * The cross-board card query (research 2026-09-26 §10.3–§10.4, D140, D144,
+ * T115–T117). `compileTaskQuery` turns a parsed `shared/taskQuery.ts` query
+ * into a WHERE fragment; `queryCards` runs it with keyset pagination.
+ *
+ * - Every value is a named parameter (`$f0`, `$f1`, …). The only SQL text that
+ *   varies is picked from fixed fragments here, per key and value kind.
+ * - The fragment is always ANDed with live cards on live boards the **caller**
+ *   can read (`readableBoardPredicate`). A saved view runs through here as
+ *   the viewer, so sharing a view never widens access (T115).
+ * - Ids the caller cannot read simply match nothing; no error tells them apart
+ *   from ids that do not exist (T116).
+ * - Relation filters (`has:`) follow the per-viewer relation rules of WAVE_13
+ *   D105, exactly as `relationCountsForBoard` (server/tasks/cardRelations.ts)
+ *   counts them: `has:relation` is `relation_count > 0` (a relation to a card
+ *   outside the caller's audience counts, shown as restricted; one to a card
+ *   in their audience that is binned, or on a binned board, does not), and
+ *   `has:blocked` is `open_blockers > 0` (live `depends_on` cards in the
+ *   audience, outside a done column). A parity test checks both.
+ */
+
+export type Binding = string | number;
+export type CompiledFilter = { where: string; params: Record<string, Binding> };
+export type CompileContext = { userId: string; today: string; nowTime: string };
+
+/** The normalized column state (migration 020, D141), kept equal to `is_done` by the service. */
+export const COLUMN_STATE = "col.state";
+
+/** `readableBoardPredicate` for another card's board (alias `ob`), derived so the two never drift apart. */
+export const readableOtherBoardPredicate = readableBoardPredicate.replace(/\bb\./g, "ob.");
+
+/** Whether the caller is in the audience of another card's board `ob`, binned or not (D105: binning is never disclosed). */
+export const otherBoardAudience = `(ob.owner_id = $userId OR ob.visibility = 'all_users'
+  OR (ob.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members om WHERE om.board_id = ob.id AND om.user_id = $userId)))`;
+
+/** A relation from card `k` to another card `o` is visible unless the caller is in `o`'s audience and `o` or its board is binned. */
+const visibleOther = `(NOT ${otherBoardAudience} OR (o.deleted_at IS NULL AND ob.deleted_at IS NULL))`;
+const hasRelation = `(EXISTS (SELECT 1 FROM card_relations r JOIN cards o ON o.id = r.target_card_id JOIN boards ob ON ob.id = o.board_id
+    WHERE r.source_card_id = k.id AND ${visibleOther})
+  OR EXISTS (SELECT 1 FROM card_relations r JOIN cards o ON o.id = r.source_card_id JOIN boards ob ON ob.id = o.board_id
+    WHERE r.target_card_id = k.id AND ${visibleOther}))`;
+/** An open blocker: a readable, live `depends_on` card (stored as `o blocks k`) outside a done column. */
+const hasOpenBlocker = `EXISTS (SELECT 1 FROM card_relations r JOIN cards o ON o.id = r.source_card_id JOIN boards ob ON ob.id = o.board_id
+    JOIN board_columns oc ON oc.id = o.column_id
+  WHERE r.target_card_id = k.id AND r.kind = 'blocks' AND o.deleted_at IS NULL AND oc.is_done = 0 AND ${readableOtherBoardPredicate})`;
+
+class Compiler {
+  readonly params: Record<string, Binding> = {};
+  private next = 0;
+  constructor(readonly context: CompileContext) {
+    this.params.userId = context.userId;
+  }
+  bind(value: Binding) {
+    const name = `f${this.next++}`;
+    this.params[name] = value;
+    return `$${name}`;
+  }
+  list(values: readonly Binding[]) {
+    return values.map((value) => this.bind(value)).join(", ");
+  }
+  user(value: string) {
+    return value === "me" ? this.context.userId : value;
+  }
+}
+
+/** The SQL for one term's values, ORed. Values are canonical (validated by the parser). */
+function termSql(term: FilterTerm, compiler: Compiler): string {
+  const values = term.values;
+  const parts: string[] = [];
+  const ids = (keywords: readonly string[]) => values.filter((value) => !keywords.includes(value));
+  switch (term.key) {
+    case "board":
+      parts.push(`k.board_id IN (${compiler.list(values)})`);
+      break;
+    case "column":
+      parts.push(`k.column_id IN (${compiler.list(values)})`);
+      break;
+    case "state":
+      parts.push(`${COLUMN_STATE} IN (${compiler.list(values)})`);
+      break;
+    case "creator":
+      parts.push(`k.created_by IN (${compiler.list(values.map((value) => compiler.user(value)))})`);
+      break;
+    // Positive set filters are `k.id IN (…)` over the join table's (value, card_id) index, so a selective
+    // filter (My work's assignee:me) drives the scan instead of being checked on every readable card.
+    case "assignee": {
+      const users = ids(["none"]).map((value) => compiler.user(value));
+      if (users.length) parts.push(`k.id IN (SELECT ca.card_id FROM card_assignees ca WHERE ca.user_id IN (${compiler.list(users)}))`);
+      if (values.includes("none")) parts.push("NOT EXISTS (SELECT 1 FROM card_assignees ca WHERE ca.card_id = k.id)");
+      break;
+    }
+    case "tag": {
+      const named = ids(["none"]);
+      const tagIds = named.filter((value) => /^[0-9a-f-]{36}$/.test(value));
+      const names = named.filter((value) => !tagIds.includes(value));
+      const match: string[] = [];
+      if (tagIds.length) match.push(`t.id IN (${compiler.list(tagIds)})`);
+      if (names.length) match.push(`t.name COLLATE NOCASE IN (${compiler.list(names)})`);
+      if (match.length) parts.push(`k.id IN (SELECT ct.card_id FROM card_tags ct JOIN board_tags t ON t.id = ct.tag_id WHERE ${match.join(" OR ")})`);
+      if (values.includes("none")) parts.push("NOT EXISTS (SELECT 1 FROM card_tags ct WHERE ct.card_id = k.id)");
+      break;
+    }
+    case "flag": {
+      const flags = ids(["none"]);
+      if (flags.length) parts.push(`k.id IN (SELECT fl.card_id FROM card_flags fl WHERE fl.flag IN (${compiler.list(flags)}))`);
+      if (values.includes("none")) parts.push("NOT EXISTS (SELECT 1 FROM card_flags fl WHERE fl.card_id = k.id)");
+      break;
+    }
+    case "due":
+      for (const value of values) {
+        const window = dueWindow(value, compiler.context.today);
+        switch (window.kind) {
+          case "none":
+            parts.push("k.due_on IS NULL");
+            break;
+          case "overdue": {
+            const today = compiler.bind(window.before);
+            // A timed card due today is overdue once its wall time passed, compared in the caller's zone (approximate across zones, §5.1).
+            parts.push(`(k.due_on < ${today} OR (k.due_on = ${today} AND k.due_time IS NOT NULL AND k.due_time < ${compiler.bind(compiler.context.nowTime)}))`);
+            break;
+          }
+          case "range":
+            parts.push(window.from === window.to ? `k.due_on = ${compiler.bind(window.from)}` : `k.due_on BETWEEN ${compiler.bind(window.from)} AND ${compiler.bind(window.to)}`);
+            break;
+          case "before":
+            parts.push(`k.due_on < ${compiler.bind(window.date)}`);
+            break;
+          case "after":
+            parts.push(`k.due_on > ${compiler.bind(window.date)}`);
+            break;
+        }
+      }
+      break;
+    case "has":
+      for (const value of values) parts.push(value === "blocked" ? hasOpenBlocker : hasRelation);
+      break;
+    case "text": {
+      const text = compiler.bind(values[0]!);
+      parts.push(`(instr(lower(k.title), lower(${text})) > 0 OR instr(lower(k.description_excerpt), lower(${text})) > 0)`);
+      break;
+    }
+  }
+  return parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
+}
+
+/**
+ * The WHERE fragment for a parsed query, over `cards k`, `boards b`, and
+ * `board_columns col`. Negated terms are `NOT COALESCE(…, 0)`, so a card with
+ * no due date matches `-due:overdue`. An empty query matches every card.
+ */
+export function compileTaskQuery(query: TaskQuery, context: CompileContext): CompiledFilter {
+  const compiler = new Compiler(context);
+  const clauses = query.terms.map((term) => {
+    const sql = termSql(term, compiler);
+    return term.negate ? `NOT COALESCE(${sql}, 0)` : sql;
+  });
+  return { where: clauses.length ? clauses.join(" AND ") : "1", params: compiler.params };
+}
+
+// ---------------------------------------------------------------------------
+// Running a query.
+
+export const QUERY_SORTS = ["due", "updated", "created", "title", "board"] as const;
+export type QuerySort = typeof QUERY_SORTS[number];
+/** Server-side groups: single-valued dimensions only, so a group is one contiguous run across pages. Multi-valued ones (assignee, tag) group on the client. */
+export const QUERY_GROUPS = ["none", "board", "state", "due"] as const;
+export type QueryGroup = typeof QUERY_GROUPS[number];
+export const QUERY_PAGE = { default: 50, max: 100 } as const;
+/** `total` is reported only up to this many matches. */
+export const QUERY_TOTAL_CAP = 1000;
+
+type KeyPart = { sql: string; desc: boolean };
+
+const SORT_PARTS: Record<QuerySort, KeyPart[]> = {
+  // Dates are 1900–2999 and times ≤ 23:59, so the sentinels put undated cards and date-only cards last.
+  due: [{ sql: "COALESCE(k.due_on, '9999-12-31')", desc: false }, { sql: "COALESCE(k.due_time, '99:99')", desc: false }],
+  updated: [{ sql: "k.updated_at", desc: true }],
+  created: [{ sql: "k.created_at", desc: true }],
+  title: [{ sql: "lower(k.title)", desc: false }],
+  board: [{ sql: "lower(b.name)", desc: false }, { sql: "b.id", desc: false }, { sql: "col.position", desc: false }, { sql: "k.position", desc: false }]
+};
+
+const GROUP_PARTS: Record<QueryGroup, KeyPart[]> = {
+  none: [],
+  board: [{ sql: "lower(b.name)", desc: false }, { sql: "b.id", desc: false }],
+  state: [{ sql: `CASE ${COLUMN_STATE} WHEN 'todo' THEN 0 WHEN 'doing' THEN 1 ELSE 2 END`, desc: false }],
+  // Buckets: overdue, today, this week, later, no date (the §10.2 due-bucket grouping).
+  due: [{ sql: "CASE WHEN k.due_on IS NULL THEN 4 WHEN k.due_on < $today THEN 0 WHEN k.due_on = $today THEN 1 WHEN k.due_on <= $weekEnd THEN 2 ELSE 3 END", desc: false }]
+};
+
+export type QueriedCard = {
+  id: string;
+  board_id: string;
+  board_name: string;
+  column_id: string;
+  column_name: string;
+  column_state: "todo" | "doing" | "done";
+  is_done: 0 | 1;
+  position: number;
+  title: string;
+  description_excerpt: string;
+  revision: number;
+  created_by: string | null;
+  creator_name: string | null;
+  due_on: string | null;
+  due_time: string | null;
+  due_tz: string | null;
+  due_at: string | null;
+  assignees: CardAssignee[];
+  tags: Array<{ id: string; name: string; color: string }>;
+  flags: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+/** What a query's ids mean to this caller (T116): names only for what they can read. */
+export type QueryRefs = {
+  boards: Array<{ id: string; name: string } | { id: string; restricted: true }>;
+  columns: Array<{ id: string; name: string; board_id: string } | { id: string; restricted: true }>;
+  tags: Array<{ id: string; name: string; color: string; board_id: string } | { id: string; restricted: true }>;
+  users: Array<{ id: string; display_name: string } | { id: string; unknown: true }>;
+};
+
+export type QueryInput = {
+  q: string;
+  sort?: QuerySort;
+  group?: QueryGroup;
+  cursor?: string;
+  limit?: number;
+  /** IANA zone for today, week, and overdue; validated by the caller. */
+  tz: string;
+  now?: Date;
+};
+
+export type QueryResult = { query: string; cards: QueriedCard[]; nextCursor: string | null; total?: number; refs?: QueryRefs };
+
+const FLAG_ORDER = ["urgent", "blocked", "needs_review", "on_hold"];
+
+/** The wall time `HH:MM` in `tz` at `now`. */
+function timeInZone(now: Date, tz: string) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const part = (type: string) => parts.find((item) => item.type === type)!.value;
+  return `${part("hour")}:${part("minute")}`;
+}
+
+export function filterError(error: { code: string; message: string; position: number }) {
+  return new TaskError(400, error.message, error.code, { position: error.position });
+}
+
+/** Parses `q` strictly for a request; 400 `FILTER_INVALID`/`FILTER_UNSUPPORTED`/`FILTER_SCOPE` with `position`. */
+export function parseFilter(q: string) {
+  const parsed = parse(q);
+  if (!parsed.ok) throw filterError(parsed.error);
+  return parsed.query;
+}
+
+// Cursor: [1, key, ...sort values, id], base64url JSON. The key binds it to the canonical query, sort, group, and, for
+// date-relative queries, the caller's zone and date, so a cursor never continues a different question.
+const cursorKey = (parts: unknown[]) => createHash("sha256").update(JSON.stringify(parts)).digest("base64url").slice(0, 16);
+
+function encodeCursor(key: string, values: Binding[]) {
+  return Buffer.from(JSON.stringify([1, key, ...values])).toString("base64url");
+}
+
+const cursorInvalid = () => new TaskError(400, "The page cursor does not match this query. Start again from the first page.", "CURSOR_INVALID");
+
+function decodeCursor(value: string, key: string, width: number): Binding[] {
+  if (value.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(value)) throw cursorInvalid();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throw cursorInvalid();
+  }
+  if (!Array.isArray(parsed) || parsed[0] !== 1 || parsed[1] !== key || parsed.length !== width + 2) throw cursorInvalid();
+  const values = parsed.slice(2);
+  if (!values.every((item) => (typeof item === "string" && item.length <= 512) || (typeof item === "number" && Number.isFinite(item)))) throw cursorInvalid();
+  return values as Binding[];
+}
+
+/** `(a, b, id) after (x, y, z)` with a direction per part, expanded so mixed directions work. */
+function keysetAfter(parts: KeyPart[], names: string[]) {
+  const alternatives = parts.map((part, index) => {
+    const equal = parts.slice(0, index).map((earlier, at) => `${earlier.sql} = $${names[at]}`);
+    return `(${[...equal, `${part.sql} ${part.desc ? "<" : ">"} $${names[index]}`].join(" AND ")})`;
+  });
+  return `(${alternatives.join(" OR ")})`;
+}
+
+const dependsOnToday = (query: TaskQuery, group: QueryGroup) =>
+  group === "due" || query.terms.some((term) => term.key === "due" && term.values.some((value) => ["overdue", "today", "week", "next-week"].includes(value)));
+
+/**
+ * Runs a query as `userId` over live cards on boards they can read. Keyset
+ * pagination on the group, the sort, then the card id; at most 100 per page.
+ */
+export function queryCards(userId: string, input: QueryInput): QueryResult {
+  const query = parseFilter(input.q);
+  return runQuery(userId, query, input);
+}
+
+export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInput, "q">): QueryResult {
+  const sort = input.sort ?? "due";
+  const group = input.group ?? "none";
+  const limit = Math.min(Math.max(Math.trunc(input.limit ?? QUERY_PAGE.default), 1), QUERY_PAGE.max);
+  const now = input.now ?? new Date();
+  const today = dateInZone(now, input.tz);
+  const canonical = format(query);
+  const compiled = compileTaskQuery(query, { userId, today, nowTime: timeInZone(now, input.tz) });
+
+  const sortParts = SORT_PARTS[sort];
+  const parts: KeyPart[] = [...GROUP_PARTS[group], ...sortParts, { sql: "k.id", desc: sortParts[sortParts.length - 1]!.desc }];
+  const key = cursorKey([canonical, sort, group, ...(dependsOnToday(query, group) ? [input.tz, today] : [])]);
+  const params: Record<string, Binding> = { ...compiled.params, today, weekEnd: addQueryDays(today, 6) };
+  let after = "1";
+  if (input.cursor) {
+    const values = decodeCursor(input.cursor, key, parts.length);
+    const names = values.map((value, index) => {
+      params[`c${index}`] = value;
+      return `c${index}`;
+    });
+    after = keysetAfter(parts, names);
+  }
+  const from = `FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id
+    WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where})`;
+  const rows = db.query(`SELECT k.id, k.board_id, b.name AS board_name, k.column_id, col.name AS column_name, ${COLUMN_STATE} AS column_state, col.is_done,
+      k.position, k.title, k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
+      k.due_on, k.due_time, k.due_tz, k.created_at, k.updated_at,
+      ${parts.map((part, index) => `${part.sql} AS sk${index}`).join(", ")}
+    FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id LEFT JOIN users cu ON cu.id = k.created_by
+    WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where}) AND ${after}
+    ORDER BY ${parts.map((part) => `${part.sql} ${part.desc ? "DESC" : "ASC"}`).join(", ")}
+    LIMIT $pageLimit`).all({ ...params, pageLimit: limit + 1 }) as Array<Record<string, unknown>>;
+
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  const nextCursor = rows.length > limit && last ? encodeCursor(key, parts.map((_, index) => last[`sk${index}`] as Binding)) : null;
+  const result: QueryResult = { query: canonical, cards: withCardDetails(page), nextCursor };
+  if (!input.cursor) {
+    const counted = (db.query(`SELECT COUNT(*) AS count FROM (SELECT 1 ${from} LIMIT $cap)`).get({ ...compiled.params, cap: QUERY_TOTAL_CAP + 1 }) as { count: number }).count;
+    if (counted <= QUERY_TOTAL_CAP) result.total = counted;
+    result.refs = resolveRefs(userId, query);
+  }
+  return result;
+}
+
+/** Adds assignees, tags, and flags to a page with one grouped query each (no per-card subqueries). */
+function withCardDetails(rows: Array<Record<string, unknown>>): QueriedCard[] {
+  const ids = rows.map((row) => row.id as string);
+  const assignees = assigneesForCards(ids);
+  const json = JSON.stringify(ids);
+  const tags = new Map<string, QueriedCard["tags"]>();
+  for (const row of db.query(`SELECT ct.card_id, t.id, t.name, t.color FROM card_tags ct JOIN board_tags t ON t.id = ct.tag_id
+      WHERE ct.card_id IN (SELECT value FROM json_each(?)) ORDER BY ct.card_id, t.name COLLATE NOCASE, t.id`).all(json) as Array<{ card_id: string; id: string; name: string; color: string }>) {
+    const list = tags.get(row.card_id) ?? [];
+    list.push({ id: row.id, name: row.name, color: row.color });
+    tags.set(row.card_id, list);
+  }
+  const flags = new Map<string, string[]>();
+  for (const row of db.query("SELECT card_id, flag FROM card_flags WHERE card_id IN (SELECT value FROM json_each(?))").all(json) as Array<{ card_id: string; flag: string }>) {
+    const list = flags.get(row.card_id) ?? [];
+    list.push(row.flag);
+    flags.set(row.card_id, list);
+  }
+  return rows.map((row) => {
+    const card = Object.fromEntries(Object.entries(row).filter(([name]) => !/^sk\d+$/.test(name))) as Omit<QueriedCard, "due_at" | "assignees" | "tags" | "flags">;
+    return {
+      ...card,
+      due_at: dueAt(card),
+      assignees: assignees.get(card.id) ?? [],
+      tags: tags.get(card.id) ?? [],
+      flags: (flags.get(card.id) ?? []).sort((a, b) => FLAG_ORDER.indexOf(a) - FLAG_ORDER.indexOf(b))
+    };
+  });
+}
+
+/**
+ * Names for the ids a query mentions, per caller: boards, columns, and tags
+ * only when their board is readable (otherwise `restricted`, with no name);
+ * users by display name, as `GET /api/users` already shows them.
+ */
+export function resolveRefs(userId: string, query: TaskQuery): QueryRefs {
+  const valuesOf = (...keys: FilterTerm["key"][]) => [...new Set(query.terms.filter((term) => keys.includes(term.key)).flatMap((term) => term.values))];
+  const uuids = (values: string[]) => values.filter((value) => /^[0-9a-f-]{36}$/.test(value));
+  const boardIds = uuids(valuesOf("board"));
+  const columnIds = uuids(valuesOf("column"));
+  const tagIds = uuids(valuesOf("tag"));
+  const userIds = uuids(valuesOf("assignee", "creator"));
+  const readableBoards = new Map((db.query(`SELECT b.id, b.name FROM boards b WHERE b.id IN (SELECT value FROM json_each($ids)) AND ${readableBoardPredicate}`)
+    .all({ ids: JSON.stringify(boardIds), userId }) as Array<{ id: string; name: string }>).map((row) => [row.id, row]));
+  const readableColumns = new Map((db.query(`SELECT col.id, col.name, col.board_id FROM board_columns col JOIN boards b ON b.id = col.board_id
+      WHERE col.id IN (SELECT value FROM json_each($ids)) AND ${readableBoardPredicate}`)
+    .all({ ids: JSON.stringify(columnIds), userId }) as Array<{ id: string; name: string; board_id: string }>).map((row) => [row.id, row]));
+  const readableTags = new Map((db.query(`SELECT t.id, t.name, t.color, t.board_id FROM board_tags t JOIN boards b ON b.id = t.board_id
+      WHERE t.id IN (SELECT value FROM json_each($ids)) AND ${readableBoardPredicate}`)
+    .all({ ids: JSON.stringify(tagIds), userId }) as Array<{ id: string; name: string; color: string; board_id: string }>).map((row) => [row.id, row]));
+  const users = new Map((db.query("SELECT id, display_name FROM users WHERE id IN (SELECT value FROM json_each(?)) AND disabled_at IS NULL")
+    .all(JSON.stringify(userIds)) as Array<{ id: string; display_name: string }>).map((row) => [row.id, row]));
+  return {
+    boards: boardIds.map((id) => readableBoards.get(id) ?? { id, restricted: true as const }),
+    columns: columnIds.map((id) => readableColumns.get(id) ?? { id, restricted: true as const }),
+    tags: tagIds.map((id) => readableTags.get(id) ?? { id, restricted: true as const }),
+    users: userIds.map((id) => users.get(id) ?? { id, unknown: true as const })
+  };
+}

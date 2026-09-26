@@ -44,6 +44,13 @@ export function assigneesForBoard(boardId: string) {
   return group(db.query(`SELECT ${assigneeColumns} ${assigneeJoins} WHERE k.board_id = ? AND k.deleted_at IS NULL ${assigneeOrder}`).all(boardId) as AssigneeRow[]);
 }
 
+/** Assignees of the given cards (a query page, at most 100), in one grouped query bound as a JSON array. */
+export function assigneesForCards(cardIds: readonly string[]) {
+  if (!cardIds.length) return new Map<string, CardAssignee[]>();
+  return group(db.query(`SELECT ${assigneeColumns} ${assigneeJoins} WHERE ca.card_id IN (SELECT value FROM json_each(?)) ${assigneeOrder}`)
+    .all(JSON.stringify(cardIds)) as AssigneeRow[]);
+}
+
 export function assigneesForCard(cardId: string) {
   return group(db.query(`SELECT ${assigneeColumns} ${assigneeJoins} WHERE ca.card_id = ? ${assigneeOrder}`).all(cardId) as AssigneeRow[]).get(cardId) ?? [];
 }

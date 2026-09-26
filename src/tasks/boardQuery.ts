@@ -1,10 +1,11 @@
-// One pipeline for every board view (WAVE_13_TASK_CARD_UX.md §4.5, D113): filter with the shared
-// grammar (shared/taskQuery.ts), sort, then group for the list view. Pure, no DOM access.
+// One pipeline for every board view (WAVE_13_TASK_CARD_UX.md §4.5, D113): filter the loaded board
+// with the one task grammar (shared/taskQuery.ts), sort, then group for the list view. Pure, no
+// DOM access.
 //
 // Grouping and the filter bar run through two registries, GROUP_DIMENSIONS and FILTER_FIELDS. The
 // hierarchy wave (migration 019) adds `parent` and `sprint` entries to both (and to BOARD_GROUPS
 // in boardUrl.ts); the router, the filter bar, and the views need no rework.
-import { dueGroupOf, foldText, queryCards, sortCards, TASK_FLAGS, type CardFilter, type CardSortKey, type DueGroup, type FilterParamKey, type QueryCard, type RelationFilter, type TaskFlag } from "../../shared/taskQuery";
+import { cardFilterFromQuery, foldText, matchesQuery, queryCards, sortCards, TASK_FLAGS, validateQuery, type CardSortKey, type FilterKey, type FilterTerm, type MemoryQueryContext, type QueryCard, type TaskFlag, type TaskQuery, type TaskState } from "../../shared/taskQuery";
 import { byPosition } from "./boardOrder";
 import type { BoardGroupId, BoardQuery, BoardSort } from "./boardUrl";
 import { cardAssignees } from "./taskActions";
@@ -19,7 +20,7 @@ export type BoardTag = { id: string; board_id?: string; name: string; color: str
  * payload still renders.
  */
 export type BoardCardInput = CardSummary & Partial<{ description_excerpt: string; tag_ids: string[]; flags: string[]; relation_count: number; open_blockers: number }>;
-export type BoardCard = CardSummary & QueryCard & { assignees: CardAssignee[]; tag_ids: string[]; flags: string[] };
+export type BoardCard = CardSummary & QueryCard & { assignees: CardAssignee[]; tag_ids: string[]; flags: string[]; relation_count?: number; open_blockers?: number };
 export type BoardData = { columns: BoardColumn[]; cards: BoardCard[]; tags: BoardTag[] };
 
 /** The viewer: `today` is their local date, `now` their clock, `timeZone` their zone (for timed cards). */
@@ -41,7 +42,7 @@ export function boardData(detail: Pick<BoardDetail, "columns" | "cards"> & { tag
 }
 
 export const FLAG_LABELS: Record<TaskFlag, string> = { urgent: "Urgent", blocked: "Blocked", needs_review: "Needs review", on_hold: "On hold" };
-export const DUE_GROUP_LABELS: Record<DueGroup, string> = { overdue: "Overdue", today: "Today", week: "This week", later: "Later", none: "No date" };
+export const DUE_GROUP_LABELS: Record<string, string> = { overdue: "Overdue", today: "Today", week: "Next 7 days", later: "Later", none: "No date" };
 export const UNKNOWN_TAG = "Unknown tag";
 export const UNKNOWN_PERSON = "Unknown person";
 
@@ -56,16 +57,42 @@ function peopleOf(board: BoardData) {
 
 export function personLabel(id: string, board: BoardData, context: Pick<BoardContext, "userId">) {
   if (id === "none") return "No assignee";
-  if (id === "me" || id === context.userId) return id === "me" ? "Me" : `${peopleOf(board).get(id) ?? "You"} (you)`;
+  if (id === "me") return "Me";
+  if (id === context.userId) return `${peopleOf(board).get(id) ?? "You"} (you)`;
   return peopleOf(board).get(id) ?? UNKNOWN_PERSON;
 }
 
-export function tagLabel(id: string, board: BoardData) {
-  if (id === "none") return "No tag";
-  return board.tags.find((tag) => tag.id === id)?.name ?? UNKNOWN_TAG;
+/** A tag id (or a tag name from a typed query) as its board name. */
+export function tagLabel(value: string, board: BoardData) {
+  if (value === "none") return "No tag";
+  const tag = board.tags.find((item) => item.id === value) ?? board.tags.find((item) => item.name.toLowerCase() === value.toLowerCase());
+  return tag?.name ?? UNKNOWN_TAG;
 }
 
 export const flagLabel = (value: string) => value === "none" ? "No flag" : FLAG_LABELS[value as TaskFlag] ?? value;
+
+/** The context `matchesQuery` needs for this board and viewer. */
+export function memoryContext(board: BoardData, context: BoardContext): MemoryQueryContext {
+  const columnStates: Record<string, TaskState> = {};
+  for (const column of board.columns) {
+    // `state` arrived with migration 020 (17C); an older payload derives it from `is_done`.
+    const state = (column as BoardColumn & { state?: TaskState }).state;
+    columnStates[column.id] = state ?? (column.is_done === 1 ? "done" : "doing");
+  }
+  return { userId: context.userId, today: context.today, now: context.now, tags: board.tags, columnStates };
+}
+
+export type DueGroup = "overdue" | "today" | "week" | "later" | "none";
+
+/** The one due group of a card (the list's buckets), consistent with the `due:` filter windows. */
+export function dueGroupOf(card: BoardCard, board: BoardData, context: BoardContext): DueGroup {
+  if (!card.due_on) return "none";
+  const memory = memoryContext(board, context);
+  const inWindow = (value: string) => matchesQuery(card, { terms: [{ key: "due", negate: false, values: [value] }] }, memory);
+  if (inWindow("overdue")) return "overdue";
+  if (card.due_on === context.today) return "today";
+  return inWindow("week") ? "week" : "later";
+}
 
 export type GroupDimension = {
   label: string;
@@ -110,8 +137,8 @@ export const GROUP_DIMENSIONS: Record<BoardGroupId, GroupDimension> = {
   },
   due: {
     label: "Due date",
-    keysFor: (card, _board, context) => [dueGroupOf(card, context)],
-    labelFor: (key) => DUE_GROUP_LABELS[key as DueGroup] ?? key,
+    keysFor: (card, board, context) => [dueGroupOf(card, board, context)],
+    labelFor: (key) => DUE_GROUP_LABELS[key] ?? key,
     order: (keys) => {
       const order: DueGroup[] = ["overdue", "today", "week", "later", "none"];
       return [...keys].sort((a, b) => order.indexOf(a as DueGroup) - order.indexOf(b as DueGroup));
@@ -122,62 +149,38 @@ export const GROUP_DIMENSIONS: Record<BoardGroupId, GroupDimension> = {
 export type FilterOption = { value: string; label: string; swatch?: string };
 
 /**
- * A field of the filter bar. `get` and `set` read and write its values in the shared filter;
- * `match` is only for a field outside the shared grammar (applied after it). Values within a field
- * are OR-ed and fields are AND-ed (§4.6).
+ * A field of the filter bar: one grammar key, edited as one positive term whose values OR
+ * together (terms AND, §4.6). `match` is only for a field the grammar does not have yet (a
+ * hierarchy stub), applied after the grammar.
  */
 export type FilterField = {
   label: string;
-  param: FilterParamKey | string;
-  get: (filter: CardFilter) => readonly string[];
-  set: (filter: CardFilter, values: string[]) => CardFilter;
+  key: FilterKey | string;
   optionsFor: (board: BoardData, context: BoardContext) => FilterOption[];
   labelFor: (value: string, board: BoardData, context: BoardContext) => string;
   match?: (card: BoardCard, values: readonly string[], board: BoardData) => boolean;
 };
-
-/** Sets or removes one key of a filter (an empty list removes it). */
-function withKey<K extends keyof CardFilter>(filter: CardFilter, key: K, value: CardFilter[K] | undefined): CardFilter {
-  const next = { ...filter };
-  if (value === undefined || (Array.isArray(value) && value.length === 0)) delete next[key];
-  else next[key] = value;
-  return next;
-}
-
-/** The due field's values as the URL spells them (`before:…`, `after:…`, `none`, buckets). */
-export function dueValues(filter: CardFilter): string[] {
-  const due = filter.due;
-  if (!due) return [];
-  return [...(due.buckets ?? []), ...(due.before ? [`before:${due.before}`] : []), ...(due.after ? [`after:${due.after}`] : []), ...(due.none ? ["none"] : [])];
-}
-
-function withDueValues(filter: CardFilter, values: string[]): CardFilter {
-  const buckets = values.filter((value) => value === "overdue" || value === "today" || value === "week") as Array<"overdue" | "today" | "week">;
-  const before = values.find((value) => value.startsWith("before:"))?.slice(7);
-  const after = values.find((value) => value.startsWith("after:"))?.slice(6);
-  const due = { ...(before ? { before } : {}), ...(after ? { after } : {}), ...(values.includes("none") ? { none: true } : {}), ...(buckets.length ? { buckets } : {}) };
-  return withKey(filter, "due", Object.keys(due).length ? due : undefined);
-}
 
 const shortDate = (date: string) => {
   const [year, month, day] = date.split("-").map(Number) as [number, number, number];
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, day)));
 };
 
+/** A canonical `due:` value in words: "overdue", "before Oct 1, 2026", "no date". */
 export function dueValueLabel(value: string) {
-  if (value.startsWith("before:")) return `before ${shortDate(value.slice(7))}`;
-  if (value.startsWith("after:")) return `after ${shortDate(value.slice(6))}`;
-  return { overdue: "overdue", today: "today", week: "this week", none: "no date" }[value] ?? value;
+  if (value.startsWith("<")) return `before ${shortDate(value.slice(1))}`;
+  if (value.startsWith(">")) return `after ${shortDate(value.slice(1))}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `on ${shortDate(value)}`;
+  return ({ overdue: "overdue", today: "today", week: "in the next 7 days", "next-week": "in the 7 days after", none: "no date" } as Record<string, string>)[value] ?? value;
 }
 
-export const RELATION_LABELS: Record<RelationFilter, string> = { any: "has relations", blocked: "is blocked", none: "has no relations" };
+export const HAS_LABELS: Record<string, string> = { relation: "has relations", blocked: "is blocked" };
+const STATE_LABELS: Record<string, string> = { todo: "to do", doing: "in progress", done: "done" };
 
 export const FILTER_FIELDS: Record<string, FilterField> = {
   assignee: {
     label: "Assignee",
-    param: "assignee",
-    get: (filter) => filter.assignees ?? [],
-    set: (filter, values) => withKey(filter, "assignees", values),
+    key: "assignee",
     optionsFor: (board, context) => [
       { value: "me", label: "Me" },
       ...[...peopleOf(board).entries()].filter(([id]) => id !== context.userId).map(([id, name]) => ({ value: id, label: name })).sort((a, b) => byName(a.label, b.label)),
@@ -187,45 +190,93 @@ export const FILTER_FIELDS: Record<string, FilterField> = {
   },
   tag: {
     label: "Tag",
-    param: "tag",
-    get: (filter) => filter.tags ?? [],
-    set: (filter, values) => withKey(filter, "tags", values),
+    key: "tag",
     optionsFor: (board) => [...[...board.tags].sort((a, b) => byName(a.name, b.name)).map((tag) => ({ value: tag.id, label: tag.name, swatch: tag.color })), { value: "none", label: "No tag" }],
     labelFor: (value, board) => tagLabel(value, board)
   },
   flag: {
     label: "Flag",
-    param: "flag",
-    get: (filter) => filter.flags ?? [],
-    set: (filter, values) => withKey(filter, "flags", values as Array<TaskFlag | "none">),
+    key: "flag",
     optionsFor: () => [...TASK_FLAGS.map((flag) => ({ value: flag, label: FLAG_LABELS[flag] })), { value: "none", label: "No flag" }],
     labelFor: (value) => flagLabel(value)
   },
   due: {
     label: "Due",
-    param: "due",
-    get: dueValues,
-    set: withDueValues,
-    optionsFor: () => [{ value: "overdue", label: "Overdue" }, { value: "today", label: "Today" }, { value: "week", label: "This week" }, { value: "none", label: "No date" }],
+    key: "due",
+    optionsFor: () => [
+      { value: "overdue", label: "Overdue" }, { value: "today", label: "Today" }, { value: "week", label: "Next 7 days" },
+      { value: "next-week", label: "The 7 days after" }, { value: "none", label: "No date" }
+    ],
     labelFor: (value) => dueValueLabel(value)
   },
   column: {
     label: "Column",
-    param: "column",
-    get: (filter) => filter.columns ?? [],
-    set: (filter, values) => withKey(filter, "columns", values),
+    key: "column",
     optionsFor: (board) => board.columns.map((column) => ({ value: column.id, label: column.name })),
     labelFor: (value, board) => board.columns.find((column) => column.id === value)?.name ?? "Unknown column"
   },
-  rel: {
+  has: {
     label: "Relations",
-    param: "rel",
-    get: (filter) => filter.relations ?? [],
-    set: (filter, values) => withKey(filter, "relations", values as RelationFilter[]),
-    optionsFor: () => [{ value: "any", label: "Has relations" }, { value: "blocked", label: "Is blocked" }, { value: "none", label: "Has no relations" }],
-    labelFor: (value) => RELATION_LABELS[value as RelationFilter] ?? value
+    key: "has",
+    optionsFor: () => [{ value: "relation", label: "Has relations" }, { value: "blocked", label: "Is blocked" }],
+    labelFor: (value) => HAS_LABELS[value] ?? value
   }
 };
+
+/** A term value in words, for chips; also for keys the bar does not offer but a shared URL may carry. */
+export function termValueLabel(key: string, value: string, board: BoardData, context: BoardContext) {
+  const field = FILTER_FIELDS[key];
+  if (field) return field.labelFor(value, board, context);
+  if (key === "state") return STATE_LABELS[value] ?? value;
+  if (key === "creator") return personLabel(value, board, context);
+  if (key === "board") return "this board";
+  return value;
+}
+
+/** The label of a term's field, for chips ("Assignee", "Text", "State"). */
+export function termFieldLabel(key: string) {
+  return FILTER_FIELDS[key]?.label ?? ({ text: "Text", state: "State", creator: "Created by", board: "Board" } as Record<string, string>)[key] ?? key;
+}
+
+/** The values of the positive term for `key` (the one the bar edits), or []. */
+export function termValues(query: TaskQuery, key: string): string[] {
+  return query.terms.find((term) => term.key === key && !term.negate)?.values ?? [];
+}
+
+/** Re-validates a hand-built query with the grammar's own rules (board-scoped, lenient), so it stays canonical. */
+function canonical(terms: FilterTerm[]): TaskQuery {
+  const parsed = validateQuery({ terms }, { boardScoped: true, lenient: true });
+  return parsed.ok ? parsed.query : { terms: [] };
+}
+
+/** Replaces the positive term for `key` with `values` (or removes it when empty), keeping every other term. */
+export function withTermValues(query: TaskQuery, key: FilterKey, values: readonly string[]): TaskQuery {
+  const others = query.terms.filter((term) => term.key !== key || term.negate);
+  return canonical(values.length ? [...others, { key, negate: false, values: [...values] }] : others);
+}
+
+/** Removes one term (a chip's ×). */
+export function withoutTerm(query: TaskQuery, index: number): TaskQuery {
+  return canonical(query.terms.filter((_, at) => at !== index));
+}
+
+/** The positive text term (the filter box), or "". */
+export const textTerm = (query: TaskQuery) => termValues(query, "text")[0] ?? "";
+
+/** Sets or clears the positive text term (1–100 characters). */
+export const withText = (query: TaskQuery, text: string) => withTermValues(query, "text", text.trim() ? [text.trim().slice(0, 100)] : []);
+
+/**
+ * The board's cards a query keeps, in board order. A query the structured filter models runs
+ * through `queryCards` (the 13C pipeline, with its SQL parity test); any other (negation, relative
+ * due windows, `has:`, tag names, `state:`) runs through the grammar's in-memory matcher.
+ */
+export function filterBoardCards(board: BoardData, query: TaskQuery, context: BoardContext): BoardCard[] {
+  const structured = cardFilterFromQuery(query);
+  if (structured) return queryCards(board.cards, board.columns, structured, { userId: context.userId });
+  const memory = memoryContext(board, context);
+  return sortCards(board.cards.filter((card) => matchesQuery(card, query, memory)), board.columns);
+}
 
 const compareText = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 
@@ -268,12 +319,12 @@ export type BoardRegistries = { groups: Record<string, GroupDimension>; filters:
 export const BOARD_REGISTRIES: BoardRegistries = { groups: GROUP_DIMENSIONS, filters: FILTER_FIELDS };
 
 /**
- * The cards a view shows, in order, and for the list view their groups. Filters run first with
- * the shared grammar (and any registry field with its own `match`), then the sort, then grouping
- * (`query.group`, by column by default).
+ * The cards a view shows, in order, and for the list view their groups. Filters run first (the
+ * grammar, then any registry field with its own `match` over `extra`), then the sort, then
+ * grouping (`query.group`, by column by default).
  */
 export function applyBoardQuery(board: BoardData, query: Pick<BoardQuery, "view" | "group" | "sort" | "filter"> & { extra?: Record<string, readonly string[]> }, context: BoardContext, registries: BoardRegistries = BOARD_REGISTRIES): BoardQueryResult {
-  let cards = queryCards(board.cards, board.columns, query.filter, { userId: context.userId, today: context.today, now: context.now, timeZone: context.timeZone });
+  let cards = filterBoardCards(board, query.filter, context);
   for (const [id, values] of Object.entries(query.extra ?? {})) {
     const field = registries.filters[id];
     if (field?.match && values.length) cards = cards.filter((card) => field.match!(card, values, board));

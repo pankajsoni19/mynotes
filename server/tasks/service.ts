@@ -1,7 +1,7 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { withResourceLock } from "../storage";
-import { readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardVisibility, type ColumnRow } from "./access";
+import { readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardVisibility, type ColumnRow, type ColumnState } from "./access";
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
 import { dueAt, resolveDue, type DueInput } from "./dueTime";
@@ -31,6 +31,8 @@ export class TaskError extends Error {
 
 export const LIMITS = { boardsPerOwner: 50, columnsPerBoard: 20, liveCardsPerBoard: 1000, commentsPerCard: 500, attachmentsPerCard: 50, attachmentsPerComment: 10 } as const;
 export const DEFAULT_COLUMNS = ["To do", "Doing", "Done"] as const;
+/** The normalized state of each default column (migration 020, D141). */
+const DEFAULT_COLUMN_STATES: readonly ColumnState[] = ["todo", "doing", "done"];
 
 const boardNotFound = () => new TaskError(404, "Board not found");
 const columnNotFound = () => new TaskError(404, "Column not found");
@@ -53,7 +55,7 @@ export type BoardSummary = {
   updated_at: string;
 };
 
-export type ColumnSummary = Pick<ColumnRow, "id" | "board_id" | "name" | "position" | "is_done" | "wip_limit" | "created_at" | "updated_at">;
+export type ColumnSummary = Pick<ColumnRow, "id" | "board_id" | "name" | "position" | "is_done" | "state" | "wip_limit" | "created_at" | "updated_at">;
 
 const boardSummarySelect = `
   SELECT b.id, b.name, b.owner_id, u.display_name AS owner_name,
@@ -74,7 +76,7 @@ export function listBoards(userId: string) {
 }
 
 export function listColumns(boardId: string) {
-  return db.query("SELECT id, board_id, name, position, is_done, wip_limit, created_at, updated_at FROM board_columns WHERE board_id = ? ORDER BY position, id")
+  return db.query("SELECT id, board_id, name, position, is_done, state, wip_limit, created_at, updated_at FROM board_columns WHERE board_id = ? ORDER BY position, id")
     .all(boardId) as ColumnSummary[];
 }
 
@@ -192,9 +194,12 @@ export function createBoard(userId: string, name: string) {
     const id = crypto.randomUUID();
     const timestamp = now();
     db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(id, userId, name, timestamp, timestamp);
-    const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    // The default "Done" column is a done column (D53), as the 011 backfill does for existing boards.
-    DEFAULT_COLUMNS.forEach((columnName, index) => insertColumn.run(crypto.randomUUID(), id, columnName, (index + 1) * 1024, columnName === "Done" ? 1 : 0, timestamp, timestamp));
+    const insertColumn = db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    // The default "Done" column is a done column (D53), as the 011 backfill does for existing boards; states follow D141.
+    DEFAULT_COLUMNS.forEach((columnName, index) => {
+      const state = DEFAULT_COLUMN_STATES[index]!;
+      insertColumn.run(crypto.randomUUID(), id, columnName, (index + 1) * 1024, state === "done" ? 1 : 0, state, timestamp, timestamp);
+    });
     audit(userId, null, "task.board_create", { boardId: id });
     return { board: boardSummary(id, userId)!, columns: listColumns(id) };
   })();
@@ -262,7 +267,7 @@ export async function putSharing(userId: string, boardId: string, visibility: Bo
   });
 }
 
-export function applyRenumber(table: "board_columns" | "cards", renumbered: Positioned[] | null) {
+export function applyRenumber(table: "board_columns" | "cards" | "task_views", renumbered: Positioned[] | null) {
   if (!renumbered) return false;
   const statement = db.query(`UPDATE ${table} SET position = ? WHERE id = ?`);
   for (const item of renumbered) statement.run(item.position, item.id);
@@ -280,7 +285,8 @@ export function createColumn(userId: string, boardId: string, input: { name: str
     db.transaction(() => {
       applyRenumber("board_columns", plan.renumbered);
       const timestamp = now();
-      db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      // A new column is a doing column (not done), whatever its place; the owner changes it (D141).
+      db.query("INSERT INTO board_columns (id, board_id, name, position, is_done, state, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 'doing', ?, ?)")
         .run(id, boardId, input.name, plan.position, timestamp, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
       audit(userId, null, "task.column_create", { boardId, columnId: id });
@@ -297,10 +303,28 @@ function requireOwnedColumn(columnId: string, userId: string) {
   return found;
 }
 
-export async function patchColumn(userId: string, columnId: string, input: { name?: string; afterColumnId?: string | null; isDone?: boolean; wipLimit?: number | null }) {
+/**
+ * The state and done flag a column patch writes together (D141, T121), or null
+ * when it changes neither. `state` wins and sets `is_done`; `isDone` alone sets
+ * done, or, when turned off, todo for the board's first column and doing
+ * otherwise (the 020 backfill rule). Conflicting values are 400.
+ */
+function nextColumnState(column: ColumnRow, siblings: ColumnSummary[], input: { isDone?: boolean; state?: ColumnState }): ColumnState | null {
+  if (input.state !== undefined) {
+    if (input.isDone !== undefined && input.isDone !== (input.state === "done")) throw new TaskError(400, "isDone and state disagree");
+    return input.state;
+  }
+  if (input.isDone === undefined) return null;
+  if (input.isDone) return "done";
+  if (column.state !== "done") return column.state;
+  const first = siblings.length === 0 || siblings.every((other) => other.position > column.position);
+  return first ? "todo" : "doing";
+}
+
+export async function patchColumn(userId: string, columnId: string, input: { name?: string; afterColumnId?: string | null; isDone?: boolean; state?: ColumnState; wipLimit?: number | null }) {
   const { board } = requireOwnedColumn(columnId, userId);
   return withBoardLock(board.id, () => {
-    requireOwnedColumn(columnId, userId);
+    const { column } = requireOwnedColumn(columnId, userId);
     const siblings = listColumns(board.id).filter((column) => column.id !== columnId);
     let plan = null as ReturnType<typeof planInsert>;
     if (input.afterColumnId !== undefined) {
@@ -308,15 +332,18 @@ export async function patchColumn(userId: string, columnId: string, input: { nam
       plan = planInsert(siblings, input.afterColumnId);
       if (!plan) throw columnNotFound();
     }
+    const state = nextColumnState(column, siblings, input);
     db.transaction(() => {
       const timestamp = now();
       if (input.name !== undefined) {
         db.query("UPDATE board_columns SET name = ?, updated_at = ? WHERE id = ?").run(input.name, timestamp, columnId);
         audit(userId, null, "task.column_rename", { boardId: board.id, columnId });
       }
-      if (input.isDone !== undefined) {
-        db.query("UPDATE board_columns SET is_done = ?, updated_at = ? WHERE id = ?").run(input.isDone ? 1 : 0, timestamp, columnId);
-        audit(userId, null, "task.column_done", { boardId: board.id, columnId, isDone: input.isDone });
+      if (state !== null) {
+        // One statement writes both, so `is_done = (state = 'done')` always holds (T121).
+        db.query("UPDATE board_columns SET state = ?, is_done = ?, updated_at = ? WHERE id = ?").run(state, state === "done" ? 1 : 0, timestamp, columnId);
+        if (input.isDone !== undefined) audit(userId, null, "task.column_done", { boardId: board.id, columnId, isDone: state === "done" });
+        if (input.state !== undefined) audit(userId, null, "task.column_state", { boardId: board.id, columnId, state });
       }
       if (input.wipLimit !== undefined) {
         // A limit may be set below the current count; it only blocks cards coming in (D108).

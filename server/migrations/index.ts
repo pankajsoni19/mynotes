@@ -16,8 +16,11 @@ import { eventNextOccurrenceMigration } from "./014_event_next_occurrence";
 import { taskCardUxMigration } from "./015_task_card_ux";
 import { userPreferencesMigration } from "./016_user_preferences";
 import { teamRolesMigration } from "./017_team_roles";
+import { taskViewsMigration } from "./020_task_views";
 
-const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration];
+const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
+  // 018 (Team invites) and 019 (task hierarchy) come from parallel waves; 020 (task views) does not depend on them.
+  taskViewsMigration];
 
 /**
  * Ids of every registered migration, in order. Tests assert against this list. Ids must ascend;

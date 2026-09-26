@@ -306,6 +306,7 @@ type BoardColumn = {
   id: string; board_id: string; name: string /* 1–60 */; position: number;
   is_done: 0 | 1;                    // migration 011
   wip_limit: number | null;          // Wave 13 (D108): 1–1000, or null for no limit
+  state: "todo" | "doing" | "done";  // migration 020 (D141); is_done = (state = "done")
   created_at: string; updated_at: string;
 };
 ```
@@ -338,7 +339,7 @@ Same rules as folder sharing: the owner cannot be a recipient (400), `selected` 
 | Endpoint | Who | Success | Errors |
 | --- | --- | --- | --- |
 | `POST /boards/:b/columns { name, afterColumnId? }` | owner | 201 `{ column, columns }`. Omitted `afterColumnId` appends; `null` puts the column first. | 400, 403, 404 (board, or an anchor not on this board), 409 `LIMIT_REACHED` |
-| `PATCH /columns/:c { name?, afterColumnId?, isDone?, wipLimit? }` | owner | 200 `{ column, columns, renormalized? }`. Columns carry `is_done: 0 \| 1` (migration 011); a new board's Done column starts at 1. `wipLimit` is an integer 1–1000 or `null` (Wave 13, D108) and may be set below the current count. | 400 (no field, after itself, or a bad limit), 403, 404 |
+| `PATCH /columns/:c { name?, afterColumnId?, isDone?, state?, wipLimit? }` | owner | 200 `{ column, columns, renormalized? }`. Columns carry `is_done: 0 \| 1` (migration 011); a new board's Done column starts at 1. `wipLimit` is an integer 1–1000 or `null` (Wave 13, D108) and may be set below the current count. | 400 (no field, after itself, or a bad limit), 403, 404 |
 | `DELETE /columns/:c` | owner | 200 `{ ok: true, columns }` | 403, 404, 409 `COLUMN_NOT_EMPTY` (with `cardCount`) or `LAST_COLUMN` |
 
 Binned cards do not block deleting their column; they keep `column_id = NULL` and restore to the first column.
@@ -490,6 +491,104 @@ type CardAttachment = {
 - Inline images in a description use the same content URL, `/api/files/:id/content?disposition=inline`.
 
 **Audit** (ids only, never names or text): `task.board_create`, `task.board_rename`, `task.board_delete`, `task.board_sharing_changed { boardId, visibility, recipientCount }`, `task.column_create`, `task.column_rename`, `task.column_move`, `task.column_delete`, `task.column_wip { wipLimit }`, `task.card_create { assigneesAdded? }`, `task.card_update { dueOn?, dueTime?: "set" | "cleared", assigneeId?, assigneesAdded?, assigneesRemoved? }` (counts, not ids), `task.card_move { boardId, cardId, columnId }`, `task.card_delete`, and `task.comment_create` / `task.comment_update` / `task.comment_delete { boardId, cardId, commentId }`, `task.attachment_link` / `task.attachment_unlink { boardId, cardId, documentId, commentId? }`, `task.relation_create` / `task.relation_delete { boardId, cardId, relationId, kind }` (`boardId` and `cardId` are the path card's, `kind` the stored kind), and `document.delete { documentId, reason: "attachment_unlinked" }` when an unlinked file moves to the Bin, each with `{ boardId, columnId?, cardId? }`.
+### Filter grammar (sub-wave 17C, D137, D140–D145)
+
+One grammar for the board filter bar (13E), cross-board queries, saved views, URLs, and MCP. It lives in `shared/taskQuery.ts`, a pure module that the server and the client both import (research 2026-09-26 §10.3, Q10). A query is terms separated by spaces: **terms AND together**, the **values of one term OR together**, and a leading `-` negates a term.
+
+```text
+assignee:me state:todo,doing due:overdue,week
+board:<uuid> column:<uuid> -tag:"Needs design",none flag:blocked "invoice"
+```
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `board` | uuid | the card's board. A board the caller cannot read matches nothing (never an error) |
+| `state` | `todo`, `doing`, `done` | the column's normalized state (migration 020) |
+| `column` | uuid | only with exactly one positive `board:` value (or on a board page), else 400 `FILTER_SCOPE` |
+| `assignee` | `me`, `none`, uuid | any assignee matches; `none` = no assignees |
+| `creator` | `me`, uuid | who created the card |
+| `tag` | `none`, uuid, or a name (1–40) | names match board tags case-insensitively, so one name works across boards |
+| `flag` | `urgent`, `blocked`, `needs_review`, `on_hold`, `none` | the manual card flags |
+| `due` | `overdue`, `today`, `week`, `next-week`, `none`, `YYYY-MM-DD`, `<YYYY-MM-DD`, `>YYYY-MM-DD` | relative values use the caller's `tz`; `week` is today plus six days, `next-week` the seven after; `overdue` is a date before today, or a timed card due today whose wall time has passed. `before:D`/`after:D` are accepted as `<D`/`>D` |
+| `has` | `relation`, `blocked` | any visible relation; an open `depends_on` blocker |
+| text | `"quoted phrase"` or a bare word | the title or the description excerpt contains it (case-insensitive `instr`, no wildcards) |
+
+- **Reserved keys.** `parent:`, `level:`, `sprint:`, and `has:subtasks` arrive with 17A/17B (D137) and are refused with `FILTER_UNSUPPORTED` until then.
+- **Canonical form.** `format` orders terms by key (`board state column assignee creator tag flag due has text`, positive before negated), dedupes and sorts values, lowercases ids and keywords, and always quotes text. URLs (`?q=`), `task_views.query`, and MCP carry the canonical form.
+- **Limits.** At most 2000 characters, 20 terms, 20 values per term, 100 characters per text term. No control or bidi characters.
+- **Errors.** `{ code: "FILTER_INVALID" | "FILTER_UNSUPPORTED" | "FILTER_SCOPE", message, position }`, where `position` is the character offset.
+- **One grammar with the Wave 13 structured filter.** The same module holds 13C's `CardFilter` and board pipeline (`queryCards`, `sortCards`, used by the client and mirrored by `list_cards` in `server/tasks/cardQuery.ts`). `queryFromCardFilter` gives a structured filter its canonical text, and `cardFilterFromQuery` turns a board-scoped query back into a `CardFilter`, or `null` when it uses what the board pipeline does not model (negation, `board:`, `state:`, `creator:`, `has:`, tag names, relative due windows, repeated keys); those run on the server. `tests/taskQueryParity.test.ts` checks that the three paths agree.
+- **URL codec.** `?q=` carries the canonical grammar and is the only filter parameter written. Decoding is lenient (bad terms and values are dropped) and still reads the Wave 13 per-key parameters (`assignee`, `tag`, `flag`, `due`, `column`, `rel=any|blocked|none`, plus `board` and `state`), so older links keep working. Other parameters (`view`, `layout`, `group`, `sort`) are left alone.
+
+### Cross-board card query (sub-wave 17C, D144)
+
+`POST /api/tasks/query` is a read sent as POST (like the Collections query). Any signed-in user; the usual session, Origin, and CSRF rules apply.
+
+| Body | Result | Errors |
+| --- | --- | --- |
+| `{ q?: string (grammar, ≤ 2000, default ""), sort?: "due" \| "updated" \| "created" \| "title" \| "board" (default due), group?: "none" \| "board" \| "state" \| "due", cursor?, limit?: 1–100 (default 50), tz?: IANA (default UTC) }` (no other keys) | `{ query, cards: QueriedCard[], nextCursor: string \| null, total?, refs? }` | 400 `FILTER_INVALID` / `FILTER_UNSUPPORTED` / `FILTER_SCOPE` `{ position }`, 400 `CURSOR_INVALID`, 400 (body), 429 `RATE_LIMITED` with `Retry-After` (30 per 10 s per user) |
+
+```ts
+type QueriedCard = {
+  id; board_id; board_name; column_id; column_name; column_state: "todo" | "doing" | "done"; is_done: 0 | 1;
+  position; title; description_excerpt; revision; created_by; creator_name;
+  due_on; due_time; due_tz; due_at;                  // as on the board (Wave 13)
+  assignees: CardAssignee[];                         // with can_read, as on the board
+  tags: { id; name; color }[]; flags: Flag[];        // flags in the fixed order
+  created_at; updated_at;
+};
+type QueryRefs = {                                   // first page only: what the query's ids mean to this caller (T116)
+  boards:  ({ id; name } | { id; restricted: true })[];
+  columns: ({ id; name; board_id } | { id; restricted: true })[];
+  tags:    ({ id; name; color; board_id } | { id; restricted: true })[];
+  users:   ({ id; display_name } | { id; unknown: true })[];   // the exposure of GET /api/users
+};
+```
+
+- **Column state.** `state:` and `column_state` read `board_columns.state` (migration 020).
+- **Access.** Only live cards on live boards the caller can read (`readableBoardPredicate`), ANDed before any filter, sort, or limit. A board, column, or tag id the caller cannot read matches nothing and resolves as `restricted`, exactly like an id that does not exist.
+- **Order and paging.** Keyset pagination on the group key, then the sort key, then the card id. `due` sorts by date then time with undated cards last; `updated` and `created` are newest first; `title` is case-insensitive; `board` is board name, column position, card position. `group` orders by the group first (board name; state todo → doing → done; due bucket overdue → today → this week → later → none), so a group is one contiguous run across pages; assignee and tag grouping are done by the client within the loaded cards. `nextCursor` is opaque and only continues the same canonical query, sort, and group (and, for date-relative queries, the same zone and date); anything else is `CURSOR_INVALID`.
+- **`total`** is on the first page only, when at most 1000 cards match. `refs` is on the first page only.
+- **Relations** (`has:`) follow the per-viewer relation rules (WAVE_13 D105): a relation to a card the caller cannot read counts, one to a readable binned card does not. `has:blocked` counts only readable, live `depends_on` cards outside a done column.
+- **Text** uses ASCII case folding (SQLite `lower`), as the Collections query does; accented capitals and accents do not fold here, while the board pipeline and `list_cards` fold accents in JavaScript. Keyset paging needs the match in SQL, so the cross-board query keeps the SQL match.
+
+### Saved views (sub-wave 17C, D140, migration 020)
+
+A view stores a **question, not an answer**: a name, a canonical filter, and display options. Running it always runs the stored filter **as the viewer**, through the same code as `POST /api/tasks/query`, so sharing a view never shows anyone cards from boards they cannot read (T115). Views are configuration, not content: they are not Bin items.
+
+```ts
+type TaskView = {
+  id; name /* 1–80, trimmed, no control characters */; owner_id; owner_name; is_owner: 0 | 1;
+  visibility: "private" | "selected" | "all_users";
+  query: string;                                   // canonical grammar
+  display: { layout: "list" | "table" | "board"; group: "none" | "board" | "state" | "due" | "assignee" | "tag";
+             sort: "due" | "updated" | "created" | "title" | "board";
+             fields?: ("board" | "column" | "state" | "assignees" | "due" | "tags" | "flags" | "updated")[] };
+  position: number; revision: number; created_at; updated_at;
+};
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /views` | any | `{ mine, shared, everyone, truncated }`: the caller's views by position; views shared with them (`selected`) and `all_users` views of others, by name, at most 200 each | — |
+| `POST /views { name, query, display? }` | any | 201 `{ view }`, private, at the end of the caller's list. `query` is stored canonical; `display` defaults to list, no group, sort by due | 400 (body, `FILTER_*` with `position`), 409 `LIMIT_REACHED` (50 per owner) |
+| `GET /views/:v` | reader | `{ view }` | 404 |
+| `PATCH /views/:v { name?, query?, display?, afterViewId?, revision }` | owner | `{ view }` with `revision + 1`. `display` merges into the stored one; `afterViewId` reorders among the owner's views (`null` = first) | 400, 403 `OWNER_ONLY`, 404 (view or anchor), 409 `VIEW_CHANGED` with the current `view` |
+| `DELETE /views/:v` | owner | `{ ok: true }` (the client offers Undo by re-creating the same body) | 403, 404 |
+| `GET /views/:v/sharing` / `PUT /views/:v/sharing { visibility, userIds ≤ 100 }` | owner | `{ visibility, users: { id, display_name }[] }` / `{ ok: true }`, as board sharing | 400 (owner as recipient, `selected` without users, unknown or disabled users), 403, 404 |
+| `POST /views/:v/duplicate` | reader | 201 `{ view }`: a private copy owned by the caller, named "… (copy)" | 404, 409 `LIMIT_REACHED` |
+| `GET /views/:v/cards?cursor&limit&tz` | reader | `{ view, query, cards, nextCursor, total?, refs? }`: the stored filter run as the caller with the view's sort and server-side group (`board`, `state`, `due`; `assignee` and `tag` group on the client) | 400, 404, 429 (shares the query limit) |
+
+- **Readers** are the owner, members for `selected`, and everyone for `all_users`, while the owner is enabled; a disabled owner's views disappear for everyone else. Anyone else gets 404, the same as a missing view. Only the owner edits, reorders, shares, or deletes (403 `OWNER_ONLY`); recipients duplicate instead (§13 Q13).
+- **Audit** (ids only): `task.view_create { viewId, sourceViewId? }`, `task.view_update { viewId, renamed?, query?, display?, moved? }`, `task.view_delete`, `task.view_sharing_changed { viewId, visibility, recipientCount }`.
+
+### Column state (sub-wave 17C, D141, migration 020)
+
+Every column has `state: "todo" | "doing" | "done"`, a shared vocabulary across boards for `state:` filters and board lanes. `is_done` stays, and always equals `state = "done"` (T121): the service writes both in one statement.
+
+- The 020 backfill: a done column is `done`; otherwise a board's first column is `todo` and the rest `doing`. New boards get `todo`, `doing`, `done`; a new column is `doing`.
+- `PATCH /columns/:c { state? }` (owner) sets the state and `is_done` together. `isDone: true` sets `done`; `isDone: false` on a done column sets `todo` for the board's first column and `doing` otherwise. `isDone` and `state` that disagree are 400. Audit `task.column_state { boardId, columnId, state }` (and `task.column_done` when `isDone` was sent).
+
 ## Today (Wave 10)
 
 `GET /api/today?tz=<IANA>&sections=<a,b>?` returns 200 `{ generatedAt, date, sections }`. `date` is today in `tz`. `sections` maps each installed section, in order, to `{ items, more, href }` (at most ten items; `more` when there are more; `href` is the owning app's list). A section whose provider failed is `{ items: [], more: false, href, error }`; the others still load. Sections of modules that are not installed are absent. There are no counts, bodies, or caching. `sections=` limits the response to those names (the per-section Retry).
@@ -571,6 +670,8 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `list_cards` | tasks:read | `{ boardId, columnId?, assigneeIds?, tags?, flags?, dueBefore?, dueAfter?, dueNone?, text? }` | `{ board: { id, name, owner_name, is_owner }, columns: { id, name, position, wip_limit }[], tags: { id, name, color }[], cards: { id, column_id, column_name, position, title, description_preview, revision, creator_name, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, comment_count, relation_count, open_blockers, attachments: string[], updated_at }[] }`. `assignees` and `tags` are names in assignment and tagging order (Wave 13); `assignee_name` is the first assignee. `relation_count` and `open_blockers` are computed for the key's owner as in `GET /api/tasks/boards/:b` (13D). `description_preview` is plain text, at most 280 characters; `attachments` are file names only. A `columnId` not on the board is `NOT_FOUND`. **Filters (Wave 13C, D113)** run on the server with bound SQL (`server/tasks/cardQuery.ts`) and mean what the client's `shared/taskQuery.ts` means: values inside one filter are OR-ed and filters are AND-ed. `assigneeIds` (≤ 30): user ids, `"me"` (the key's user), or `"none"` (unassigned); `tags` (≤ 30): names in any case or ids of this board's tags, or `"none"` (untagged), where an unknown tag is `INVALID` with `reason: "UNKNOWN_TAG"`, the unknown `tags`, and the board's `known` names; `flags`: the fixed set or `"none"`; `dueBefore`/`dueAfter`: real dates, exclusive, AND-ed into one range over dated cards (the card's own civil `due_on`); `dueNone: true` adds cards without a date (alone: only those); `text` (1–100): a substring of the title or `description_excerpt`, ignoring case and accents, with no wildcards. The listing keeps the board order |
 | `get_card` | tasks:read | `{ cardId }` | `{ card: { id, board_id, board_name, column_id, column_name, title, description, revision, creator_name, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, created_at, updated_at }, comments (latest 50), hasMoreComments, attachments: string[], relations: McpRelation[] }`. `description` is plain text; `relations` resolve for the key's owner exactly as `GET /api/tasks/cards/:k` does, newest first (13D) |
 | `search_cards` | tasks:read | `{ query (1–100, trimmed), boardId?, limit? (1–20, default 20) }` | `{ results: { id, board_id, board_name, title, column_name, is_done }[], truncated }` as `GET /api/tasks/cards/search`: titles only, live cards on boards the owner can read, `boardId` first (a hint). Not rate-limited beyond the per-key call limits (13D) |
+| `list_views` | tasks:read | `{}` | `{ views: { id, name, owner_name, is_owner, visibility, query }[] }`: the owner's views, views shared with them, and `all_users` views, as `GET /api/tasks/views` (17C) |
+| `query_cards` | tasks:read | `{ viewId? \| filter? (grammar, ≤ 2000), sort?, group? (with filter only), cursor?, limit? (1–50, default 50), tz? (IANA, default UTC) }`, exactly one of `viewId` and `filter` | `{ view?: { id, name, owner_name }, query, cards: { id, board_id, board_name, column_id, column_name, state, title, description_excerpt, revision, creator_name, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, updated_at }[], nextCursor, total?, refs? }`. The same service as `POST /api/tasks/query` and `GET /api/tasks/views/:v/cards`, as the key's owner: a view or filter never reaches a board they cannot read, and such ids resolve as `restricted` in `refs`. Grammar errors are `INVALID` with `reason` (`FILTER_INVALID`, `FILTER_UNSUPPORTED`, `FILTER_SCOPE`, `CURSOR_INVALID`) and `position`; a view the owner cannot read is `NOT_FOUND`. Read bucket only, not audited, no REST query limit; there are no view write tools (17C, D145) |
 | `create_card` | tasks:write | `{ boardId, columnId, title, description?, dueOn?, dueTime?, dueTz?, assigneeIds? (≤ 20), tags? (≤ 10), flags?, afterCardId? }` | `{ card: { id, board_id, column_id, title, revision, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags } }`. `afterCardId` omitted = bottom, `null` = top. Same validation as `POST /api/tasks/boards/:b/cards`; a full column is `COLUMN_FULL`. `tags` are **existing** tags of the board by name (any case) or id; an unknown one is `INVALID` with `reason: "UNKNOWN_TAG"` and nothing is written (MCP never creates tags) |
 | `update_card` | tasks:write | `{ cardId, baseRevision, title?, dueOn?, dueTime?, dueTz?, assigneeIds?, tags?, flags? }` (no other keys) | `{ card }` as `create_card` returns it, with `revision + 1`. Same validation as `PATCH /api/tasks/cards/:k`: `dueOn: null` clears the date and time, `dueTime: null` only the time, `assigneeIds`, `tags` (existing tags of the card's board, by name or id, as for `create_card`), and `flags` each replace the set, and `[]` clears it. **Never changes the description** (a `description` key is `INVALID`, §11 Q8). `CARD_CHANGED` with `currentRevision` when `baseRevision` is stale. Wave 13 |
 | `move_card` | tasks:write | `{ cardId, columnId, afterCardId? }` | `{ card: { id, column_id, position } }`. Same board only; `afterCardId` omitted = bottom, `null` = top; moving into another column at its WIP limit is `COLUMN_FULL` |

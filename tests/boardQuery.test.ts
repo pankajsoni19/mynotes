@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { dueGroupOf, weekEnd, viewerDueDate } from "../shared/taskQuery";
-import { applyBoardQuery, boardData, BOARD_REGISTRIES, dueValues, FILTER_FIELDS, GROUP_DIMENSIONS, sortBoardCards, type BoardCard, type BoardContext, type BoardData, type GroupDimension } from "../src/tasks/boardQuery";
+import { format, parse, type TaskQuery } from "../shared/taskQuery";
+import { applyBoardQuery, boardData, BOARD_REGISTRIES, dueGroupOf, filterBoardCards, FILTER_FIELDS, GROUP_DIMENSIONS, sortBoardCards, termValues, textTerm, withoutTerm, withTermValues, withText, type BoardCard, type BoardContext, type BoardData, type GroupDimension } from "../src/tasks/boardQuery";
 import { DEFAULT_BOARD_QUERY, parseBoardSearch, type BoardQuery } from "../src/tasks/boardUrl";
 import type { CardSummary } from "../src/tasks/tasksApi";
 
@@ -23,9 +23,9 @@ function card(id: string, change: Partial<CardSummary> & Record<string, unknown>
   } as CardSummary;
 }
 
-const column = (id: string, name: string, position: number) => ({ id, board_id: "b", name, position, is_done: 0 as const, created_at: "", updated_at: "" });
+const column = (id: string, name: string, position: number) => ({ id, board_id: "b", name, position, is_done: 0 as 0 | 1, created_at: "", updated_at: "" });
 const board: BoardData = boardData({
-  columns: [column(done, "Done", 3072), column(todo, "To do", 1024), column(doing, "Doing", 2048)],
+  columns: [{ ...column(done, "Done", 3072), is_done: 1 }, column(todo, "To do", 1024), column(doing, "Doing", 2048)],
   tags: [{ id: backend, name: "Backend", color: "blue" }, { id: design, name: "Design", color: "pink" }],
   cards: [
     card("login", { title: "Fix login", position: 1, assignees: [person(asha, "Asha"), person(ben, "Ben")], tag_ids: [backend, design], flags: ["urgent"], due_on: "2026-09-25", description_excerpt: "Crème brûlée recipe", relation_count: 2, open_blockers: 1 }),
@@ -62,7 +62,9 @@ test("each filter field, with me and none, OR within a field and AND across fiel
   expect(run("?rel=blocked")).toEqual(["login"]);
   expect(run("?rel=none")).toEqual(["docs", "idea", "ship"]);
   expect(run("?due=before:2026-09-27")).toEqual(["login", "docs"]);
-  expect(run("?due=after:2026-09-26&due=before:2026-10-10")).toEqual(["api"]);
+  // Values of one term OR; terms AND.
+  expect(run("?due=after:2026-09-26&due=before:2026-10-10")).toEqual(["login", "docs", "api", "ship"]);
+  expect(run("?q=due:>2026-09-26 due:<2026-10-10")).toEqual(["api"]);
   expect(run("?due=none")).toEqual(["idea"]);
   // AND across fields.
   expect(run(`?tag=${design}&assignee=me`)).toEqual(["docs"]);
@@ -78,28 +80,42 @@ test("text matches the title and excerpt, ignoring case and accents", () => {
   expect(run("?q=zzz")).toEqual([]);
 });
 
-test("relative due buckets use the viewer's day, across midnight and zones", () => {
-  expect(weekEnd("2026-09-26")).toBe("2026-09-27");
-  expect(weekEnd("2026-09-27")).toBe("2026-09-27");
-  expect(weekEnd("2026-09-21")).toBe("2026-09-27");
-  // api is due 23:30 on the 27th at UTC+14: the 27th 09:30 UTC.
-  expect(viewerDueDate(board.cards[2]!, "UTC")).toBe("2026-09-27");
-  expect(viewerDueDate(board.cards[2]!, "Etc/GMT+12")).toBe("2026-09-26");
+test("relative due windows compare the card's date with the viewer's today", () => {
+  // api is due 23:30 on the 27th at UTC+14 (the 27th 09:30 UTC).
   expect(run("?due=overdue")).toEqual(["login"]);
   expect(run("?due=today")).toEqual(["docs"]);
+  // week is today and the next six days; next-week the seven after.
   expect(run("?due=week")).toEqual(["docs", "api"]);
-  // For a UTC−12 viewer the timed card falls on their today.
-  expect(run("?due=today", { timeZone: "Etc/GMT+12" })).toEqual(["docs", "api"]);
+  expect(run("?q=due:next-week")).toEqual([]);
+  expect(run("?q=due:next-week", { today: "2026-09-28" })).toEqual(["ship"]);
+  expect(run("?due=today", { today: "2026-09-27" })).toEqual(["api"]);
   // Once its instant passed, a timed card is overdue even on its own day.
   expect(run("?due=overdue", { now: Date.parse("2026-09-27T10:00:00.000Z"), today: "2026-09-27" })).toEqual(["login", "docs", "api"]);
-  // Just before midnight the date-only card is still due today; at midnight it is overdue.
-  expect(dueGroupOf({ due_on: "2026-09-26", due_at: null }, { today: "2026-09-26" })).toBe("today");
-  expect(dueGroupOf({ due_on: "2026-09-26", due_at: null }, { today: "2026-09-27" })).toBe("overdue");
+  // A date-only card is due today until midnight, then overdue.
+  expect(dueGroupOf(board.cards[1]!, board, context)).toBe("today");
+  expect(dueGroupOf(board.cards[1]!, board, { ...context, today: "2026-09-27" })).toBe("overdue");
   expect(run("?due=overdue&due=none")).toEqual(["login", "idea"]);
-  // Buckets OR with the date range.
   expect(run("?due=today&due=after:2026-10-01")).toEqual(["docs", "ship"]);
-  // The server has no viewer clock: a bucket without `today` matches nothing.
-  expect(run("?due=today", { today: undefined as unknown as string })).toEqual([]);
+});
+
+test("the grammar-only terms run in memory: negation, tag names, state, creator, has", () => {
+  expect(run("?q=-flag:urgent")).toEqual(["docs", "api", "idea", "ship"]);
+  expect(run("?q=-due:overdue")).toEqual(["docs", "api", "idea", "ship"]);
+  expect(run("?q=tag:backend")).toEqual(["login"]);
+  expect(run(`?q=${encodeURIComponent('tag:"DESIGN"')}`)).toEqual(["login", "docs"]);
+  expect(run("?q=state:done")).toEqual(["ship"]);
+  expect(run("?q=-state:done")).toEqual(["login", "docs", "api", "idea"]);
+  expect(run("?q=creator:me")).toEqual(["login", "docs", "api", "idea", "ship"]);
+  expect(run("?q=has:blocked")).toEqual(["login"]);
+  expect(run("?q=has:relation -has:blocked")).toEqual(["api"]);
+  // The structured path and the in-memory matcher agree wherever both apply.
+  for (const text of [`assignee:me,${ben}`, `tag:${design}`, "flag:none", "due:<2026-09-27,none", `column:${doing}`, '"login"']) {
+    const parsed = parse(text, { boardScoped: true });
+    if (!parsed.ok) throw new Error(text);
+    const structured = ids(filterBoardCards(board, parsed.query, context));
+    const negatedTwice = ids(filterBoardCards(board, { terms: [...parsed.query.terms, { key: "flag", negate: true, values: ["on_hold"] }] }, context));
+    expect(negatedTwice).toEqual(structured.filter((id) => id !== "api"));
+  }
 });
 
 test("each grouping dimension; a card with two assignees or tags appears in each group", () => {
@@ -109,7 +125,7 @@ test("each grouping dimension; a card with two assignees or tags appears in each
   expect(shape("assignee")).toEqual([["Asha", ["login"]], ["Ben", ["login", "ship"]], ["Pat (you)", ["docs"]], ["No assignee", ["api", "idea"]]]);
   expect(shape("tag")).toEqual([["Backend", ["login"]], ["Design", ["login", "docs"]], ["No tag", ["api", "idea", "ship"]]]);
   expect(shape("flag")).toEqual([["Urgent", ["login"]], ["Blocked", ["api"]], ["On hold", ["api"]], ["No flag", ["docs", "idea", "ship"]]]);
-  expect(shape("due")).toEqual([["Overdue", ["login"]], ["Today", ["docs"]], ["This week", ["api"]], ["Later", ["ship"]], ["No date", ["idea"]]]);
+  expect(shape("due")).toEqual([["Overdue", ["login"]], ["Today", ["docs"]], ["Next 7 days", ["api"]], ["Later", ["ship"]], ["No date", ["idea"]]]);
   // "also in …" names the card's other groups.
   expect(groups("assignee")[0]!.items[0]!.also).toEqual(["Ben"]);
   expect(groups("tag")[1]!.items[0]!.also).toEqual(["Backend"]);
@@ -137,16 +153,25 @@ test("table sorts are stable and tie-break on board order; empty values sort las
   expect(sort("updated:desc")).toEqual(["ship", "login", "docs", "api", "idea"]);
 });
 
-test("the filter registry reads and writes the shared filter", () => {
-  let filter = FILTER_FIELDS.tag!.set({}, [design, "none"]);
-  expect(filter).toEqual({ tags: [design, "none"] });
-  filter = FILTER_FIELDS.due!.set(filter, ["today", "before:2026-10-01", "none"]);
-  expect(filter.due).toEqual({ before: "2026-10-01", none: true, buckets: ["today"] });
-  expect(dueValues(filter)).toEqual(["today", "before:2026-10-01", "none"]);
-  expect(FILTER_FIELDS.tag!.set(filter, [])).toEqual({ due: filter.due });
+test("the filter bar edits one positive term per field and keeps the query canonical", () => {
+  let query: TaskQuery = { terms: [] };
+  query = withTermValues(query, "tag", [design, "none"]);
+  query = withTermValues(query, "flag", ["urgent"]);
+  query = withText(query, "  login  ");
+  expect(format(query)).toBe(`tag:none,${design} flag:urgent "login"`);
+  expect(termValues(query, "tag")).toEqual(["none", design]);
+  expect(textTerm(query)).toBe("login");
+  query = withTermValues(query, "flag", []);
+  expect(format(query)).toBe(`tag:none,${design} "login"`);
+  // A negated term from a shared URL is kept when the positive one changes, and removed by index.
+  const parsed = parse("-flag:urgent flag:blocked", { boardScoped: true });
+  if (!parsed.ok) throw new Error("parse");
+  expect(format(withTermValues(parsed.query, "flag", ["on_hold"]))).toBe("flag:on_hold -flag:urgent");
+  expect(format(withoutTerm(parsed.query, 1))).toBe("flag:blocked");
+  expect(format(withText(query, ""))).toBe(`tag:none,${design}`);
   expect(FILTER_FIELDS.assignee!.optionsFor(board, context).map((option) => option.label)).toEqual(["Me", "Asha", "Ben", "No assignee"]);
   expect(FILTER_FIELDS.tag!.labelFor("bbbbbbbb-0000-4000-8000-00000000ffff", board, context)).toBe("Unknown tag");
-  expect(FILTER_FIELDS.due!.labelFor("week", board, context)).toBe("this week");
+  expect(FILTER_FIELDS.due!.labelFor("<2026-10-01", board, context)).toBe(`before ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 9, 1)))}`);
   expect(Object.keys(GROUP_DIMENSIONS)).toEqual(["column", "assignee", "tag", "flag", "due"]);
 });
 

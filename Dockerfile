@@ -14,8 +14,8 @@ FROM dependencies AS verify
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
-COPY server ./server
 COPY shared ./shared
+COPY server ./server
 COPY tests ./tests
 COPY bunfig.toml ./
 RUN bun run typecheck && bun test && bun run build
