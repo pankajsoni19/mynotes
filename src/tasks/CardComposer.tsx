@@ -133,14 +133,13 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     }
   }
 
-  function onKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
-    // Ctrl/⌘+Enter creates from anywhere in the form; with Shift it creates and starts another.
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      void submit(event.shiftKey ? "another" : "close");
-      return;
-    }
-    trapTabKey(event);
+  // Ctrl/⌘+Enter creates from anywhere in the form; with Shift it creates and starts another. It is
+  // caught on the way down, before a focused dropdown or the editor treats Enter as its own.
+  function onKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void submit(event.shiftKey ? "another" : "close");
   }
 
   async function upload(file: File) {
@@ -203,7 +202,7 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
 
   return <>
     <button className="panel-scrim task-card-scrim" onClick={requestClose} aria-label="Close the new card" tabIndex={-1} />
-    <section className="task-card-dialog task-composer" role="dialog" aria-modal="true" aria-labelledby={`${baseId}-heading`} onKeyDown={onKeyDown}>
+    <section className="task-card-dialog task-composer" role="dialog" aria-modal="true" aria-labelledby={`${baseId}-heading`} onKeyDownCapture={onKeyDownCapture} onKeyDown={trapTabKey}>
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
           <span className="eyebrow" id={`${baseId}-heading`}>New card · {boardName}</span>

@@ -286,6 +286,7 @@
 .task-composer-hint { color: #7c7c83; font-size: .74rem; }
 .task-composer-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
 .task-composer-buttons button { min-height: 40px; margin: 0; padding: 0 16px; font-size: .84rem; font-weight: 650; }
+.task-composer .task-description-editor .editor-surface { min-height: 0; }
 .task-composer .task-description-editor .note-prose { min-height: 120px; }
 @media (max-width: 760px) {
   .task-composer { width: 100vw; }
