@@ -414,6 +414,7 @@ export function BoardView({ userId, boardId, openCardId, onOpenCard, onCloseCard
         key={column.id}
         column={column}
         cards={columnCards(cards, column.id)}
+        tags={detail.tags}
         owner={owner}
         isFirst={index === 0}
         isLast={index === columns.length - 1}
