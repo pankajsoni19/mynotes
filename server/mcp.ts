@@ -6,6 +6,7 @@ import { registerMcpTools, type McpKeyContext } from "./mcpTools";
 import { DEFAULT_MCP_SCOPES, normalizeScopes, parseStoredScopes, type McpScope } from "./mcpScopes";
 import { HTTPException } from "hono/http-exception";
 import { boundedRequest } from "./validation";
+import { effectiveMcpScopes, type Role } from "./team/roles";
 
 type McpKeyRow = {
   id: string;
@@ -16,6 +17,7 @@ type McpKeyRow = {
   last_used_at: string | null;
   scopes: string;
   email: string;
+  role: Role;
 };
 
 export const hashMcpToken = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -116,7 +118,7 @@ export async function handleMcpRequest(request: Request) {
   }
   const token = match[1]!;
   const key = db.query(`
-    SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, u.email
+    SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, u.email, u.role
     FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
     WHERE k.token_hash = ? AND k.revoked_at IS NULL AND u.disabled_at IS NULL
   `).get(hashMcpToken(token)) as McpKeyRow | null;
@@ -138,7 +140,8 @@ export async function handleMcpRequest(request: Request) {
       if (error instanceof HTTPException && error.status === 413) return mcpJsonError("Request is too large", 413);
       throw error;
     }
-    const scopes = parseStoredScopes(key.scopes);
+    // Effective scopes: what the key stores, narrowed to the holder's current role (T81).
+    const scopes = effectiveMcpScopes(parseStoredScopes(key.scopes), key.role);
     const context: McpKeyContext = { keyId: key.id, userId: key.user_id, name: key.name, scopes };
     const authInfo: AuthInfo = { token, clientId: key.user_id, scopes, extra: { key: context } };
     const response = await mcpHandler.fetch(bounded, { authInfo });
