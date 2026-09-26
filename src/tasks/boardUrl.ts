@@ -2,7 +2,7 @@
 // Pure: no DOM access. Filters are the one task grammar of shared/taskQuery.ts, carried as a
 // canonical `q=` by its URL codec (`decodeFilterParams` / `encodeFilterParams`, which still read
 // the older per-key parameters). This module only adds the presentation keys the grammar leaves
-// to its callers: `view`, `group`, `sort`, `cal`, and `month`.
+// to its callers: `view`, `group`, `sort`, `cal`, `month`, and `sprint` (17B).
 //
 // Decoding never throws: unknown keys and invalid values are dropped (the grammar decodes
 // leniently, within its limits). Encoding is canonical (fixed key order, defaults left out,
@@ -37,10 +37,15 @@ export type BoardQuery = {
   month: string | null;
   /** The filter bar's terms, board-scoped (`column:` is valid without `board:`). */
   filter: TaskQuery;
+  /**
+   * The sprint the board shows (17B, §7.3): `backlog`, `all`, or a sprint id; null (or absent) is the
+   * current sprint: the active one, else the backlog. Only boards with sprints on read it.
+   */
+  sprint?: string | null;
 };
 
 const emptyFilter = (): TaskQuery => ({ terms: [] });
-export const DEFAULT_BOARD_QUERY: BoardQuery = Object.freeze({ view: "board", group: null, sort: null, cal: "month", month: null, filter: Object.freeze({ terms: Object.freeze([]) }) }) as unknown as BoardQuery;
+export const DEFAULT_BOARD_QUERY: BoardQuery = Object.freeze({ view: "board", group: null, sort: null, cal: "month", month: null, sprint: null, filter: Object.freeze({ terms: Object.freeze([]) }) }) as unknown as BoardQuery;
 
 /** The same rule as `isRouteMonth` in src/router.ts (kept here so the codec has no import cycle). */
 const monthPattern = /^(\d{4})-(0[1-9]|1[0-2])$/;
@@ -51,6 +56,15 @@ export function isBoardMonth(value: string) {
 
 const oneOf = <T extends string>(list: readonly T[], value: string | null | undefined): T | null =>
   value !== null && value !== undefined && (list as readonly string[]).includes(value) ? value as T : null;
+
+const sprintIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A `?sprint=` value (17B): `backlog`, `all`, or a sprint id (lower-cased); `current`, anything else, or nothing is null. */
+export function parseBoardSprint(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const lower = value.toLowerCase();
+  if (lower === "backlog" || lower === "all") return lower;
+  return sprintIdPattern.test(lower) ? lower : null;
+}
 
 /** A `field:asc|desc` sort, or null. */
 export function parseBoardSort(value: string | null | undefined): BoardSort | null {
@@ -75,6 +89,7 @@ export function parseBoardSearch(search: string): BoardQuery {
     sort: parseBoardSort(params.get("sort")),
     cal: oneOf(["month", "agenda"] as const, params.get("cal")) ?? "month",
     month: month && isBoardMonth(month) ? month : null,
+    sprint: parseBoardSprint(params.get("sprint")),
     filter: decodeFilterParams(params, { boardScoped: true })
   };
 }
@@ -87,6 +102,8 @@ export function formatBoardSearch(query: BoardQuery): string {
   if (query.sort && oneOf(BOARD_SORT_FIELDS, query.sort.field) && (query.sort.direction === "asc" || query.sort.direction === "desc")) params.set("sort", `${query.sort.field}:${query.sort.direction}`);
   if (query.cal === "agenda") params.set("cal", "agenda");
   if (query.month && isBoardMonth(query.month)) params.set("month", query.month);
+  const sprint = parseBoardSprint(query.sprint);
+  if (sprint) params.set("sprint", sprint);
   encodeFilterParams(query.filter, params);
   // `:` and `,` are legal in a query; keeping them readable makes shared links easier to read
   // ("sort=due:asc&q=assignee:me+flag:blocked,urgent").

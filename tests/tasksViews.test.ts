@@ -183,7 +183,7 @@ describe("task views: create, read, and run as the viewer (T115, T116)", () => {
     const owner = await createUser("Views cap");
     expect(await call(owner, "POST", "/views", { name: "Bad", query: "owner:me" })).toMatchObject({ status: 400, body: { code: "FILTER_INVALID", position: 0 } });
     expect(await call(owner, "POST", "/views", { name: "Scope", query: `column:${crypto.randomUUID()}` })).toMatchObject({ status: 400, body: { code: "FILTER_SCOPE" } });
-    expect(await call(owner, "POST", "/views", { name: "Later", query: "sprint:current" })).toMatchObject({ status: 400, body: { code: "FILTER_UNSUPPORTED" } });
+    expect(await call(owner, "POST", "/views", { name: "Later", query: "sprint:someday" })).toMatchObject({ status: 400, body: { code: "FILTER_INVALID" } });
     expect((await call(owner, "POST", "/views", { name: "", query: "" })).status).toBe(400);
     expect((await call(owner, "POST", "/views", { name: "x".repeat(81), query: "" })).status).toBe(400);
     expect((await call(owner, "POST", "/views", { name: "Bidi‮", query: "" })).status).toBe(400);

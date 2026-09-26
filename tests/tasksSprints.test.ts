@@ -297,6 +297,10 @@ describe("completing a sprint", () => {
     const made = await call(fresh.owner, "POST", `/sprints/${fresh.sprint.id}/complete`, { carryTo: "new" });
     expect(made.body).toMatchObject({ carried: 2, created: true, target: { name: "Sprint 13", state: "planned", start_on: "2026-10-05", end_on: "2026-10-18", card_count: 2 } });
     expect(lastAudit("task.sprint_create")).toEqual({ boardId: fresh.boardId, sprintId: made.body.target.id });
+    // A new sprint skips names the board already uses: Sprint 13 is taken, so it is Sprint 14.
+    const taken = await running("Carry new taken");
+    await addSprint(taken.owner, taken.boardId, "Sprint 13");
+    expect((await call(taken.owner, "POST", `/sprints/${taken.sprint.id}/complete`, { carryTo: "new" })).body.target.name).toBe("Sprint 14");
     const named = await running("Carry new named");
     const custom = await call(named.owner, "POST", `/sprints/${named.sprint.id}/complete`, { carryTo: "new", name: "Hardening", startOn: "2026-11-01", endOn: null });
     expect(custom.body.target).toMatchObject({ name: "Hardening", start_on: "2026-11-01", end_on: null });

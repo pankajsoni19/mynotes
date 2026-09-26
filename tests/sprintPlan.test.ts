@@ -11,6 +11,10 @@ describe("sprint naming and dates (shared/sprintPlan.ts)", () => {
     expect(nextSprintName(null)).toBe("Sprint 1");
     expect(nextSprintName(`${"x".repeat(58)} 9`).length).toBeLessThanOrEqual(60);
     expect(nextSprintName("x".repeat(60)).length).toBe(60);
+    // The board's other sprint names are skipped (ignoring case).
+    expect(nextSprintName("Sprint 1", ["Sprint 1", "sprint 2", "Sprint 3"])).toBe("Sprint 4");
+    expect(nextSprintName("Hardening", ["Hardening 2"])).toBe("Hardening 3");
+    expect(nextSprintName(null, ["Sprint 1"])).toBe("Sprint 2");
   });
 
   test("the next sprint starts the day after and lasts as long; without an end, two weeks from today", () => {

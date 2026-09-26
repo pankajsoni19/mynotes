@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ChevronLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Settings2, Trash2, TriangleAlert } from "lucide-react";
 import { BoardSettingsSheet } from "./BoardSettingsSheet";
 import { useBoardHierarchy } from "./useBoardHierarchy";
+import { useBoardSprints } from "./useBoardSprints";
+import { SprintBar } from "./SprintBar";
+import { SprintCompleteDialog } from "./SprintCompleteDialog";
+import { SprintSettingsSection } from "./SprintSettingsSection";
+import { withLocalCounts } from "./sprintModel";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
@@ -22,7 +27,7 @@ import { WipLimitDialog } from "./WipLimitDialog";
 import { BoardGroupedList } from "./BoardGroupedList";
 import { BoardTable } from "./BoardTable";
 import { BoardViewSwitch } from "./BoardViewSwitch";
-import { applyBoardQuery, boardData, type BoardContext } from "./boardQuery";
+import { applyBoardQuery, boardData, filterBoardCards, type BoardContext } from "./boardQuery";
 import { hasBoardFilter, withBoardQuery, type BoardQuery } from "./boardUrl";
 import { localDateString, viewerTimeZone } from "./taskActions";
 import { FilterBar } from "./FilterBar";
@@ -78,7 +83,8 @@ type BoardViewProps = {
 type BoardDialog =
   | { kind: "rename" | "share" | "addColumn" | "deleteBoard" | "settings" }
   | { kind: "columnMenu" | "renameColumn" | "deleteColumn" | "wipLimit"; columnId: string }
-  | { kind: "moveCard"; cardId: string };
+  | { kind: "moveCard"; cardId: string }
+  | { kind: "completeSprint"; sprintId: string };
 
 export const MAX_COLUMNS = 20;
 
@@ -187,11 +193,17 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   // One pipeline for every view (§4.5): filter, sort, and (in the list view) group the loaded board.
   const data = useMemo(() => detail ? boardData(detail) : null, [detail]);
   const viewContext: BoardContext = { userId, today: localDateString(), now: Date.now(), timeZone: viewerTimeZone() };
-  const result = data ? applyBoardQuery(data, query, viewContext) : null;
+  // Sprints (17B): the sprint on screen (`?sprint=`, the active one by default) scopes every view
+  // through one more grammar term; the filter bar keeps only the viewer's own terms.
+  const sprints = useBoardSprints({ detail, setDetail, query, onQueryChange, notify, load });
+  const sprintScoped = sprints.term !== null;
+  const scopedQuery = sprints.term ? { ...query, filter: { terms: [...query.filter.terms, sprints.term] } } : query;
+  const result = data ? applyBoardQuery(data, scopedQuery, viewContext) : null;
+  const scopedTotal = data && sprints.term ? filterBoardCards(data, { terms: [sprints.term] }, viewContext).length : cards.length;
   const filtered = hasBoardFilter(query);
   const view = query.view;
   // The lanes show the matching cards; drag and keyboard moves anchor on the cards in view.
-  const laneCards: CardSummary[] = filtered && result ? result.cards : cards;
+  const laneCards: CardSummary[] = (filtered || sprintScoped) && result ? result.cards : cards;
   const laneCardsRef = useRef(laneCards);
   laneCardsRef.current = laneCards;
   // Hierarchy (17A): which levels the lanes show, chips, nesting by drag, and the card dialog's checklist.
@@ -493,6 +505,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         <button className="icon-button" onClick={(event) => openDialog({ kind: "settings" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Board settings" title="Board settings"><Settings2 /></button>
       </span>}
     </header>
+    {data && sprints.selection && <SprintBar sprints={sprints.sprints} selection={sprints.selection} cards={data.cards} columns={columns} workLevel={hierarchy.structure.workLevel}
+      name={hierarchy.structure.levels[hierarchy.structure.workLevel]?.name ?? "Card"} plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"}
+      today={viewContext.today} owner={owner} onSelect={sprints.select} onStart={(sprint) => { void sprints.start(sprint); }}
+      onComplete={(sprint, trigger) => openDialog({ kind: "completeSprint", sprintId: sprint.id }, trigger)} />}
     <p id="task-card-keys" className="sr-only">Press Alt with an arrow key to move a card up, down, or to the next column.</p>
     <p className="sr-only" aria-live="polite">{announcement}</p>
 
@@ -503,7 +519,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!loadError && !detail && <p className="bin-loading task-board-state" role="status">Loading the board…</p>}
-    {detail && data && result && <FilterBar board={data} context={viewContext} filter={query.filter} shown={result.cards.length} total={cards.length}
+    {detail && data && result && <FilterBar board={data} context={viewContext} filter={query.filter} shown={result.cards.length} total={scopedTotal}
       onChange={(filter) => onQueryChange(withBoardQuery(query, { filter }))} />}
     {detail && data && result && view === "table" && <div className="task-view-body">
       <BoardTable board={data} cards={result.cards} sort={query.sort} today={viewContext.today} filtered={filtered}
@@ -537,7 +553,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         column={column}
         cards={columnCards(hierarchy.visible(laneCards, filtered), column.id)}
         totalCount={columnCards(cards, column.id).length}
-        emptyText={filtered ? "No matching cards" : "Its cards sit inside their parents"}
+        emptyText={filtered ? "No matching cards" : sprintScoped ? (sprints.selection?.kind === "backlog" ? "Nothing from the backlog here" : "Nothing from this sprint here") : "Its cards sit inside their parents"}
         nesting={hierarchy.nesting}
         tags={detail.tags}
         owner={owner}
@@ -584,6 +600,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onOpenRelated={(target) => onOpenCardRoute?.(target.board_id, target.id)}
       onRelationsChanged={(id, counts) => setCards((items) => items.map((item) => item.id === id ? { ...item, ...counts } : item))}
       hierarchy={hierarchy.dialog}
+      sprints={sprints.enabled ? sprints.sprints : undefined}
     /></CardPage>}
     {composer && detail && board && <CardComposer
       boardId={boardId}
@@ -601,11 +618,30 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       structure={hierarchy.structure}
       parentCards={cards}
       initialParentId={composer.parentId}
+      sprints={sprints.enabled ? sprints.sprints : undefined}
+      initialSprintId={sprints.composerSprintId}
     />}
     {dialog?.kind === "settings" && board && <BoardSettingsSheet board={board} owner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
       onClose={closeDialog} notify={notify}
       onRename={() => setDialog({ kind: "rename" })} onShare={() => setDialog({ kind: "share" })} onDelete={() => setDialog({ kind: "deleteBoard" })} onAddColumn={() => setDialog({ kind: "addColumn" })}
-      onStructureSaved={(saved) => setDetail((current) => current ? { ...current, board: saved } : current)} />}
+      onStructureSaved={(saved) => setDetail((current) => current ? { ...current, board: saved } : current)}
+      sprintsSection={<SprintSettingsSection boardId={boardId} sprints={data ? withLocalCounts(sprints.sprints, data.cards, columns, hierarchy.structure.workLevel) : sprints.sprints} owner={owner} today={viewContext.today}
+        plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"}
+        onCreate={sprints.create} onUpdate={sprints.update} onStart={sprints.start} onDelete={sprints.remove}
+        onComplete={(sprint) => setDialog({ kind: "completeSprint", sprintId: sprint.id })} />} />}
+    {dialog?.kind === "completeSprint" && data && (() => {
+      const sprint = sprints.sprints.find((item) => item.id === dialog.sprintId && item.state === "active");
+      if (!sprint) return null;
+      const { structure } = hierarchy;
+      return <SprintCompleteDialog sprint={sprint} sprints={sprints.sprints} cards={data.cards} columns={columns} workLevel={structure.workLevel}
+        name={structure.levels[structure.workLevel]?.name ?? "Card"} plural={structure.levels[structure.workLevel]?.plural ?? "Cards"}
+        childPlural={structure.levels[structure.workLevel + 1]?.plural ?? null} today={viewContext.today} onCancel={closeDialog}
+        onComplete={async (carryTo, next) => {
+          await sprints.complete(sprint, carryTo, next);
+          setDialog(null);
+          returnFocusRef.current = null;
+        }} />;
+    })()}
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
     {dialog?.kind === "share" && board && <BoardSharePanel board={board} onClose={closeDialog} onChanged={() => {
       closeDialog();

@@ -9,6 +9,7 @@ import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { deleteFile, formatBytes } from "../files/filesApi";
 import { Select } from "../ui/Select";
 import { CardFields } from "./CardFields";
+import { SprintSelect } from "./SprintField";
 import type { TagChange } from "./cardTags";
 import {
   applyFieldChange,
@@ -26,7 +27,7 @@ import {
 } from "./composerDraft";
 import { RelationAdder, RelationList } from "./RelationsSection";
 import { canEnterColumn, validateCardTitle } from "./taskActions";
-import { createCard, taskErrorCode, taskErrorMessage, uploadAttachment, type BoardColumn, type BoardTag, type CardDetail, type CardSearchResult, type RelationType } from "./tasksApi";
+import { createCard, taskErrorCode, taskErrorMessage, uploadAttachment, type BoardColumn, type BoardTag, type CardDetail, type CardSearchResult, type RelationType, type SprintSummary } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
 export type ComposerMode = "close" | "open" | "another";
@@ -52,6 +53,9 @@ type CardComposerProps = {
   structure?: BoardStructure;
   parentCards?: ReadonlyArray<{ id: string; title: string; column_id: string; position: number; level?: number; parent_card_id?: string | null }>;
   initialParentId?: string | null;
+  /** Sprints (17B): the board's sprints for the Sprint field, and the one the board shows (new cards start in it). */
+  sprints?: SprintSummary[];
+  initialSprintId?: string | null;
 };
 
 /**
@@ -60,10 +64,10 @@ type CardComposerProps = {
  * guarded dialog, not a route (D69): full screen on phones, a large modal on desktop. Back, Escape,
  * and Close ask first when anything was entered, and discarding moves the uploads to the Bin.
  */
-export function CardComposer({ boardId, boardName, userId, columns, cards, initialColumnId, onClose, onCreated, notify, tags, owner = false, onTagsChange, structure = FLAT_STRUCTURE, parentCards = [], initialParentId = null }: CardComposerProps) {
+export function CardComposer({ boardId, boardName, userId, columns, cards, initialColumnId, onClose, onCreated, notify, tags, owner = false, onTagsChange, structure = FLAT_STRUCTURE, parentCards = [], initialParentId = null, sprints, initialSprintId = null }: CardComposerProps) {
   const initialParent = initialParentId ? parentCards.find((card) => card.id === initialParentId) : undefined;
   const [draft, setDraft] = useState<ComposerDraft>(() => emptyDraft(defaultColumnId(columns, cards, initialColumnId),
-    initialParent ? { parentId: initialParent.id, level: levelOf(initialParent) + 1 } : {}));
+    initialParent ? { parentId: initialParent.id, level: levelOf(initialParent) + 1 } : { sprintId: initialSprintId }));
   const [titleError, setTitleError] = useState<string | null>(null);
   const [error, setError] = useState<ComposerError | null>(null);
   const [creating, setCreating] = useState(false);
@@ -123,12 +127,14 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     setCreating(true);
     setError(null);
     try {
-      const { card } = await createCard(boardId, createBody(current, check.name));
+      // Only a work-level card is planned in a sprint (17B); a subtask follows its parent.
+      const planned = structure.sprints && (current.level ?? structure.workLevel) === structure.workLevel ? current.sprintId : null;
+      const { card } = await createCard(boardId, createBody({ ...current, sprintId: planned }, check.name));
       onCreated(card, mode, { hadRelations: current.relations.length > 0 });
       if (mode === "another") {
         notify(`Added “${card.title}”. Add another.`);
         // "Create another" keeps the column, the level, and the parent (a run of subtasks).
-        update(() => emptyDraft(current.columnId, { parentId: current.parentId, level: current.level }));
+        update(() => emptyDraft(current.columnId, { parentId: current.parentId, level: current.level, sprintId: current.sprintId }));
         setTitleError(null);
         setAddingRelation(false);
         setRound((value) => value + 1);
@@ -279,6 +285,8 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
             <Select id={`${baseId}-parent`} labelledBy={`${baseId}-parent-label`} label={parentLabel} value={draft.parentId ?? ""} disabled={busy} options={parentOptions}
               onChange={(parentId) => update((current) => ({ ...current, parentId: parentId || null, level: current.level ?? structure.workLevel }))} />
           </div>}
+          {structure.sprints && sprints && draftLevel === structure.workLevel && <SprintSelect sprints={sprints} value={draft.sprintId} idPrefix={baseId} disabled={busy}
+            onChange={(sprintId) => update((current) => ({ ...current, sprintId }))} />}
         </div>
         <CardFields card={draftCard(draft, boardId)} userId={userId} idPrefix={baseId} done={column?.is_done === 1} saving={creating} onSave={saveField}
           tags={tags} owner={owner} onTagsChange={tagsChanged} />

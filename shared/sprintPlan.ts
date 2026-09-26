@@ -29,13 +29,21 @@ export function sprintDaysBetween(from: string, to: string) {
   return Math.round((at(to) - at(from)) / 86_400_000);
 }
 
-/** "Sprint 12" → "Sprint 13"; a name without a trailing number gets " 2". Stays within 60 characters. */
-export function nextSprintName(name: string | null | undefined) {
-  const base = (name ?? "").trim();
-  if (!base) return "Sprint 1";
+/**
+ * "Sprint 12" → "Sprint 13"; a name without a trailing number gets " 2". Names in `taken` (the
+ * board's other sprints, ignoring case) are skipped, so completing Sprint 1 while Sprint 2 is
+ * planned suggests Sprint 3. Stays within 60 characters.
+ */
+export function nextSprintName(name: string | null | undefined, taken: Iterable<string> = []) {
+  const base = (name ?? "").trim() || "Sprint 0";
+  const used = new Set([...taken].map((item) => item.trim().toLowerCase()));
   const match = /^(.*?)(\d+)$/.exec(base);
-  const next = match ? `${match[1]}${Number(match[2]) + 1}` : `${base} 2`;
-  return next.length > SPRINT_NAME_MAX ? next.slice(next.length - SPRINT_NAME_MAX) : next;
+  const prefix = match ? match[1]! : `${base} `;
+  let number = match ? Number(match[2]) + 1 : 2;
+  const fit = (text: string) => text.length > SPRINT_NAME_MAX ? text.slice(text.length - SPRINT_NAME_MAX) : text;
+  // At most one more than the number of taken names is ever needed.
+  for (let guard = 0; guard <= used.size && used.has(fit(`${prefix}${number}`).toLowerCase()); guard += 1) number += 1;
+  return fit(`${prefix}${number}`);
 }
 
 /**

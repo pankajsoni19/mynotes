@@ -9,7 +9,8 @@ import { cardFilterFromQuery, foldText, matchesQuery, queryCards, sortCards, TAS
 import { byPosition } from "./boardOrder";
 import type { BoardGroupId, BoardQuery, BoardSort } from "./boardUrl";
 import { cardAssignees } from "./taskActions";
-import type { BoardColumn, BoardDetail, BoardTag, CardAssignee, CardSummary } from "./tasksApi";
+import type { BoardColumn, BoardDetail, BoardTag, CardAssignee, CardSummary, SprintSummary } from "./tasksApi";
+import { effectiveSprints, sprintPointers, sprintStateLabel } from "./sprintModel";
 import { FLAT_STRUCTURE, levelName, type BoardStructure } from "../../shared/boardStructure";
 import { rollupMap } from "./hierarchyModel";
 
@@ -22,8 +23,8 @@ export type { BoardTag } from "./tasksApi";
  */
 export type BoardCardInput = CardSummary & Partial<{ description_excerpt: string; tag_ids: string[]; flags: string[]; relation_count: number; open_blockers: number }>;
 export type BoardCard = CardSummary & QueryCard & { assignees: CardAssignee[]; tag_ids: string[]; flags: string[]; relation_count?: number; open_blockers?: number };
-/** `structure` (17A): the board's levels; Flat for an older payload. */
-export type BoardData = { columns: BoardColumn[]; cards: BoardCard[]; tags: BoardTag[]; structure?: BoardStructure };
+/** `structure` (17A): the board's levels; Flat for an older payload. `sprints` (17B): open and recent sprints. */
+export type BoardData = { columns: BoardColumn[]; cards: BoardCard[]; tags: BoardTag[]; structure?: BoardStructure; sprints?: SprintSummary[] };
 
 /** The viewer: `today` is their local date, `now` their clock, `timeZone` their zone (for timed cards). */
 export type BoardContext = { userId: string; today: string; now: number; timeZone: string };
@@ -32,13 +33,16 @@ export type BoardContext = { userId: string; today: string; now: number; timeZon
  * Fills the optional payload fields, so every view reads one shape. Roll-ups (17A) are recounted
  * from the loaded cards, so `has:subtasks` and the chips follow local moves at once.
  */
-export function boardData(detail: Pick<BoardDetail, "columns" | "cards"> & { tags?: BoardTag[]; board?: Pick<BoardDetail["board"], "structure"> }): BoardData {
+export function boardData(detail: Pick<BoardDetail, "columns" | "cards"> & { tags?: BoardTag[]; board?: Pick<BoardDetail["board"], "structure">; sprints?: SprintSummary[] }): BoardData {
   const rollups = rollupMap(detail.cards, detail.columns);
+  const structure = detail.board?.structure ?? FLAT_STRUCTURE;
   return {
     columns: [...detail.columns].sort(byPosition),
     tags: detail.tags ?? [],
-    structure: detail.board?.structure ?? FLAT_STRUCTURE,
-    cards: (detail.cards as BoardCardInput[]).map((card) => ({
+    structure,
+    sprints: detail.sprints ?? [],
+    // Subtasks take their parent's sprint from the loaded cards (17B, D124), so they follow a local change at once.
+    cards: (effectiveSprints(detail.cards, structure.workLevel) as BoardCardInput[]).map((card) => ({
       ...card,
       description_excerpt: card.description_excerpt ?? "",
       tag_ids: card.tag_ids ?? [],
@@ -95,7 +99,7 @@ export function memoryContext(board: BoardData, context: BoardContext): MemoryQu
     const state = (column as BoardColumn & { state?: TaskState }).state;
     columnStates[column.id] = state ?? (column.is_done === 1 ? "done" : "doing");
   }
-  return { userId: context.userId, today: context.today, now: context.now, tags: board.tags, columnStates, workLevel: structureOfData(board).workLevel };
+  return { userId: context.userId, today: context.today, now: context.now, tags: board.tags, columnStates, workLevel: structureOfData(board).workLevel, sprints: sprintPointers(board.sprints ?? []) };
 }
 
 export type DueGroup = "overdue" | "today" | "week" | "later" | "none";
@@ -202,6 +206,14 @@ export function dueValueLabel(value: string) {
   return ({ overdue: "overdue", today: "today", week: "in the next 7 days", "next-week": "in the 7 days after", none: "no date" } as Record<string, string>)[value] ?? value;
 }
 
+/** A `sprint:` value in words (17B): the sprint's name, "the backlog", "the current sprint", "the next sprint". */
+export function sprintValueLabel(value: string, board: BoardData) {
+  if (value === "none") return "the backlog";
+  if (value === "current") return "the current sprint";
+  if (value === "next") return "the next sprint";
+  return (board.sprints ?? []).find((sprint) => sprint.id === value)?.name ?? "an older sprint";
+}
+
 export const HAS_LABELS: Record<string, string> = { relation: "has relations", blocked: "is blocked", subtasks: "has subtasks" };
 const STATE_LABELS: Record<string, string> = { todo: "to do", doing: "in progress", done: "done" };
 
@@ -257,6 +269,17 @@ export const FILTER_FIELDS: Record<string, FilterField> = {
     optionsFor: (board) => [{ value: "work", label: `Work level (${levelName(structureOfData(board), structureOfData(board).workLevel)})` },
       ...structureOfData(board).levels.map((level, index) => ({ value: String(index), label: level.name }))],
     labelFor: (value, board) => value === "work" ? "work level" : levelName(structureOfData(board), Number(value))
+  },
+  sprint: {
+    // 17B: the board's switcher picks one sprint; this field filters by several (or the backlog) within that view.
+    label: "Sprint",
+    key: "sprint",
+    available: (board) => structureOfData(board).sprints,
+    optionsFor: (board) => [
+      ...(board.sprints ?? []).map((sprint) => ({ value: sprint.id, label: `${sprint.name} (${sprintStateLabel(sprint).toLowerCase()})` })),
+      { value: "none", label: "Backlog (no sprint)" }
+    ],
+    labelFor: (value, board) => sprintValueLabel(value, board)
   },
   parent: {
     label: "Parent",

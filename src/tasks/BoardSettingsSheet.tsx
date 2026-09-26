@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Check, Columns3, Layers, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
 import { trapTabKey } from "../files/Dialog";
 import { Select } from "../ui/Select";
@@ -29,6 +29,8 @@ type BoardSettingsSheetProps = {
   onDelete: () => void;
   onAddColumn: () => void;
   onStructureSaved: (board: BoardSummary) => void;
+  /** Board settings → Sprints (17B), shown when the saved structure has sprints on. */
+  sprintsSection?: ReactNode;
   notify: (message: string) => void;
 };
 
@@ -40,7 +42,7 @@ export function structurePreview(structure: BoardStructure) {
   if (below) parts.push(`${below.plural} appear inside their ${work.name.toLowerCase()}.`);
   const above = structure.levels[structure.workLevel - 1];
   if (above) parts.push(`${above.plural} show as a chip on each ${work.name.toLowerCase()}.`);
-  if (structure.sprints) parts.push("Sprint planning arrives in a later update.");
+  if (structure.sprints) parts.push(below ? `${work.plural} are planned in sprints; their ${below.plural.toLowerCase()} follow them.` : `${work.plural} are planned in sprints.`);
   return parts.join(" ");
 }
 
@@ -50,7 +52,7 @@ export function structurePreview(structure: BoardStructure) {
  * 390 px and a right-hand panel on desktop; the board's dialog guard closes it on Back (D69). Only
  * the owner edits; everyone sees the structure and the per-viewer display option.
  */
-export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevels, onClose, onRename, onShare, onDelete, onAddColumn, onStructureSaved, notify }: BoardSettingsSheetProps) {
+export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevels, onClose, onRename, onShare, onDelete, onAddColumn, onStructureSaved, notify, sprintsSection }: BoardSettingsSheetProps) {
   const saved = structureOf(board);
   const [draft, setDraft] = useState<BoardStructure>(saved);
   const [error, setError] = useState<string | null>(null);
@@ -162,7 +164,7 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
             </div>}
             <label className="task-settings-toggle">
               <input type="checkbox" checked={draft.sprints} disabled={busy} onChange={(event) => update({ ...draft, sprints: event.target.checked })} />
-              <span>Plan in sprints<small>“Sprint ›” groups the work in time boxes. Sprints themselves arrive in a later update.</small></span>
+              <span>Plan in sprints<small>“Sprint ›” groups the work in time boxes. After saving, add and start sprints under Sprints below.</small></span>
             </label>
             <p className="task-settings-note" aria-live="polite">{check.ok ? structurePreview(check.structure) : check.error}</p>
             {error && <p className="file-dialog-error" role="alert">{error}</p>}
@@ -172,6 +174,8 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
             </span>
           </>}
         </section>
+
+        {saved.sprints && sprintsSection}
 
         {saved.levels.length > 1 && <section className="task-settings-section" aria-labelledby={`${titleId}-display`}>
           <h3 id={`${titleId}-display`}>Display</h3>

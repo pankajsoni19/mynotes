@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { db } from "../db";
 import { dateInZone } from "../today/registry";
-import { addQueryDays, dueWindow, parse, format, type FilterTerm, type TaskQuery } from "../../shared/taskQuery";
+import { addQueryDays, dueWindow, parse, format, SPRINT_VALUES, type FilterTerm, type TaskQuery } from "../../shared/taskQuery";
+import { EFFECTIVE_SPRINT_SQL } from "./sprintData";
 import { readableBoardPredicate } from "./access";
 import { assigneesForCards, type CardAssignee } from "./assignees";
 import { dueAt } from "./dueTime";
@@ -150,6 +151,18 @@ function termSql(term: FilterTerm, compiler: Compiler): string {
       if (values.includes("none")) parts.push("k.parent_card_id IS NULL");
       break;
     }
+    case "sprint": {
+      // The effective sprint (17B, D124): stored on the work level, the parent's below it. `current`
+      // and `next` resolve per card to its own board's active and first planned sprint.
+      const ids = values.filter((value) => !(SPRINT_VALUES as readonly string[]).includes(value));
+      if (ids.length) parts.push(`${EFFECTIVE_SPRINT_SQL} IN (${compiler.list(ids)})`);
+      if (values.includes("none")) parts.push(`${EFFECTIVE_SPRINT_SQL} IS NULL`);
+      if (values.includes("current")) parts.push(`${EFFECTIVE_SPRINT_SQL} = (SELECT cs.id FROM board_sprints cs WHERE cs.board_id = k.board_id AND cs.state = 'active')`);
+      if (values.includes("next")) {
+        parts.push(`${EFFECTIVE_SPRINT_SQL} = (SELECT ns.id FROM board_sprints ns WHERE ns.board_id = k.board_id AND ns.state = 'planned' ORDER BY ns.position, ns.id LIMIT 1)`);
+      }
+      break;
+    }
     case "level": {
       const levels = values.filter((value) => value !== "work").map(Number);
       if (levels.length) parts.push(`k.level IN (${compiler.list(levels)})`);
@@ -241,6 +254,9 @@ export type QueriedCard = {
   parent_card_id: string | null;
   level: number;
   parent_title: string | null;
+  /** The card's sprint (17B): stored on the work level, the parent's below it; and its name. */
+  sprint_id: string | null;
+  sprint_name: string | null;
 };
 
 /** What a query's ids mean to this caller (T116): names only for what they can read. */
@@ -357,6 +373,8 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
       k.position, k.title, k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
       k.due_on, k.due_time, k.due_tz, k.created_at, k.updated_at, k.parent_card_id, k.level,
       (SELECT p.title FROM cards p WHERE p.id = k.parent_card_id AND p.board_id = k.board_id AND p.deleted_at IS NULL) AS parent_title,
+      ${EFFECTIVE_SPRINT_SQL} AS sprint_id,
+      (SELECT s.name FROM board_sprints s WHERE s.board_id = k.board_id AND s.id = ${EFFECTIVE_SPRINT_SQL}) AS sprint_name,
       ${parts.map((part, index) => `${part.sql} AS sk${index}`).join(", ")}
     FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id LEFT JOIN users cu ON cu.id = k.created_by
     WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where}) AND ${after}

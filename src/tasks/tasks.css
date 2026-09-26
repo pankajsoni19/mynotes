@@ -486,3 +486,47 @@
 @media (max-width: 760px) {
   .task-template-grid { grid-template-columns: 1fr; }
 }
+
+/* Sprints (17B, research §7.3, §7.5): the switcher and progress strip under the board header,
+   Board settings → Sprints, and the close dialog. */
+.task-sprint-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 0 clamp(16px, 3vw, 32px) 8px; }
+.task-sprint-switch { max-width: 260px; }
+.task-sprint-strip { flex: 1 1 260px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0; color: #a3a3ab; font-size: .8rem; }
+.task-sprint-timing { display: inline-flex; align-items: center; gap: 5px; }
+.task-sprint-timing svg { width: 14px; color: #7c7c83; }
+.task-sprint-count { color: #d6d6da; font-weight: 600; }
+.task-sprint-meter { flex: 0 1 140px; min-width: 80px; height: 6px; display: flex; overflow: hidden; border-radius: 999px; background: #232327; }
+.task-sprint-meter i { display: block; height: 100%; }
+.task-sprint-meter .done { background: #6fbf85; }
+.task-sprint-meter .doing { background: var(--yellow); }
+.task-sprint-meter .todo { background: #45454c; }
+.task-sprint-action { flex: none; }
+.task-sprint-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.task-sprint-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 48px; border: 1px solid #26262b; border-radius: 10px; padding: 6px 6px 6px 12px; }
+.task-sprint-row.active { border-color: #6f5928; background: #1d1a12; }
+.task-sprint-row-copy { flex: 1 1 160px; min-width: 0; display: grid; }
+.task-sprint-row-copy strong { overflow: hidden; font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; }
+.task-sprint-row-copy small { color: #85858c; font-size: .76rem; }
+.task-sprint-row-actions { flex: none; display: flex; align-items: center; gap: 2px; }
+.task-sprint-row-actions .icon-button svg { width: 16px; }
+.task-sprint-form { flex: 1 1 100%; display: grid; gap: 6px; }
+.task-sprint-form > label, .task-sprint-dates label { color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.task-sprint-form input { min-height: 40px; border: 1px solid #333338; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .88rem; }
+.task-sprint-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.task-sprint-dates label { display: grid; gap: 4px; }
+.task-sprint-history summary { min-height: 40px; display: flex; align-items: center; color: #a9a9b0; font-size: .84rem; cursor: pointer; }
+.task-sprint-history > .task-sprint-list { margin-bottom: 8px; }
+.task-sprint-summary { margin: 4px 0 8px; font-size: .95rem; }
+.task-sprint-complete .task-card-field { margin-bottom: 4px; }
+.task-sprint-inherited { margin: 0; min-height: 36px; display: flex; align-items: center; gap: 6px; color: #d6d6da; font-size: .88rem; }
+.task-sprint-inherited small { color: #85858c; }
+@media (max-width: 760px) {
+  .task-sprint-bar { padding: 0 8px 6px; gap: 6px 8px; }
+  .task-sprint-switch { max-width: 60vw; min-height: 44px; }
+  .task-sprint-strip { flex-basis: 100%; order: 3; font-size: .78rem; }
+  .task-sprint-action { min-height: 44px; }
+  .task-sprint-row { min-height: 56px; }
+  .task-sprint-row-actions .icon-button, .task-sprint-row-actions .secondary-button { min-width: 44px; min-height: 44px; }
+  .task-sprint-form input { min-height: 44px; }
+  .task-sprint-history summary { min-height: 44px; }
+}

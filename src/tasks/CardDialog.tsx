@@ -9,6 +9,7 @@ import { relativeTime } from "../files/format";
 import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import { CardFields } from "./CardFields";
 import { CardBreadcrumb, CardParentFields, SubtasksSection } from "./CardHierarchySection";
+import { CardSprintField } from "./SprintField";
 import { childrenOf, levelEyebrow, levelOf } from "./hierarchyModel";
 import type { CardHierarchyContext } from "./useBoardHierarchy";
 import type { TagChange } from "./cardTags";
@@ -33,7 +34,8 @@ import {
   type CardChange,
   type CardComment,
   type CardDetail,
-  type CardRelation
+  type CardRelation,
+  type SprintSummary
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
@@ -70,6 +72,8 @@ type CardDialogProps = {
   onCollapse?: () => void;
   /** Hierarchy (17A, §7.2): the breadcrumb, Parent and Level, and the Subtasks checklist. */
   hierarchy?: CardHierarchyContext;
+  /** The board's sprints (17B), for the Sprint field; only on boards with sprints on. */
+  sprints?: SprintSummary[];
 };
 
 /** Live children and grandchildren on the board: they go to the Bin with the card (D129). */
@@ -88,7 +92,7 @@ const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.pa
  * The description is Markdown shown through the notes renderer read-only (D44) and edited with
  * an explicit Save; a revision conflict offers Reload or Copy my text.
  */
-export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify, tags, onTagsChange, onOpenRelated, onRelationsChanged, layout = "dialog", onExpand, onCollapse, hierarchy }: CardDialogProps) {
+export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify, tags, onTagsChange, onOpenRelated, onRelationsChanged, layout = "dialog", onExpand, onCollapse, hierarchy, sprints }: CardDialogProps) {
   const page = layout === "page";
   const [card, setCard] = useState<CardDetail | null>(null);
   const [comments, setComments] = useState<CardComment[]>([]);
@@ -511,7 +515,8 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
           <p className="task-card-byline">{card.creator_name ? `Added by ${card.creator_name}` : "Added"} · <time dateTime={card.created_at}>{relativeTime(card.created_at)}</time>{card.updated_at !== card.created_at && <> · Updated <time dateTime={card.updated_at}>{relativeTime(card.updated_at)}</time></>}</p>
 
           <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} tags={tags} owner={boardOwner} onTagsChange={onTagsChange} />
-          {hierarchy && <div className="task-card-details"><CardParentFields card={card} context={hierarchy} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} /></div>}
+          {hierarchy && <div className="task-card-details"><CardParentFields card={card} context={hierarchy} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} />
+            {sprints && <CardSprintField card={card} structure={hierarchy.structure} cards={hierarchy.cards} sprints={sprints} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} />}</div>}
           {detailsConflict && <p className="file-dialog-error" role="alert">{detailsConflict}</p>}
 
           <RelationsSection cardId={card.id} boardId={card.board_id} idPrefix={titleId} relations={relations} notify={notify}

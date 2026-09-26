@@ -573,6 +573,7 @@ type CardSummary = /* … */ & { sprint_id: string | null };   // stored (work l
 - A sprint id is joined to its board: a sprint of a board the caller cannot read is 404, whatever the action.
 - `PATCH /boards/:b` refuses `sprints: false` while sprints are open, and a work-level change while cards carry a sprint (409 `SPRINTS_IN_USE`, § Board structure).
 - The **Scrum sprint board** template (`POST /boards { template: "scrum" }`) also creates a planned "Sprint 1" from today (UTC) for two weeks.
+- **The board page** keeps the sprint on screen in its URL as `?sprint=backlog|all|<id>`, beside `view`, `group`, and `sort` (absent = the current sprint: the active one, else the backlog), and carries it through card routes. It scopes every view with one more `sprint:` term (§ Filter grammar); the filter bar keeps only the viewer's own terms. Picking a sprint pushes a history entry (a committed choice, like the view switch).
 - **Audit** (ids only): `task.sprint_create { boardId, sprintId }`, `task.sprint_update { boardId, sprintId, fields }`, `task.sprint_start`, `task.sprint_delete`, `task.sprint_complete { boardId, sprintId, carried, doneCount, carryTo: "next" | "backlog" | "new" | "sprint", targetSprintId? }` (a `new` target is also a `task.sprint_create`); `task.card_create` and `task.card_update` add `sprintId` when it is set or changes. Carried cards get no per-card audit row: the completion row counts them.
 
 ### Filter grammar (sub-wave 17C, D137, D140–D145)
@@ -596,15 +597,16 @@ board:<uuid> column:<uuid> -tag:"Needs design",none flag:blocked "invoice"
 | `due` | `overdue`, `today`, `week`, `next-week`, `none`, `YYYY-MM-DD`, `<YYYY-MM-DD`, `>YYYY-MM-DD` | relative values use the caller's `tz`; `week` is today plus six days, `next-week` the seven after; `overdue` is a date before today, or a timed card due today whose wall time has passed. `before:D`/`after:D` are accepted as `<D`/`>D` |
 | `parent` | `none`, uuid | the card's parent (17A); `none` = no parent. Parents are on the same board, so another board's card matches nothing |
 | `level` | `work`, `0`, `1`, `2` | the card's level (17A); `work` is each board's own work level |
+| `sprint` | `current`, `next`, `none` (`backlog` is read as `none`), uuid | the card's sprint (17B): stored on the work level, the parent's below it, none above it. `current` is each card's own board's active sprint and `next` its first planned one (so they work across boards); a sprint of another board matches nothing |
 | `has` | `relation`, `blocked`, `subtasks` | any visible relation; an open `depends_on` blocker; at least one live child (17A) |
 | text | `"quoted phrase"` or a bare word | the title or the description excerpt contains it (case-insensitive `instr`, no wildcards) |
 
-- **Reserved keys.** `sprint:` arrives with 17B (D137) and is refused with `FILTER_UNSUPPORTED` until then. `parent:`, `level:`, and `has:subtasks` shipped with 17A, in the board's in-memory matcher (`matchesQuery`) and the cross-board compiler alike (`tests/taskQueryParity.test.ts`).
-- **Canonical form.** `format` orders terms by key (`board state column assignee creator tag flag due parent level has text`, positive before negated), dedupes and sorts values, lowercases ids and keywords, and always quotes text. URLs (`?q=`), `task_views.query`, and MCP carry the canonical form.
+- **No reserved keys remain.** `parent:`, `level:`, and `has:subtasks` shipped with 17A and `sprint:` with 17B, in the board's in-memory matcher (`matchesQuery`) and the cross-board compiler alike (`tests/taskQueryParity.test.ts`). `FILTER_UNSUPPORTED` stays in the error vocabulary for keys a later wave reserves.
+- **Canonical form.** `format` orders terms by key (`board state column assignee creator tag flag due sprint parent level has text`, positive before negated), dedupes and sorts values, lowercases ids and keywords, and always quotes text. URLs (`?q=`), `task_views.query`, and MCP carry the canonical form.
 - **Limits.** At most 2000 characters, 20 terms, 20 values per term, 100 characters per text term. No control or bidi characters.
 - **Errors.** `{ code: "FILTER_INVALID" | "FILTER_UNSUPPORTED" | "FILTER_SCOPE", message, position }`, where `position` is the character offset.
 - **One grammar with the Wave 13 structured filter.** The same module holds 13C's `CardFilter` and board pipeline (`queryCards`, `sortCards`, used by the client and mirrored by `list_cards` in `server/tasks/cardQuery.ts`). `queryFromCardFilter` gives a structured filter its canonical text, and `cardFilterFromQuery` turns a board-scoped query back into a `CardFilter`, or `null` when it uses what the board pipeline does not model (negation, `board:`, `state:`, `creator:`, `has:`, tag names, relative due windows, repeated keys); those run on the server. `tests/taskQueryParity.test.ts` checks that the three paths agree.
-- **URL codec.** `?q=` carries the canonical grammar and is the only filter parameter written. Decoding is lenient (bad terms and values are dropped) and still reads the Wave 13 per-key parameters (`assignee`, `tag`, `flag`, `due`, `column`, `rel=any|blocked|none`, plus `board` and `state`), so older links keep working. Other parameters (`view`, `layout`, `group`, `sort`) are left alone.
+- **URL codec.** `?q=` carries the canonical grammar and is the only filter parameter written. Decoding is lenient (bad terms and values are dropped) and still reads the Wave 13 per-key parameters (`assignee`, `tag`, `flag`, `due`, `column`, `rel=any|blocked|none`, plus `board` and `state`), so older links keep working. Other parameters (`view`, `layout`, `group`, `sort`, and the board's `sprint`, 17B) are left alone.
 
 ### Cross-board card query (sub-wave 17C, D144)
 
@@ -623,6 +625,7 @@ type QueriedCard = {
   tags: { id; name; color }[]; flags: Flag[];        // flags in the fixed order
   created_at; updated_at;
   parent_card_id; level; parent_title: string | null;  // 17A: the parent on the same board (D138); null when none or binned
+  sprint_id: string | null; sprint_name: string | null;  // 17B: the card's sprint (inherited below the work level) and its name
 };
 type QueryRefs = {                                   // first page only: what the query's ids mean to this caller (T116)
   boards:  ({ id; name } | { id; restricted: true })[];

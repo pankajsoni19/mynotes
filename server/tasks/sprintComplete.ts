@@ -1,7 +1,7 @@
 import { audit, db, now } from "../db";
 import { limitReached, TaskError, withBoardLock } from "./service";
 import { insertSprint, openCount, ownedSprint, requireDateOrder, sprintNotFound } from "./sprints";
-import { openSprintRows, SPRINT_LIMITS, sprintById, sprintCounts, sprintOfBoard, toSummary, type SprintRow, type SprintSummary } from "./sprintData";
+import { openSprintRows, SPRINT_LIMITS, sprintById, sprintCounts, sprintNames, sprintOfBoard, toSummary, type SprintRow, type SprintSummary } from "./sprintData";
 import { nextSprintDates, nextSprintName } from "../../shared/sprintPlan";
 
 /** `next`: the first planned sprint; `backlog`: no sprint; `new`: a sprint created in the same call; or a planned sprint's id. */
@@ -42,7 +42,7 @@ export async function completeSprint(userId: string, sprintId: string, input: Co
       const startOn = input.startOn === undefined ? dates.startOn : input.startOn;
       const endOn = input.endOn === undefined ? dates.endOn : input.endOn;
       requireDateOrder(startOn, endOn);
-      planned = { name: input.name ?? nextSprintName(sprint.name), goal: "", startOn, endOn };
+      planned = { name: input.name ?? nextSprintName(sprint.name, sprintNames(board.id).values()), goal: "", startOn, endOn };
     }
     const result = db.transaction(() => {
       const timestamp = now();
