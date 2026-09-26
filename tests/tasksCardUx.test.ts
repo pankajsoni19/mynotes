@@ -59,15 +59,33 @@ describe("multiple card assignees (D102, D103)", () => {
 
   test("the legacy assigneeId maps to one assignee or none, and is refused together with assigneeIds", async () => {
     const { owner, member, card } = await setup("Legacy");
-    let patched = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeIds: [owner.userId, member.userId], revision: 1 });
+    let patched = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeId: owner.userId, revision: 1 });
+    expect(patched.body.card.assignees.map((assignee: { id: string }) => assignee.id)).toEqual([owner.userId]);
     patched = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeId: member.userId, revision: 2 });
     expect(patched.body.card.assignees.map((assignee: { id: string }) => assignee.id)).toEqual([member.userId]);
-    expect(lastAudit(owner.userId, "task.card_update")).toMatchObject({ assigneeId: member.userId, assigneesAdded: 0, assigneesRemoved: 1 });
+    expect(lastAudit(owner.userId, "task.card_update")).toMatchObject({ assigneeId: member.userId, assigneesAdded: 1, assigneesRemoved: 1 });
     patched = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeId: null, revision: 3 });
     expect(patched.body.card).toMatchObject({ assignees: [], assignee_id: null, revision: 4 });
     const both = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeId: owner.userId, assigneeIds: [owner.userId], revision: 4 });
     expect(both.status).toBe(400);
     expect(JSON.stringify(both.body)).toContain("not both");
+  });
+
+  test("the legacy assigneeId is refused on a card with several assignees instead of dropping them", async () => {
+    const { owner, member, card } = await setup("Several");
+    expect((await call(owner, "PATCH", `/cards/${card.id}`, { assigneeIds: [owner.userId, member.userId], revision: 1 })).status).toBe(200);
+    for (const assigneeId of [member.userId, null]) {
+      const refused = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeId, revision: 2 });
+      expect(refused.status).toBe(409);
+      expect(refused.body.code).toBe("ASSIGNEES_MULTIPLE");
+      expect(refused.body.assignees.map((assignee: { id: string }) => assignee.id)).toEqual([owner.userId, member.userId]);
+    }
+    // Nothing changed, and assigneeIds still replaces the whole set.
+    expect((await call(owner, "GET", `/cards/${card.id}`)).body.card).toMatchObject({ revision: 2 });
+    const replaced = await call(owner, "PATCH", `/cards/${card.id}`, { assigneeIds: [member.userId], revision: 2 });
+    expect(replaced.body.card.assignees.map((assignee: { id: string }) => assignee.id)).toEqual([member.userId]);
+    // Down to one assignee, the legacy field works again.
+    expect((await call(owner, "PATCH", `/cards/${card.id}`, { assigneeId: owner.userId, revision: 3 })).body.card.assignee_id).toBe(owner.userId);
   });
 
   test("every new assignee must be able to read the board; a former member stays until removed (T93)", async () => {

@@ -28,7 +28,7 @@ import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { registerTeamRoutes } from "./team/routes";
-import { recordBootstrapAdmin } from "./team/service";
+import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { mcpScopesForRole } from "./team/roles";
 import {
   draftSchema,
@@ -195,9 +195,11 @@ app.post("/api/auth/register", async (c) => {
     db.transaction(() => {
       const currentCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
       if (!config.allowRegistration && currentCount > 0) throw new HTTPException(403, { message: "Registration is disabled" });
-      // D76: the first account on an empty instance is the admin. The count and the insert share
-      // this transaction, so two concurrent "first" registrations cannot both become admin.
-      role = currentCount === 0 ? "admin" : "member";
+      // D76: the first account on an empty instance is the admin, and so is an account registered
+      // while no active admin exists (an upgrade where every account was disabled, so migration 017
+      // had nobody to promote). The check and the insert share this transaction, so two concurrent
+      // registrations cannot both become admin.
+      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : "member";
       const timestamp = now();
       db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)")
         .run(id, body.email, body.displayName, passwordHash, timestamp, role);
@@ -847,6 +849,8 @@ async function reconcilePublishedMirrors() {
 }
 
 await reconcilePublishedMirrors();
+// Migrations ran when ./db loaded: say so loudly when the team has nobody who can manage it.
+warnIfNoActiveAdmin();
 try {
   await reconcileSearchIndex();
 } catch (error) {

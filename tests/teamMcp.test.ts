@@ -81,4 +81,14 @@ describe("Team MCP", () => {
     setRoleSql(admin, "admin");
     expect(await toolNames(key.token)).toContain("list_team_members");
   });
+
+  test("the key list shows stored and effective scopes, so a demoted admin sees team:read is inactive", async () => {
+    const admin = await user("List admin", "admin");
+    const key = createMcpApiKey(admin.userId, "Team key", ["team:read", "notes:read"]);
+    type Listed = { keys: Array<{ id: string; scopes: string[]; effectiveScopes: string[] }> };
+    const listed = async () => (await (await request("/mcp/keys", {}, admin)).json() as Listed).keys.find((row) => row.id === key.id)!;
+    expect(await listed()).toMatchObject({ scopes: ["notes:read", "team:read"], effectiveScopes: ["notes:read", "team:read"] });
+    setRoleSql(admin, "member");
+    expect(await listed()).toMatchObject({ scopes: ["notes:read", "team:read"], effectiveScopes: ["notes:read"] });
+  });
 });

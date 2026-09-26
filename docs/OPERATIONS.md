@@ -32,6 +32,8 @@ docker compose exec mynotes bun server/team-admin.ts unblock user@example.com
 
 A role change applies to the account's next request. `set-role` refuses to demote the last active admin; promote another account first.
 
+**Upgrade note (migration 017).** On upgrade the oldest account becomes admin; fix with `docker compose exec mynotes bun server/team-admin.ts set-role <email> admin`. If every account was disabled when 017 ran, nobody is promoted and there is no active admin: the server logs a warning naming this command at every start until one exists. Unblock the account first (`docker compose exec mynotes bun server/team-admin.ts unblock <email>`), then run `set-role`. While there is no active admin and `ALLOW_REGISTRATION=true`, the next account registered becomes the admin (recorded in the Team activity log as a bootstrap), so keep registration off until the CLI has fixed it.
+
 ### Two-factor authentication
 
 Generate a server-side encryption key and keep it only in `.env`:

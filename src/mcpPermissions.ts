@@ -60,3 +60,18 @@ export function toggleScope(selected: readonly McpScope[], scope: McpScope, chec
 export function scopeLabel(scope: string) {
   return MCP_PERMISSIONS.find((permission) => permission.scope === scope)?.label ?? scope;
 }
+
+export type ScopeChip = { scope: string; label: string; active: boolean };
+
+/**
+ * The chips of a listed key: every stored scope, marked inactive when the key cannot use it under
+ * the owner's current role (a demoted admin's `team:read`). Without `effectiveScopes` (an older
+ * server) every stored scope counts as active.
+ */
+export function keyScopeChips(scopes: readonly string[], effectiveScopes?: readonly string[]): ScopeChip[] {
+  return scopes.map((scope) => {
+    const active = !effectiveScopes || effectiveScopes.includes(scope);
+    const suffix = active ? "" : (ADMIN_ONLY_MCP_SCOPES as readonly string[]).includes(scope) ? " (admins only, inactive)" : " (inactive)";
+    return { scope, label: `${scopeLabel(scope)}${suffix}`, active };
+  });
+}
