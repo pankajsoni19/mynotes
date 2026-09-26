@@ -160,8 +160,13 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     setDialog(next);
   };
 
+  // Cards this view just moved to the Bin with a tree (D129): Back may land on one (a subtask opened
+  // from its parent's breadcrumb); it then steps on quietly, keeping the Undo toast.
+  const binnedRef = useRef(new Set<string>());
+  const openCardIdRef = useRef(openCardId);
+  openCardIdRef.current = openCardId;
   const onCardMissing = useCallback(() => {
-    notify("Card not found");
+    if (!openCardIdRef.current || !binnedRef.current.has(openCardIdRef.current)) notify("Card not found");
     onCloseCard();
   }, [notify, onCloseCard]);
 
@@ -441,11 +446,13 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     // Its live children and grandchildren went to the Bin with it (D129).
     const gone = new Set([cardId]);
     for (let step = 0; step < 2; step += 1) for (const item of detailRef.current?.cards ?? []) if (item.parent_card_id && gone.has(item.parent_card_id)) gone.add(item.id);
+    for (const id of gone) binnedRef.current.add(id);
     setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => !gone.has(item.id)), board: { ...current.board, card_count: Math.max(0, current.board.card_count - gone.size) } } : current);
     lastOpenCardRef.current = null;
     onCloseCard();
     notify(`Moved “${card?.title ?? "card"}”${descendantCount ? ` and ${descendantCount === 1 ? "1 card" : `${descendantCount} cards`} under it` : ""} to the Bin`, { label: "Undo", run: () => {
       restoreTaskItem("card", cardId, place).then((result) => {
+        for (const id of gone) binnedRef.current.delete(id);
         notify(`Restored to ${result.columnName ?? "the board"}${result.descendantCount ? ` with ${result.descendantCount === 1 ? "1 card" : `${result.descendantCount} cards`} under it` : ""}${result.detached ? ", without its parent (it is in the Bin)" : ""}`);
         void load();
       }, (reason) => notify(taskErrorMessage(reason, "Could not restore the card")));
@@ -530,7 +537,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         column={column}
         cards={columnCards(hierarchy.visible(laneCards, filtered), column.id)}
         totalCount={columnCards(cards, column.id).length}
-        emptyText={filtered ? "No matching cards" : "Cards here sit inside their parents. Board settings → Show all levels."}
+        emptyText={filtered ? "No matching cards" : "Its cards sit inside their parents"}
         nesting={hierarchy.nesting}
         tags={detail.tags}
         owner={owner}

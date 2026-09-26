@@ -465,7 +465,7 @@
 .task-table-parent-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 760px) {
-  .task-settings-panel { top: 0; }
+  .task-settings-panel { top: 0; bottom: 0; }
   .task-subtask, .task-subtask-check { min-height: 44px; }
   .task-subtask-check { width: 44px; height: 44px; }
   .task-subtask-title { min-height: 44px; }
