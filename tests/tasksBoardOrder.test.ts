@@ -11,6 +11,8 @@ import {
   isCardDrag,
   isNoopMove,
   keyboardMoveTarget,
+  mergeMovedCard,
+  moveChangesBlockers,
   readCardDragPayload,
   sheetMoveAnchor
 } from "../src/tasks/boardOrder";
@@ -102,4 +104,24 @@ test("the phone track's scroll offset maps to a clamped column index", () => {
   expect(columnIndexFromScroll(-40, 390, 3)).toBe(0);
   expect(columnIndexFromScroll(100, 0, 3)).toBe(0);
   expect(columnIndexFromScroll(100, 390, 0)).toBe(0);
+});
+
+test("a moved card keeps the relation and blocker counts its move response leaves out", () => {
+  const lane = [
+    { id: "a", column_id: "todo", position: 1024, title: "A", relation_count: 2, open_blockers: 1 },
+    { id: "b", column_id: "todo", position: 2048, title: "B", relation_count: 0, open_blockers: 0 }
+  ];
+  const merged = mergeMovedCard(lane, { id: "a", column_id: "doing", position: 512, title: "A (renamed)" });
+  expect(merged[0]).toEqual({ id: "a", column_id: "doing", position: 512, title: "A (renamed)", relation_count: 2, open_blockers: 1 });
+  expect(merged[1]).toBe(lane[1]!);
+});
+
+test("only a card with relations crossing a done column changes other cards' blockers", () => {
+  const board = [{ id: "todo", is_done: 0 as const }, { id: "doing", is_done: 0 as const }, { id: "done", is_done: 1 as const }];
+  const lane = [{ id: "a", column_id: "todo", relation_count: 1 }, { id: "b", column_id: "todo", relation_count: 0 }, { id: "c", column_id: "done", relation_count: 3 }];
+  expect(moveChangesBlockers(lane, board, "a", "done")).toBe(true);
+  expect(moveChangesBlockers(lane, board, "c", "doing")).toBe(true);
+  expect(moveChangesBlockers(lane, board, "a", "doing")).toBe(false);
+  expect(moveChangesBlockers(lane, board, "b", "done")).toBe(false);
+  expect(moveChangesBlockers(lane, board, "missing", "done")).toBe(false);
 });

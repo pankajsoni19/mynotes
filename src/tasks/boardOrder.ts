@@ -66,6 +66,25 @@ export function applyPositions<T extends Positioned>(cards: readonly T[], positi
   return cards.map((card) => next.has(card.id) ? { ...card, position: next.get(card.id)! } : card);
 }
 
+/**
+ * The card the move response returned, merged over the lane card: the response is the card's own
+ * row, without board-only fields such as `relation_count` and `open_blockers`, which a move keeps.
+ */
+export function mergeMovedCard<T extends { id: string }>(cards: readonly T[], moved: Partial<T> & { id: string }): T[] {
+  return cards.map((card) => card.id === moved.id ? { ...card, ...moved } : card);
+}
+
+/**
+ * Whether a move changes other cards' blocker counts: a card with relations crossing into or out of a
+ * done column opens or settles the cards that depend on it, so the board reloads its counts.
+ */
+export function moveChangesBlockers(cards: readonly { id: string; column_id: string; relation_count?: number }[], columns: readonly { id: string; is_done: 0 | 1 }[], cardId: string, columnId: string) {
+  const card = cards.find((item) => item.id === cardId);
+  if (!card?.relation_count) return false;
+  const done = (id: string) => columns.find((column) => column.id === id)?.is_done === 1;
+  return done(card.column_id) !== done(columnId);
+}
+
 export type MoveKey = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
 export const isMoveKey = (key: string): key is MoveKey => key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
 

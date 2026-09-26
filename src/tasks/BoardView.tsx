@@ -10,7 +10,7 @@ import { CardComposer, type ComposerMode } from "./CardComposer";
 import { CardDialog } from "./CardDialog";
 import { CardPage } from "./CardPage";
 import { MoveCardSheet } from "./MoveCardSheet";
-import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
+import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, mergeMovedCard, moveChangesBlockers, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute } from "../router";
 import { tasksRoute } from "../tasksRoute";
@@ -246,9 +246,10 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     try {
       const result = await moveCard(cardId, columnId, afterCardId);
       setCards((items) => {
-        const moved = items.map((item) => item.id === cardId ? result.card : item);
+        const moved = mergeMovedCard(items, result.card);
         return result.positions ? applyPositions(moved, result.positions) : moved;
       });
+      if (moveChangesBlockers(before, current.columns, cardId, columnId)) void load();
       setAnnouncement(`Moved to ${place}`);
     } catch (reason) {
       setCards(() => before);
